@@ -20,6 +20,12 @@ public enum BrowserAction: Equatable, Sendable {
     case reload(TabID)
     case stop(TabID)
     case togglePin(TabID)
+    /// Closes any tab for good, pinned and favorites included. (`closeTab` only unloads those.)
+    case removeTab(TabID)
+    /// Moves a tab into the favorites above every Space, or back out into the active Space.
+    case toggleFavorite(TabID)
+    /// Closes every Today tab in the active Space except the selected one.
+    case clearToday
     case moveTab(TabID, to: TabSection, index: Int)
     case moveTabToSpace(TabID, SpaceID)
 
@@ -28,6 +34,18 @@ public enum BrowserAction: Equatable, Sendable {
     case deleteSpace(SpaceID)
     case switchSpace(SpaceID)
     case switchSpaceByOffset(Int)
+    case setSpaceHue(SpaceID, Double)
+    case setSpaceIcon(SpaceID, String?)
+    /// Changing a Space's profile reloads its pages in the new cookie jar.
+    case assignProfile(SpaceID, ProfileID)
+
+    case createProfile(name: String)
+    case renameProfile(ProfileID, String)
+    /// Spaces on the deleted profile move to the default one.
+    case deleteProfile(ProfileID)
+
+    /// Adds Spaces, pinned tabs and favorites brought over from another browser.
+    case importBrowserData(BrowserImport)
 
     /// The engine reports a new URL, title or icon for a tab's page.
     case pageDidUpdate(TabID, PageMetadata)
@@ -46,8 +64,42 @@ public enum BrowserEffect: Equatable, Sendable {
     case stop(TabID)
     /// Tear down the tab's page, if it has one.
     case discardPage(TabID)
-    /// A Space was deleted: release its engine profile.
-    case releaseSpace(SpaceID)
+    /// A profile was deleted: release its engine resources.
+    case releaseProfile(ProfileID)
+}
+
+/// Bookmarks and Spaces read from another browser (Arc, Chrome).
+public struct BrowserImport: Equatable, Sendable {
+    public struct Link: Equatable, Sendable {
+        public var url: URL
+        public var title: String
+        public init(url: URL, title: String) { self.url = url; self.title = title }
+    }
+
+    public struct ImportedSpace: Equatable, Sendable {
+        public var name: String
+        public var icon: String?
+        public var hue: Double?
+        public var pinned: [Link]
+        public init(name: String, icon: String? = nil, hue: Double? = nil, pinned: [Link]) {
+            self.name = name
+            self.icon = icon
+            self.hue = hue
+            self.pinned = pinned
+        }
+    }
+
+    public var source: String
+    public var spaces: [ImportedSpace]
+    public var favorites: [Link]
+
+    public init(source: String, spaces: [ImportedSpace], favorites: [Link]) {
+        self.source = source
+        self.spaces = spaces
+        self.favorites = favorites
+    }
+
+    public var isEmpty: Bool { favorites.isEmpty && spaces.allSatisfy(\.pinned.isEmpty) }
 }
 
 public struct ReduceResult: Equatable, Sendable {

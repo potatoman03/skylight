@@ -37,10 +37,17 @@ public final class InMemoryStateStore: StateStore, @unchecked Sendable {
 }
 
 extension JSONEncoder {
+    /// `2026-01-01T09:30:00.250Z`.
+    static let dateStyle = Date.ISO8601FormatStyle.iso8601.year().month().day()
+        .time(includingFractionalSeconds: true).timeZone(separator: .omitted)
+
     public static var skylight: JSONEncoder {
         let e = JSONEncoder()
-        e.dateEncodingStrategy = .iso8601
-        e.outputFormatting = [.prettyPrinted, .sortedKeys]
+        // Milliseconds, so ordering by time survives a reload. Compact: it's written often.
+        e.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(date.formatted(JSONEncoder.dateStyle))
+        }
         return e
     }
 }
@@ -48,7 +55,14 @@ extension JSONEncoder {
 extension JSONDecoder {
     public static var skylight: JSONDecoder {
         let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
+        d.dateDecodingStrategy = .custom { decoder in
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            // Files from before fractional seconds have none.
+            if let date = try? Date(raw, strategy: JSONEncoder.dateStyle) { return date }
+            if let date = try? Date(raw, strategy: .iso8601) { return date }
+            if let date = try? Date(raw, strategy: .iso8601.year().month().day().time(includingFractionalSeconds: true)) { return date }
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Not an ISO 8601 date: \(raw)"))
+        }
         return d
     }
 }
@@ -67,8 +81,10 @@ public struct AppPaths: Sendable {
     public var stateFile: URL { root.appending(path: "state.json") }
     public var packagesDirectory: URL { root.appending(path: "Packages", directoryHint: .isDirectory) }
     public var engineRoot: URL { root.appending(path: "Engine", directoryHint: .isDirectory) }
-    public func profileDirectory(for space: SpaceID) -> URL {
-        engineRoot.appending(path: "Spaces/\(space.rawValue)", directoryHint: .isDirectory)
+    public func profileDirectory(for profile: ProfileID) -> URL {
+        engineRoot.appending(path: "Profiles/\(profile.rawValue)", directoryHint: .isDirectory)
     }
+
+    public var preferencesFile: URL { root.appending(path: "preferences.json") }
     public var mcpConnectionFile: URL { root.appending(path: "mcp.json") }
 }

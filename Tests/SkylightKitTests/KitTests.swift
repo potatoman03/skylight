@@ -82,3 +82,17 @@ import Testing
         #expect(PackageManifest(id: "a.b", name: "A", matches: ["<all_urls>"], styles: [], scripts: []).validate().isEmpty)
     }
 }
+
+@Suite struct KitPerformanceTests {
+    @Test func matchingURLs() throws {
+        let patterns = (0..<50).compactMap { MatchPattern("*://*.site\($0).example/*") }
+        let urls = (0..<2_000).map { URL(string: "https://www.site\($0 % 100).example/page/\($0)")! }
+        let clock = ContinuousClock()
+        var hits = 0
+        let elapsed = clock.measure {
+            for url in urls { for pattern in patterns where pattern.matches(url) { hits += 1 } }
+        }
+        print("BENCH match 50 patterns × 2,000 URLs: \(elapsed) total, \(elapsed / 100_000) each")
+        #expect(hits == 1_000)
+    }
+}

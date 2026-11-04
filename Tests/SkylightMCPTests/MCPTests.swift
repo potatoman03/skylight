@@ -165,3 +165,21 @@ private func makeHub(approve: Bool) -> (ToolHub, Approver) {
         #expect(WebMCP.exposedName(host: String(repeating: "a", count: 100), tool: "x").count == 64)
     }
 }
+
+@MainActor
+@Suite struct MCPPerformanceTests {
+    @Test func requestRoundTrips() async {
+        let handler = MCPRequestHandler(catalog: makeHub(approve: true).0, info: .init(name: "skylight", version: "1", instructions: ""))
+        let list = Data(#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.utf8)
+        let call = Data(#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"x":1}}}"#.utf8)
+        let clock = ContinuousClock()
+        let elapsed = await clock.measure {
+            for _ in 0..<1_000 {
+                _ = await handler.handle(list, client: AgentClient(name: "bench"))
+                _ = await handler.handle(call, client: AgentClient(name: "bench"))
+            }
+        }
+        print("BENCH MCP tools/list + tools/call: \(elapsed / 1_000) per pair (n=1,000)")
+        #expect(elapsed < .seconds(10))
+    }
+}

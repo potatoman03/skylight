@@ -16,23 +16,47 @@ extension Browser {
     }
 }
 
-/// The scrim and the bar. The bar shares its geometry with the URL pill, so it travels from the
-/// pill to the middle of the window and back.
+/// Where the bar sits inside the page card. On an empty tab it's the field in the middle of the
+/// sky (and the start view puts its own field in the same place, so nothing moves).
+enum CommandBarLayout {
+    static let fieldHeight: CGFloat = 56
+
+    static func top(in height: CGFloat, empty: Bool) -> CGFloat {
+        empty ? max(60, height * 0.34) : min(120, max(40, height * 0.14))
+    }
+
+    static func width(in width: CGFloat) -> CGFloat { min(640, max(320, width - 64)) }
+}
+
+/// The scrim and the bar, centered on the page card rather than the window. The bar shares its
+/// geometry with the URL pill, so it travels out of the sidebar and back.
 struct CommandBarOverlay: View {
     let omnibox: Namespace.ID
+    /// Where the page card starts.
+    let leading: CGFloat
+    var top: CGFloat = 8
     @Environment(Browser.self) private var browser
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.opacity(0.12)
+        let empty = browser.store.state.selectedTab == nil
+        ZStack(alignment: .topLeading) {
+            (scheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.32))
+                .opacity(empty ? 0 : 1)
                 .ignoresSafeArea()
                 .contentShape(.rect)
                 .onTapGesture { browser.dismissCommandBar() }
                 .transition(.opacity)
 
-            CommandBarPanel(omnibox: omnibox)
-                .frame(width: 640)
-                .padding(.top, 96)
+            GeometryReader { geo in
+                CommandBarPanel(omnibox: omnibox)
+                    .frame(width: CommandBarLayout.width(in: geo.size.width))
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, CommandBarLayout.top(in: geo.size.height, empty: empty))
+            }
+            .padding(.leading, max(leading, 8))
+            .padding(.top, top)
+            .padding([.bottom, .trailing], 8)
         }
     }
 }
@@ -40,6 +64,7 @@ struct CommandBarOverlay: View {
 private struct CommandBarPanel: View {
     let omnibox: Namespace.ID
     @Environment(Browser.self) private var browser
+    @Environment(\.colorScheme) private var scheme
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -61,10 +86,10 @@ private struct CommandBarPanel: View {
                     .onKeyPress(.escape) { browser.dismissCommandBar(); return .handled }
             }
             .padding(.horizontal, 18)
-            .frame(height: 56)
+            .frame(height: CommandBarLayout.fieldHeight)
 
             if !items.isEmpty {
-                Divider().opacity(0.6)
+                Rectangle().fill(.primary.opacity(0.07)).frame(height: 1)
                 VStack(spacing: 2) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         CommandRow(item: item, highlighted: index == bar.selection)
@@ -77,8 +102,9 @@ private struct CommandBarPanel: View {
             }
         }
         .motion(Motion.travel, value: items.map(\.id))
-        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-        .shadow(color: .black.opacity(0.18), radius: 30, y: 14)
+        .glassEffect(.regular.tint(Surface.field.fill(scheme)), in: .rect(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Surface.field.edge(scheme), lineWidth: 0.75))
+        .shadow(color: Theme.shadow(browser.store.state.activeSpace.hue, scheme), radius: 40, y: 18)
         .matchedGeometryEffect(id: "omnibox", in: omnibox)
         .transition(.opacity)
         .onAppear {
@@ -99,8 +125,8 @@ private struct CommandRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Group {
-                if item.kind == .tab {
-                    Favicon(url: item.faviconURL, title: item.title)
+                if item.kind == .tab || item.kind == .address {
+                    Favicon(url: item.faviconURL, page: item.pageURL, title: item.title)
                 } else {
                     Image(systemName: item.symbol).font(.system(size: 13, weight: .medium))
                 }
@@ -119,7 +145,7 @@ private struct CommandRow: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 38)
-        .background(.primary.opacity(highlighted ? 0.09 : 0), in: .rect(cornerRadius: 12, style: .continuous))
+        .surface(highlighted ? .selected : nil, radius: 12)
         .contentShape(.rect)
     }
 }

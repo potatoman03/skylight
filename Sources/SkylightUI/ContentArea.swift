@@ -8,6 +8,7 @@ import SwiftUI
 /// line, prompts and the empty state on top.
 struct ContentArea: View {
     @Environment(Browser.self) private var browser
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let tab = browser.store.state.selectedTab
@@ -18,6 +19,8 @@ struct ContentArea: View {
             PageHost(view: browser.pages.hostView)
             if tab == nil {
                 StartView().transition(.opacity)
+            } else if let tab, tab.url.isSkylightPage {
+                SettingsPage(url: tab.url).transition(.opacity)
             }
             ProgressLine(progress: status.progress, loading: status.isLoading)
             if let prompt {
@@ -29,10 +32,15 @@ struct ContentArea: View {
         }
         .motion(Motion.arrive, value: prompt?.id)
         .motion(Motion.swap, value: tab == nil)
-        .background(.background)
+        // An empty tab has no card: the field floats on the sky.
+        .background(tab == nil ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
         .clipShape(.rect(cornerRadius: Theme.cardRadius, style: .continuous))
-        .shadow(color: .black.opacity(0.12), radius: 1, y: 0.5)
-        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                .strokeBorder(Surface.selected.edge(scheme), lineWidth: 0.75)
+                .opacity(tab == nil ? 0 : 1)
+        }
+        .shadow(color: Theme.shadow(browser.store.state.activeSpace.hue, scheme).opacity(tab == nil ? 0 : 1), radius: 18, y: 6)
     }
 }
 
@@ -69,25 +77,35 @@ private struct ProgressLine: View {
     }
 }
 
+/// An empty tab: one field in the middle of the sky, where the command bar opens.
 private struct StartView: View {
     @Environment(Browser.self) private var browser
+    @State private var hovering = false
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "sun.horizon")
-                .font(.system(size: 40, weight: .light))
+        GeometryReader { geo in
+            VStack(spacing: 14) {
+                HStack(spacing: 12) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 16, weight: .medium))
+                    Text("Search or enter address").font(.system(size: 18))
+                    Spacer()
+                }
                 .foregroundStyle(.tertiary)
-                .symbolRenderingMode(.hierarchical)
-            Text("Skylight").font(.system(size: 22, weight: .semibold, design: .rounded))
-            Button("New Tab") { browser.presentCommandBar(.newTab) }
-                .buttonStyle(.glass)
-                .keyboardShortcut("t", modifiers: .command)
-            Text("⌘T to search or open a site · ⌘L to edit the address")
-                .font(.system(size: 12))
-                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 18)
+                .frame(width: CommandBarLayout.width(in: geo.size.width), height: CommandBarLayout.fieldHeight)
+                .surface(hovering ? .selected : .field, radius: 22)
+                .contentShape(.rect)
+                .onTapGesture { browser.presentCommandBar(.newTab) }
+                .onHover { h in animate(Motion.feedback) { hovering = h } }
+
+                Text("⌘T new tab   ·   ⌘L address   ·   ⌘S sidebar   ·   ⌘, settings")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, CommandBarLayout.top(in: geo.size.height, empty: true))
+            .opacity(browser.commandBar.isPresented ? 0 : 1)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
     }
 }
 
@@ -223,7 +241,7 @@ struct ToastView: View {
                 }
                 .padding(.horizontal, 16)
                 .frame(height: 38)
-                .glassEffect(.regular, in: .capsule)
+                .surface(.selected, radius: 19, lifted: true)
                 .id(toast.id)
                 .transition(Arrive(anchor: .bottom, scale: 0.94, rise: 10))
                 .onTapGesture { animate(Motion.exit) { browser.toasts.dismiss() } }

@@ -34,8 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.isOpaque = false
-        window.backgroundColor = .clear
+        window.isOpaque = true
+        window.backgroundColor = .windowBackgroundColor
         window.isMovableByWindowBackground = true
         window.delegate = self
         window.contentView = NSHostingView(rootView: RootView().environment(browser))
@@ -119,4 +119,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func close(_ sender: Any?) { quit() }
+
+    @objc func showSettings(_ sender: Any?) { browser?.openSettings() }
+
+    @objc func toggleSidebar(_ sender: Any?) {
+        withAnimation(.timingCurve(0.45, 0, 0.1, 1, duration: 0.34)) { browser?.toggleSidebar() }
+    }
+    @objc func toggleFavorite(_ sender: Any?) { if let id = selected { store?.send(.toggleFavorite(id)) } }
+    @objc func clearToday(_ sender: Any?) {
+        withAnimation(.timingCurve(0.45, 0, 0.1, 1, duration: 0.34)) { _ = store?.send(.clearToday) }
+    }
+    @objc func importFromArc(_ sender: Any?) { browser?.importBrowser(.arc) }
+    @objc func importFromChrome(_ sender: Any?) { browser?.importBrowser(.chrome) }
 }

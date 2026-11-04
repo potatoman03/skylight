@@ -18,13 +18,15 @@ public final class AgentService {
     @ObservationIgnored private let store: BrowserStore
     @ObservationIgnored private let pages: PageCoordinator
     @ObservationIgnored private let packages: PackageService
-    @ObservationIgnored private let omnibox: Omnibox
+    @ObservationIgnored private let makeOmnibox: @MainActor () -> Omnibox
+    private var omnibox: Omnibox { makeOmnibox() }
 
-    public init(store: BrowserStore, pages: PageCoordinator, packages: PackageService, omnibox: Omnibox, approvals: ApprovalProvider) {
+    public init(store: BrowserStore, pages: PageCoordinator, packages: PackageService, omnibox: @escaping @MainActor () -> Omnibox,
+                approvals: ApprovalProvider) {
         self.store = store
         self.pages = pages
         self.packages = packages
-        self.omnibox = omnibox
+        self.makeOmnibox = omnibox
         hub.approvals = approvals
         hub.onActivity = { [weak self] event in
             guard let self else { return }
@@ -82,7 +84,7 @@ public final class AgentService {
     private func describe(_ tab: Tab, in space: Space) -> JSONValue {
         var item: JSONValue = [
             "tab_id": .string(tab.id.rawValue), "title": .string(tab.displayTitle), "url": .string(tab.url.absoluteString),
-            "section": .string(space.section(of: tab.id)?.rawValue ?? "today"),
+            "section": .string(store.state.isFavorite(tab.id) ? "favorite" : space.section(of: tab.id)?.rawValue ?? "today"),
             "selected": .bool(space.selectedTabID == tab.id),
             "awake": .bool(store.status(of: tab.id).isAwake),
         ]
@@ -106,16 +108,21 @@ public final class AgentService {
         [
             AgentTool(ToolDefinition(
                 name: "list_tabs",
-                description: "Lists the tabs in every Space, with ids, titles, URLs and which one is selected.",
+                description: "Lists the tabs in every Space, with ids, titles, URLs and which one is selected. Favorites are shared by all Spaces.",
                 risk: .read)) { [unowned self] _ in
                 let state = self.store.state
-                return .array(state.spaces.map { space in
+                let spaces: [JSONValue] = state.spaces.map { space in
                     [
                         "space_id": .string(space.id.rawValue), "space": .string(space.name),
+                        "profile": .string(state.profile(space.profileID)?.name ?? "Default"),
                         "active": .bool(space.id == state.activeSpaceID),
                         "tabs": .array(space.allTabIDs.compactMap { state.tabs[$0] }.map { self.describe($0, in: space) }),
                     ]
-                })
+                }
+                return [
+                    "favorites": .array(state.favoriteTabs.map { self.describe($0, in: state.activeSpace) }),
+                    "spaces": .array(spaces),
+                ]
             },
             AgentTool(ToolDefinition(
                 name: "open_tab",

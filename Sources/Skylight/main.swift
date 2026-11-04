@@ -4,7 +4,11 @@ import SkylightCore
 
 // Chromium needs its own NSApplication subclass, created before anything touches NSApp.
 let app = CEFRuntime.makeApplication()
-let paths = AppPaths.standard()
+// SKYLIGHT_DATA_DIR keeps a development run away from your real tabs.
+// Symlinks are resolved: Chromium compares its cache paths literally (/var vs /private/var).
+let paths = ProcessInfo.processInfo.environment["SKYLIGHT_DATA_DIR"]
+    .map { AppPaths(root: URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath()) }
+    ?? AppPaths.standard()
 let delegate = AppDelegate(paths: paths)
 app.delegate = delegate
 

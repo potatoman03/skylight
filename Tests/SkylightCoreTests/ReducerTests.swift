@@ -8,7 +8,8 @@ private func environment() -> ReducerEnvironment {
     return ReducerEnvironment(
         now: { Date(timeIntervalSince1970: 1_000_000) },
         makeTabID: { TabID("t\(counter.next())") },
-        makeSpaceID: { SpaceID("s\(counter.next())") })
+        makeSpaceID: { SpaceID("s\(counter.next())") },
+        makeProfileID: { ProfileID("p\(counter.next())") })
 }
 
 private final class Counter: @unchecked Sendable {
@@ -103,7 +104,7 @@ private let c = URL(string: "https://c.example")!
         #expect(state.spaces[1].selectedTabID == workTab)
     }
 
-    @Test func deletingSpaceDiscardsItsPagesAndProfile() {
+    @Test func deletingSpaceDiscardsItsPages() {
         var state = BrowserState.initial()
         let work = state.spaces[1].id
         BrowserReducer.reduce(&state, .switchSpace(work), env: env)
@@ -112,7 +113,66 @@ private let c = URL(string: "https://c.example")!
         #expect(state.spaces.count == 1)
         #expect(state.tabs[id] == nil)
         #expect(result.effects.contains(.discardPage(id)))
-        #expect(result.effects.contains(.releaseSpace(work)))
+    }
+
+    @Test func favoritesFollowTheActiveSpace() {
+        var state = BrowserState.initial()
+        let id = open(&state, a)[0]
+        BrowserReducer.reduce(&state, .toggleFavorite(id), env: env)
+        #expect(state.favorites == [id])
+        #expect(state.activeSpace.today.isEmpty)
+
+        let work = state.spaces[1].id
+        BrowserReducer.reduce(&state, .switchSpace(work), env: env)
+        BrowserReducer.reduce(&state, .selectTab(id), env: env)
+        #expect(state.activeSpaceID == work)
+        #expect(state.selectedTabID == id)
+
+        // Closing a favorite unloads it but keeps it.
+        let result = BrowserReducer.reduce(&state, .closeTab(id), env: env)
+        #expect(state.favorites == [id])
+        #expect(state.tabs[id] != nil)
+        #expect(result.effects.first == .discardPage(id))
+        #expect(state.selectedTabID == nil)
+    }
+
+    @Test func clearTodayKeepsSelectedAndPinned() {
+        var state = BrowserState.initial()
+        let ids = open(&state, a, b, c)
+        BrowserReducer.reduce(&state, .togglePin(ids[0]), env: env)
+        BrowserReducer.reduce(&state, .clearToday, env: env)
+        #expect(state.activeSpace.pinned == [ids[0]])
+        #expect(state.activeSpace.today == [ids[2]])
+    }
+
+    @Test func profilesSeparateCookieJars() {
+        var state = BrowserState.initial()
+        let id = open(&state, a)[0]
+        BrowserReducer.reduce(&state, .createProfile(name: "Client"), env: env)
+        let client = state.profiles[1].id
+        let personal = state.spaces[0].id
+        let assign = BrowserReducer.reduce(&state, .assignProfile(personal, client), env: env)
+        #expect(state.profileID(forTab: id) == client)
+        #expect(assign.effects == [.discardPage(id), .showTab(id)])
+
+        let delete = BrowserReducer.reduce(&state, .deleteProfile(client), env: env)
+        #expect(state.spaces[0].profileID == .standard)
+        #expect(delete.effects.last == .releaseProfile(client))
+        #expect(!BrowserReducer.reduce(&state, .deleteProfile(.standard), env: env).applied)
+    }
+
+    @Test func importAddsSpacesAndSkipsDuplicates() {
+        var state = BrowserState.initial()
+        _ = open(&state, a)
+        let data = BrowserImport(source: "Arc", spaces: [
+            .init(name: "personal", pinned: [.init(url: a, title: "A"), .init(url: b, title: "B")]),
+            .init(name: "Research", icon: "book", pinned: [.init(url: c, title: "C")]),
+        ], favorites: [.init(url: URL(string: "https://mail.example")!, title: "Mail")])
+        BrowserReducer.reduce(&state, .importBrowserData(data), env: env)
+        #expect(state.favorites.count == 1)
+        #expect(state.spaces[0].pinned.count == 1) // a was already open
+        #expect(state.spaces.map(\.name) == ["Personal", "Work", "Research"])
+        #expect(state.spaces[2].icon == "book")
     }
 
     @Test func pageUpdatesChangeMetadataWithoutEffects() {
@@ -195,6 +255,14 @@ private let c = URL(string: "https://c.example")!
         #expect(try store.load() == state)
     }
 
+    @Test func decodesStateFromBeforeProfiles() throws {
+        let old = #"{"version":1,"spaces":[{"id":"s","name":"Home","hue":0.5,"pinned":[],"today":["t"],"selectedTabID":"t"}],"tabs":{"t":{"id":"t","url":"https://a.example","title":"A","createdAt":0,"lastActiveAt":0}},"activeSpaceID":"s","closedTabs":[]}"#
+        let state = try JSONDecoder().decode(BrowserState.self, from: Data(old.utf8))
+        #expect(state.profiles.map(\.id) == [.standard])
+        #expect(state.spaces[0].profileID == .standard)
+        #expect(state.favorites.isEmpty)
+    }
+
     @Test func missingFileLoadsNil() throws {
         let store = JSONFileStateStore(fileURL: URL(fileURLWithPath: "/nonexistent/\(UUID())/state.json"))
         #expect(try store.load() == nil)
@@ -220,5 +288,46 @@ private let c = URL(string: "https://c.example")!
     @Test func jsLiteralEscapes() {
         #expect(JSONValue.jsLiteral("a\"b\n</script>") .contains("\\\""))
         #expect(!JSONValue.jsLiteral("line\nbreak").contains("\n"))
+    }
+}
+
+@Suite struct ImporterTests {
+    @Test func readsArcSidebar() throws {
+        let json = #"""
+        {"sidebar":{"containers":[{"global":{}},{"topAppsContainerIDs":[{"default":true},"top"],
+          "spaces":["S1",{"id":"S1","title":"Research","containerIDs":["unpinned","u1","pinned","p1"],
+                          "customInfo":{"iconType":{"emoji_v2":"🔭"}}}],
+          "items":["top",{"id":"top","childrenIds":["f1"],"data":{"itemContainer":{}}},
+                   "f1",{"id":"f1","childrenIds":[],"data":{"tab":{"savedURL":"https://mail.example","savedTitle":"Mail"}}},
+                   "p1",{"id":"p1","childrenIds":["folder","t1"],"data":{"itemContainer":{}}},
+                   "folder",{"id":"folder","title":"Docs","childrenIds":["t2"],"data":{"list":{}}},
+                   "t2",{"id":"t2","childrenIds":[],"data":{"tab":{"savedURL":"https://docs.example","savedTitle":"Docs"}}},
+                   "t1",{"id":"t1","title":"Renamed","childrenIds":[],"data":{"tab":{"savedURL":"https://a.example","savedTitle":"A"}}},
+                   "u1",{"id":"u1","childrenIds":[],"data":{"itemContainer":{}}}]}]}}
+        """#
+        let result = try BrowserImporters.arc(Data(json.utf8))
+        #expect(result.favorites.map(\.title) == ["Mail"])
+        #expect(result.spaces.count == 1)
+        #expect(result.spaces[0].name == "Research")
+        #expect(result.spaces[0].icon == "🔭")
+        #expect(result.spaces[0].pinned.map(\.title) == ["Docs", "Renamed"])
+    }
+
+    @Test func readsChromeBookmarks() throws {
+        let json = #"{"roots":{"bookmark_bar":{"children":[{"type":"url","name":"A","url":"https://a.example"},{"type":"folder","children":[{"type":"url","name":"B","url":"https://b.example"}]}]},"other":{"children":[]}}}"#
+        let result = try BrowserImporters.chrome(Data(json.utf8))
+        #expect(result.favorites.map(\.title) == ["A", "B"])
+        #expect(result.spaces[0].pinned.isEmpty)
+    }
+
+    @Test func pinnedTabsUnloadOnClose() {
+        var state = BrowserState.initial()
+        let id = BrowserReducer.reduce(&state, .openTab(URL(string: "https://a.example")!), env: environment()).openedTabID!
+        BrowserReducer.reduce(&state, .togglePin(id), env: environment())
+        let result = BrowserReducer.reduce(&state, .closeTab(id), env: environment())
+        #expect(state.activeSpace.pinned == [id])
+        #expect(result.effects == [.discardPage(id), .showTab(nil)])
+        BrowserReducer.reduce(&state, .removeTab(id), env: environment())
+        #expect(state.tabs[id] == nil)
     }
 }

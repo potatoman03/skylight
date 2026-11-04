@@ -12,16 +12,19 @@ public struct CommandItem: Identifiable {
     public let subtitle: String?
     public let symbol: String
     public let faviconURL: URL?
+    /// The site the row leads to, so it can show the site's logo.
+    public let pageURL: URL?
     public let perform: @MainActor () -> Void
 
     public init(id: String, kind: Kind, title: String, subtitle: String? = nil, symbol: String,
-                faviconURL: URL? = nil, perform: @escaping @MainActor () -> Void) {
+                faviconURL: URL? = nil, pageURL: URL? = nil, perform: @escaping @MainActor () -> Void) {
         self.id = id
         self.kind = kind
         self.title = title
         self.subtitle = subtitle
         self.symbol = symbol
         self.faviconURL = faviconURL
+        self.pageURL = pageURL
         self.perform = perform
     }
 }

@@ -53,7 +53,7 @@ let package = Package(
         ),
 
         // SwiftUI chrome.
-        .target(name: "SkylightUI", dependencies: ["SkylightBrowser", "SkylightCore", "SkylightEngine", "SkylightAgent"]),
+        .target(name: "SkylightUI", dependencies: ["SkylightBrowser", "SkylightCore", "SkylightEngine", "SkylightAgent", "SkylightKit"]),
 
         // Objective-C++ bridge over the CEF C++ API.
         .target(

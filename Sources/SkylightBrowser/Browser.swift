@@ -17,24 +17,30 @@ public final class Browser {
     public let packages: PackageService
     public let agents: AgentService
     public let commandBar = CommandBarModel()
+    public let preferences: Preferences
     public private(set) var mcpConnection: MCPConnection?
+    /// The Space being renamed, if the rename alert is up.
+    public var renameSpace: SpaceID?
 
-    @ObservationIgnored public let omnibox = Omnibox()
+    public var omnibox: Omnibox { preferences.omnibox }
     @ObservationIgnored private let engine: WebEngine
     @ObservationIgnored private let mcp: MCPServer
 
     public init(engine: WebEngine, paths: AppPaths, version: String) {
         self.engine = engine
+        let preferences = Preferences(fileURL: paths.preferencesFile)
+        self.preferences = preferences
         let store = BrowserStore(persistence: JSONFileStateStore(fileURL: paths.stateFile))
         self.store = store
         self.pages = PageCoordinator(engine: engine, paths: paths, store: store)
         self.packages = PackageService(directory: paths.packagesDirectory)
-        self.agents = AgentService(store: store, pages: pages, packages: packages, omnibox: omnibox, approvals: prompts)
+        self.agents = AgentService(store: store, pages: pages, packages: packages, omnibox: { preferences.omnibox }, approvals: prompts)
         self.mcp = MCPServer(
             catalog: agents.hub,
             info: .init(name: "skylight", version: version, instructions: Self.agentInstructions),
             connectionFile: paths.mcpConnectionFile)
 
+        pages.archiveAfter = { preferences.archiveAfterHours * 60 * 60 }
         store.effectHandler = pages
         pages.sink = self
         pages.onPageGone = { [weak self] id, tabClosed in
@@ -49,6 +55,7 @@ public final class Browser {
     }
 
     public func start() {
+        preferences.applyAppearance()
         packages.start()
         updatePageScripts()
         pages.start()
@@ -121,6 +128,60 @@ public final class Browser {
         }
     }
 
+    public enum ImportSource: String, CaseIterable, Sendable {
+        case arc = "Arc", chrome = "Chrome"
+
+        public var file: URL {
+            switch self {
+            case .arc: BrowserImporters.arcFile
+            case .chrome: BrowserImporters.chromeBookmarksFile
+            }
+        }
+
+        public var isAvailable: Bool { FileManager.default.fileExists(atPath: file.path) }
+    }
+
+    /// Brings Spaces, pinned tabs and favorites over from another browser. Returns a summary.
+    @discardableResult
+    public func importBrowser(_ source: ImportSource) -> String {
+        do {
+            let data = try Data(contentsOf: source.file)
+            let imported = switch source {
+            case .arc: try BrowserImporters.arc(data)
+            case .chrome: try BrowserImporters.chrome(data)
+            }
+            let before = store.state.tabs.count
+            store.send(.importBrowserData(imported))
+            let added = store.state.tabs.count - before
+            let message = added == 0 ? "Everything from \(source.rawValue) is already here"
+                : "Imported \(added) tab\(added == 1 ? "" : "s") from \(source.rawValue)"
+            toasts.show(message, symbol: "square.and.arrow.down")
+            return message
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? "Couldn't import from \(source.rawValue)."
+            toasts.show(message, symbol: "exclamationmark.triangle")
+            return message
+        }
+    }
+
+    public static let settingsURL = URL(string: "skylight://settings")!
+
+    /// Shows the settings page: the open one if there is one, else a new tab.
+    public func openSettings(_ section: String? = nil) {
+        let url = section.map { Self.settingsURL.appending(path: $0) } ?? Self.settingsURL
+        let state = store.state
+        if let id = (state.favorites + state.activeSpace.allTabIDs).first(where: { state.tabs[$0]?.url.isSkylightPage == true }) {
+            store.send(.selectTab(id))
+            if section != nil { store.send(.pageDidUpdate(id, PageMetadata(url: url))) }
+        } else if let id = store.send(.openTab(url)).openedTabID {
+            store.send(.pageDidUpdate(id, PageMetadata(title: "Settings")))
+        }
+    }
+
+    public func toggleSidebar() {
+        preferences.sidebarCollapsed.toggle()
+    }
+
     public func showDeveloperTools() {
         guard let id = store.state.selectedTabID else { return }
         pages.wake(id)?.showDeveloperTools()
@@ -166,7 +227,7 @@ extension Browser: CommandSource {
             switch interpretation {
             case let .address(url):
                 rows.append(CommandItem(id: "open", kind: .address, title: url.absoluteString,
-                                        subtitle: newTab ? "Open in a new tab" : "Go", symbol: "arrow.up.right") { [weak self] in
+                                        subtitle: newTab ? "Open in a new tab" : "Go", symbol: "arrow.up.right", pageURL: url) { [weak self] in
                     self?.open(query, inNewTab: newTab)
                 })
             case let .search(text, _):
@@ -179,7 +240,8 @@ extension Browser: CommandSource {
         // Open tabs, any Space.
         let state = store.state
         var tabRows: [(Int, CommandItem)] = []
-        for space in state.spaces {
+        let favoritesSpace = Space(id: state.activeSpaceID, name: "Favorites", hue: 0, today: state.favorites)
+        for space in [favoritesSpace] + state.spaces {
             for tab in state.tabs(in: space, .pinned) + state.tabs(in: space, .today) where tab.id != state.selectedTabID {
                 let score = query.isEmpty ? 0 : max(FuzzyMatch.score(query, in: tab.displayTitle) ?? .min,
                                                     (FuzzyMatch.score(query, in: tab.url.absoluteString) ?? .min) - 50)
@@ -188,7 +250,7 @@ extension Browser: CommandSource {
                 let id = tab.id
                 tabRows.append((score, CommandItem(
                     id: "tab-\(tab.id)", kind: .tab, title: tab.displayTitle,
-                    subtitle: "Switch to tab\(spaceNote)", symbol: "square.on.square", faviconURL: tab.faviconURL
+                    subtitle: "Switch to tab\(spaceNote)", symbol: "square.on.square", faviconURL: tab.faviconURL, pageURL: tab.url
                 ) { [weak self] in self?.store.send(.selectTab(id)) }))
             }
         }
@@ -206,7 +268,6 @@ extension Browser: CommandSource {
                 self?.runPackageCommand(packageID: pkg.id, commandID: cmd.id, title: title)
             })
         }
-        command("boost", "Boost this site", "paintbrush") { [weak self] in self?.createBoostForCurrentSite() }
         command("packages", "Show packages folder", "folder") { [weak self] in self?.packages.revealInFinder() }
         command("reopen", "Reopen closed tab", "arrow.uturn.backward") { [weak self] in self?.store.send(.reopenClosedTab) }
         command("new-space", "New Space", "plus.square.on.square") { [weak self] in
@@ -219,10 +280,23 @@ extension Browser: CommandSource {
             command("revoke", "Ask before agents act again", "hand.raised") { [weak self] in self?.prompts.revokeTrust() }
         }
         command("devtools", "Developer tools", "hammer") { [weak self] in self?.showDeveloperTools() }
+        command("settings", "Settings", "gearshape") { [weak self] in self?.openSettings() }
+        command("sidebar", "Toggle sidebar", "sidebar.left") { [weak self] in self?.toggleSidebar() }
+        if let selected = state.selectedTabID {
+            let favorite = state.isFavorite(selected)
+            command("favorite", favorite ? "Remove from favorites" : "Add to favorites", favorite ? "star.slash" : "star") { [weak self] in
+                self?.store.send(.toggleFavorite(selected))
+            }
+        }
+        command("clear-today", "Clear Today tabs", "arrow.down.to.line") { [weak self] in self?.store.send(.clearToday) }
+        for source in ImportSource.allCases where source.isAvailable {
+            command("import-\(source.rawValue)", "Import from \(source.rawValue)", "square.and.arrow.down") { [weak self] in
+                self?.importBrowser(source)
+            }
+        }
 
-        if query.isEmpty {
-            rows += commands.prefix(3)
-        } else {
+        // An empty bar shows only your tabs; commands appear as you type.
+        if !query.isEmpty {
             rows += commands
                 .compactMap { item in FuzzyMatch.score(query, in: item.title).map { ($0, item) } }
                 .sorted { $0.0 > $1.0 }

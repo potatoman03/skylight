@@ -31,6 +31,35 @@ public struct SpaceID: Hashable, Codable, Sendable, CustomStringConvertible {
     public var description: String { rawValue }
 }
 
+public struct ProfileID: Hashable, Codable, Sendable, CustomStringConvertible {
+    public let rawValue: String
+
+    public init(_ rawValue: String = UUID().uuidString) { self.rawValue = rawValue }
+
+    public init(from decoder: Decoder) throws { rawValue = try decoder.singleValueContainer().decode(String.self) }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(rawValue)
+    }
+
+    public var description: String { rawValue }
+
+    /// The profile every Space uses until the user makes another.
+    public static let standard = ProfileID("default")
+}
+
+/// A browsing identity: one cookie jar, cache and set of site permissions. Spaces share profiles,
+/// so you sign in once and stay signed in across the Spaces that use the same profile.
+public struct Profile: Identifiable, Codable, Equatable, Sendable {
+    public let id: ProfileID
+    public var name: String
+
+    public init(id: ProfileID = ProfileID(), name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
 struct AnyKey: CodingKey {
     var stringValue: String
     var intValue: Int? { nil }
@@ -72,23 +101,43 @@ public enum TabSection: String, Codable, Sendable, CaseIterable {
     case today
 }
 
-/// A Space: its own tabs, its own color, and its own cookie jar (one engine profile per Space).
+/// A Space: its own tabs, color and icon, browsing as one profile.
 public struct Space: Identifiable, Codable, Equatable, Sendable {
     public let id: SpaceID
     public var name: String
-    /// 0...1, the hue that tints the sidebar glass.
+    /// 0...1, the hue of the Space's sky.
     public var hue: Double
+    /// An emoji or SF Symbol name; nil shows the Space's color.
+    public var icon: String?
+    public var profileID: ProfileID
     public var pinned: [TabID]
     public var today: [TabID]
     public var selectedTabID: TabID?
 
-    public init(id: SpaceID = SpaceID(), name: String, hue: Double, pinned: [TabID] = [], today: [TabID] = [], selectedTabID: TabID? = nil) {
+    public init(id: SpaceID = SpaceID(), name: String, hue: Double, icon: String? = nil, profileID: ProfileID = .standard,
+                pinned: [TabID] = [], today: [TabID] = [], selectedTabID: TabID? = nil) {
         self.id = id
         self.name = name
         self.hue = hue
+        self.icon = icon
+        self.profileID = profileID
         self.pinned = pinned
         self.today = today
         self.selectedTabID = selectedTabID
+    }
+
+    enum CodingKeys: String, CodingKey { case id, name, hue, icon, profileID, pinned, today, selectedTabID }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(SpaceID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        hue = try c.decode(Double.self, forKey: .hue)
+        icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        profileID = try c.decodeIfPresent(ProfileID.self, forKey: .profileID) ?? .standard
+        pinned = try c.decodeIfPresent([TabID].self, forKey: .pinned) ?? []
+        today = try c.decodeIfPresent([TabID].self, forKey: .today) ?? []
+        selectedTabID = try c.decodeIfPresent(TabID.self, forKey: .selectedTabID)
     }
 
     public var allTabIDs: [TabID] { pinned + today }
@@ -127,6 +176,11 @@ public struct PageStatus: Equatable, Sendable {
 }
 
 /// What the engine reports when a page changes.
+extension URL {
+    /// Skylight's own pages (`skylight://settings`) are drawn natively, not by the engine.
+    public var isSkylightPage: Bool { scheme == "skylight" }
+}
+
 public struct PageMetadata: Equatable, Sendable {
     public var url: URL?
     public var title: String?

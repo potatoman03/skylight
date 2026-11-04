@@ -26,6 +26,8 @@ public final class PageCoordinator: BrowserEffectHandler {
     public private(set) var visibleTabID: TabID?
 
     @ObservationIgnored public var policy = HibernationPolicy()
+    /// Today tabs idle this long are archived.
+    @ObservationIgnored public var archiveAfter: @MainActor () -> TimeInterval = { 12 * 60 * 60 }
     @ObservationIgnored public weak var sink: PageEventSink?
     /// A tab's page went away. `tabClosed` is true when the tab itself is gone.
     @ObservationIgnored public var onPageGone: (@MainActor (TabID, _ tabClosed: Bool) -> Void)?
@@ -35,7 +37,7 @@ public final class PageCoordinator: BrowserEffectHandler {
     @ObservationIgnored private weak var store: BrowserStore?
     @ObservationIgnored private var pages: [TabID: WebPage] = [:]
     @ObservationIgnored private var tabForPage: [ObjectIdentifier: TabID] = [:]
-    @ObservationIgnored private var profiles: [SpaceID: WebProfile] = [:]
+    @ObservationIgnored private var profiles: [ProfileID: WebProfile] = [:]
     @ObservationIgnored private var lastSeen: [TabID: Date] = [:]
     @ObservationIgnored private var closing: Set<ObjectIdentifier> = []
     @ObservationIgnored private var sweepTimer: Timer?
@@ -66,12 +68,20 @@ public final class PageCoordinator: BrowserEffectHandler {
             case let .reload(id): if let page = pages[id] { page.reload() } else { wake(id) }
             case let .stop(id): pages[id]?.stop()
             case let .discardPage(id): sleep(id)
-            case let .releaseSpace(id): profiles[id] = nil
+            case let .releaseProfile(id): profiles[id] = nil
             }
         }
     }
 
     private func show(_ id: TabID?) {
+        if visibleTabID != id, let layer = hostView.layer {
+            // Tabs swap as a quick crossfade, never a hard cut.
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = 0.16
+            fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0.75, 0.1, 1)
+            layer.add(fade, forKey: "swap")
+        }
         if let old = visibleTabID, old != id, let page = pages[old] {
             page.view.isHidden = true
             page.setVisible(false)
@@ -95,8 +105,8 @@ public final class PageCoordinator: BrowserEffectHandler {
     @discardableResult
     public func wake(_ id: TabID) -> WebPage? {
         if let page = pages[id] { return page }
-        guard let store, let tab = store.state.tabs[id], let space = store.state.space(containing: id) else { return nil }
-        let page = engine.makePage(url: tab.url, profile: profile(for: space.id), delegate: self)
+        guard let store, let tab = store.state.tabs[id], !tab.url.isSkylightPage else { return nil }
+        let page = engine.makePage(url: tab.url, profile: profile(for: store.state.profileID(forTab: id)), delegate: self)
         pages[id] = page
         tabForPage[ObjectIdentifier(page)] = id
         lastSeen[id] = .now
@@ -128,10 +138,10 @@ public final class PageCoordinator: BrowserEffectHandler {
         store?.updateStatus(id) { $0 = PageStatus() }
     }
 
-    private func profile(for space: SpaceID) -> WebProfile {
-        if let profile = profiles[space] { return profile }
-        let profile = engine.makeProfile(directory: paths.profileDirectory(for: space))
-        profiles[space] = profile
+    private func profile(for id: ProfileID) -> WebProfile {
+        if let profile = profiles[id] { return profile }
+        let profile = engine.makeProfile(directory: paths.profileDirectory(for: id))
+        profiles[id] = profile
         return profile
     }
 
@@ -141,7 +151,7 @@ public final class PageCoordinator: BrowserEffectHandler {
         var protected = store.state.selectedTabIDs
         if let visibleTabID { protected.insert(visibleTabID) }
         for id in policy.pagesToSleep(awake: lastSeen, protected: protected, now: now) { sleep(id) }
-        store.send(.archiveTabs(idleSince: now.addingTimeInterval(-12 * 60 * 60)))
+        store.send(.archiveTabs(idleSince: now.addingTimeInterval(-archiveAfter())))
     }
 
     /// Waits until the tab's page has finished loading (or `timeout` passes).

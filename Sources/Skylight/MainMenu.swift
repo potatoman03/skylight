@@ -10,6 +10,8 @@ enum MainMenu {
         main.addItem(submenu("Skylight", [
             item("About Skylight", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "", target: nil),
             .separator(),
+            item("Settings…", #selector(AppDelegate.showSettings(_:)), ",", target: target),
+            .separator(),
             item("Copy Claude Code Connection Command", #selector(AppDelegate.copyAgentCommand(_:)), "", target: target),
             item("Show Packages Folder", #selector(AppDelegate.showPackages(_:)), "", target: target),
             .separator(),
@@ -26,6 +28,9 @@ enum MainMenu {
             item("Reopen Closed Tab", #selector(AppDelegate.reopenTab(_:)), "t", [.command, .shift], target: target),
             .separator(),
             item("New Space", #selector(AppDelegate.newSpace(_:)), "n", [.command, .shift], target: target),
+            .separator(),
+            item("Import from Arc", #selector(AppDelegate.importFromArc(_:)), "", target: target),
+            item("Import from Chrome", #selector(AppDelegate.importFromChrome(_:)), "", target: target),
             .separator(),
             item("Close Tab", #selector(AppDelegate.closeTab(_:)), "w", target: target),
             item("Close Window", #selector(AppDelegate.close(_:)), "w", [.command, .shift], target: target),
@@ -44,6 +49,8 @@ enum MainMenu {
         ]))
 
         main.addItem(submenu("View", [
+            item("Toggle Sidebar", #selector(AppDelegate.toggleSidebar(_:)), "s", target: target),
+            .separator(),
             item("Reload Page", #selector(AppDelegate.reload(_:)), "r", target: target),
             item("Stop", #selector(AppDelegate.stopLoading(_:)), ".", target: target),
             .separator(),
@@ -60,6 +67,8 @@ enum MainMenu {
             item("Next Tab", #selector(AppDelegate.nextTab(_:)), "\t", [.control], target: target),
             item("Previous Tab", #selector(AppDelegate.previousTab(_:)), "\t", [.control, .shift], target: target),
             item("Pin Tab", #selector(AppDelegate.togglePin(_:)), "d", target: target),
+            item("Add to Favorites", #selector(AppDelegate.toggleFavorite(_:)), "d", [.command, .shift], target: target),
+            item("Clear Today", #selector(AppDelegate.clearToday(_:)), "k", [.command, .shift], target: target),
             .separator(),
             item("Next Space", #selector(AppDelegate.nextSpace(_:)), String(UnicodeScalar(NSRightArrowFunctionKey)!), [.command, .option], target: target),
             item("Previous Space", #selector(AppDelegate.previousSpace(_:)), String(UnicodeScalar(NSLeftArrowFunctionKey)!), [.command, .option], target: target),

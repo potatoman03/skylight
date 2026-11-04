@@ -1,5 +1,7 @@
 # Skylight
 
+![Skylight](docs/screenshot.png)
+
 An open-source browser for macOS in the spirit of Arc: a native SwiftUI shell with Liquid Glass,
 Spaces and a vertical sidebar, around Chromium (via CEF). Built to be light, easy to extend, and
 usable by AI agents as a first-class citizen.
@@ -20,8 +22,9 @@ open build/Skylight.app
 
 `scripts/bundle.sh release` makes an optimized build. Tests: `swift test`.
 
-Data lives in `~/Library/Application Support/Skylight` (`state.json`, `Packages/`, `Engine/`, `mcp.json`).
-Set `SKYLIGHT_DEBUG_PORT=9333` to expose Chrome DevTools Protocol for debugging.
+Data lives in `~/Library/Application Support/Skylight` (`state.json`, `preferences.json`, `Packages/`,
+`Engine/`, `mcp.json`). Set `SKYLIGHT_DATA_DIR` to run against another folder, and
+`SKYLIGHT_DEBUG_PORT=9333` to expose Chrome DevTools Protocol for debugging.
 
 ## Using it
 
@@ -30,16 +33,32 @@ Set `SKYLIGHT_DEBUG_PORT=9333` to expose Chrome DevTools Protocol for debugging.
 | ⌘T | Command bar: search, open a URL, switch to any tab, run commands |
 | ⌘L | Edit the current address |
 | ⌘W / ⌘⇧T | Close tab / reopen it |
-| ⌘D | Pin or unpin the tab |
+| ⌘D / ⌘⇧D | Pin the tab / add it to favorites |
+| ⌘⇧K | Clear Today |
+| ⌘S | Hide the sidebar (it slides back when the pointer touches the left edge) |
+| ⌘, | Settings (a page in the browser, `skylight://settings`) |
 | ⌃Tab | Next tab |
 | ⌃1–9, ⌥⌘←/→ | Switch Space |
 | ⌘⇧N | New Space |
 | ⌘⇧B | Boost this site |
 | ⌥⌘I | Developer tools |
 
-Each Space has its own color and its own cookie jar, so you can be signed in to different
-accounts in different Spaces. Today tabs that sit untouched for 12 hours are archived (⌘⇧T brings
-them back). Pages you haven't looked at in 20 minutes go to sleep and reload when you return.
+The sidebar works like Arc's. **Favorites** at the top belong to every Space. Each Space has
+**pinned** tabs, then a line with **Clear**, then **Today**. Drag tabs between them. Closing a
+pinned tab or favorite only unloads it; Delete in its menu removes it. Today tabs untouched for 12
+hours are archived (⌘⇧T brings them back; the time is in Settings). Pages you haven't looked at in
+20 minutes go to sleep and reload when you return.
+
+Each Space has a color, an icon and a **profile**. A profile is a cookie jar: Spaces on different
+profiles can be signed in to different accounts. Manage them in Settings → Profiles, or from a
+Space's ⋯ menu.
+
+**Import** (File menu or Settings → Import) brings over Arc's Spaces, pinned tabs and favorites, or
+Chrome's bookmarks.
+
+The sky behind everything is a small Metal shader: light falls through it, slowly, in the active
+Space's color. It runs at 30 fps only while the window is in front, and stops with Reduce Motion or
+when "Light through the sky" is off.
 
 ## Packages
 
@@ -64,8 +83,8 @@ skylight.command('focus', () => document.body.classList.toggle('focus'));
 ```
 
 Saving a file reloads the package. CSS changes apply to open pages immediately; script changes
-apply on the next load. Commands show up in the command bar on matching sites. "Boost this site"
-creates a package for the current site and opens its stylesheet.
+apply on the next load. Commands show up in the command bar on matching sites. View → Boost This
+Site (⌘⇧B) creates a package for the current site and opens its stylesheet.
 
 ## Agents (MCP and WebMCP)
 
@@ -96,6 +115,35 @@ navigator.modelContext.registerTool({
 
 The token in `mcp.json` (mode 600) is required on every request, and requests with a non-local
 `Origin` are refused.
+
+## Performance
+
+Measured on an M5 Pro, release build, with `scripts/bench.py` (median of 3 launches, fresh data
+folder each time) and `swift test -c release --filter Performance`.
+
+| Bundle | |
+|---|---|
+| Skylight.app | 334 MB (Chromium is 326 MB of it; Skylight's own code is 4 MB) |
+| Arc.app, for comparison | 870 MB |
+
+| Runtime | window up | memory | idle CPU | processes |
+|---|---|---|---|---|
+| Empty tab | 0.45 s | 138 MB | 0.8% | 4 |
+| One light page (example.com) | 0.45 s | 242 MB | 0.9% | 6 |
+| One heavy page (swift.org, animated) | 0.44 s | 621 MB | 6.0% | 6 |
+| Five tabs, one awake | 0.45 s | 286 MB | 0.7% | 6 |
+
+Memory is physical footprint summed over Skylight and its helpers. Sleeping tabs cost almost
+nothing: five tabs with one awake use about as much as one page.
+
+| Hot paths | |
+|---|---|
+| The sky shader | 0.28 ms of GPU per frame at 1280×820, 30 fps: under 1% of the GPU, and zero while the window is in the background |
+| A reducer action (open, select, close a tab) | 13–35 µs |
+| Saving / loading 2,000 tabs | 12 ms / 18 ms (510 KB) |
+| An MCP tools/list + tools/call round trip | 60 µs |
+| Matching a package URL pattern | 0.7 µs |
+| Importing 500 pinned tabs from Arc | 4 ms |
 
 ## Architecture
 

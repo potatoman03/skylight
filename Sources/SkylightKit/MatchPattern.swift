@@ -10,6 +10,10 @@ public struct MatchPattern: Equatable, Sendable, CustomStringConvertible {
     public let pattern: String
     /// A regular expression valid in both NSRegularExpression and JavaScript.
     public let regexSource: String
+    /// Compiled once: compiling per match made matching ~100× slower.
+    private let regex: NSRegularExpression?
+
+    public static func == (a: MatchPattern, b: MatchPattern) -> Bool { a.pattern == b.pattern }
 
     public var description: String { pattern }
 
@@ -17,6 +21,7 @@ public struct MatchPattern: Equatable, Sendable, CustomStringConvertible {
         self.pattern = pattern
         if pattern == "<all_urls>" {
             regexSource = "^(https?|file)://.*$"
+            regex = try? NSRegularExpression(pattern: regexSource, options: [.caseInsensitive])
             return
         }
         guard let schemeEnd = pattern.range(of: "://") else { return nil }
@@ -52,11 +57,12 @@ public struct MatchPattern: Equatable, Sendable, CustomStringConvertible {
             .map { Self.escape(String($0)) }
             .joined(separator: ".*")
         regexSource = "^\(schemeRegex)://\(hostRegex)\(pathRegex)$"
+        regex = try? NSRegularExpression(pattern: regexSource, options: [.caseInsensitive])
     }
 
     public func matches(_ url: URL) -> Bool {
+        guard let regex else { return false }
         let s = url.absoluteString
-        guard let regex = try? NSRegularExpression(pattern: regexSource, options: [.caseInsensitive]) else { return false }
         return regex.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil
     }
 
