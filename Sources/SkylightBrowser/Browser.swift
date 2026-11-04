@@ -24,6 +24,8 @@ public final class Browser {
     public private(set) var mcpConnection: MCPConnection?
     /// The Space being renamed, if the rename alert is up.
     public var renameSpace: SpaceID?
+    /// The folder whose name is being edited in the sidebar, as when it's just been made.
+    public var renameFolder: String?
     /// Opens the Settings window; the app provides it.
     @ObservationIgnored public var showSettings: @MainActor (String?) -> Void = { _ in }
 
@@ -265,6 +267,13 @@ public final class Browser {
 
     /// Shows the Settings window, at `section` (`"passwords"`, `"extensions"`…) if given.
     public func openSettings(_ section: String? = nil) { showSettings(section) }
+
+    /// Makes a folder in the active Space (holding `tabs`, if any) and starts naming it.
+    public func newFolder(with tabs: [TabID] = []) {
+        let id = UUID().uuidString
+        store.send(.createFolder(id: id, space: store.state.activeSpaceID, name: "New Folder", tabs: tabs))
+        renameFolder = id
+    }
 
     public func toggleSidebar() {
         preferences.sidebarCollapsed.toggle()

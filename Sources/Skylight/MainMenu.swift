@@ -29,6 +29,7 @@ enum MainMenu {
             item("Reopen Closed Tab", #selector(AppDelegate.reopenTab(_:)), "t", [.command, .shift], target: target),
             .separator(),
             item("New Space", #selector(AppDelegate.newSpace(_:)), "n", [.command, .shift], target: target),
+            item("New Folder", #selector(AppDelegate.newFolder(_:)), "n", [.command, .option], target: target),
             .separator(),
             submenu("Import From", Browser.ImportSource.allCases.filter(\.isAvailable).map { source in
                 let item = item(source.rawValue, #selector(AppDelegate.importFrom(_:)), "", target: target)

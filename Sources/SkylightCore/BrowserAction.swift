@@ -31,6 +31,18 @@ public enum BrowserAction: Equatable, Sendable {
     /// Puts a tab in the favorites at `index` (or moves it there within them).
     case moveToFavorites(TabID, index: Int)
 
+    /// A new folder in a Space's pinned tabs, holding `tabs` (which get pinned if they aren't).
+    case createFolder(id: String, space: SpaceID, name: String, tabs: [TabID] = [])
+    case renameFolder(String, String)
+    /// Removes a folder. Its tabs stay pinned, or close with it when `closeTabs` is set.
+    case deleteFolder(String, closeTabs: Bool = false)
+    case setFolderOpen(String, Bool)
+    /// Moves a folder to another position among the Space's folders.
+    case moveFolder(String, to: Int)
+    /// Puts a tab in a folder at `index` (pinning it, in the folder's Space), or with nil takes it
+    /// out of its folder and leaves it pinned.
+    case moveTabToFolder(TabID, folder: String?, index: Int = .max)
+
     /// Puts `tab` beside `target`'s pane, making a split if there isn't one.
     case splitTab(TabID, beside: TabID, edge: SplitEdge)
     /// Takes a tab out of its split. A split with one pane left goes away.

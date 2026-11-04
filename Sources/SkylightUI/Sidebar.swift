@@ -1,3 +1,4 @@
+import AppKit
 import SkylightAgent
 import SkylightBrowser
 import SkylightCore
@@ -24,18 +25,23 @@ struct Sidebar: View {
         let space = state.activeSpace
         let prefs = browser.preferences
 
-        List(selection: selection) {
-            // Favorites sit on top as a grid of tiles, as in Arc, shared by every Space.
+        VStack(spacing: 0) {
+            // Favorites sit on top as a grid of tiles, as in Arc, shared by every Space. They're
+            // outside the list so each tile takes its own clicks, tooltips and menu.
             if prefs.shows(.favorites), !state.favorites.isEmpty || drag.active != nil {
                 FavoritesGrid(tabs: state.favoriteTabs, selected: state.selectedTabID)
-                    .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 8, trailing: 8))
-                    .listRowSeparator(.hidden)
-                    .selectionDisabled()
+                    .padding(.horizontal, 10)
+                    .padding(.top, 4)
+                    .padding(.bottom, 6)
             }
+            List(selection: selection) {
 
             Section {
+                ForEach(space.folders) { folder in
+                    FolderRow(folder: folder)
+                }
                 rows(space, .pinned)
-                if space.pinned.isEmpty {
+                if space.pinned.isEmpty, space.folders.isEmpty {
                     DropHint(text: "Drag tabs here to pin them", target: .section(.pinned, row: 0))
                 }
             } header: {
@@ -49,14 +55,16 @@ struct Sidebar: View {
                 TodayHeader(space: space)
             }
         }
-        .listStyle(.sidebar)
-        .environment(\.sidebarRowSize, prefs.density.rowSize)
-        .scrollContentBackground(prefs.skyBackdrop ? .hidden : .automatic)
+            .listStyle(.sidebar)
+            .environment(\.sidebarRowSize, prefs.density.rowSize)
+            .scrollContentBackground(.hidden)
+        }
         .background {
             if prefs.skyBackdrop {
                 let palette = prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue)
                 SkyBackdrop(palette: palette, rays: prefs.godRays).ignoresSafeArea()
             }
+            // Otherwise the window's translucent backdrop (RootView) shows through.
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 6) {
@@ -75,7 +83,8 @@ struct Sidebar: View {
     @ViewBuilder
     private func rows(_ space: Space, _ section: SkylightCore.TabSection) -> some View {
         let state = browser.store.state
-        ForEach(SidebarRows.make(space[section], space: space), id: \.self) { row in
+        // Pinned tabs in folders show in their folders.
+        ForEach(SidebarRows.make(section == .pinned ? space.loosePinned : space.today, space: space), id: \.self) { row in
             if row.count > 1, let split = space.split(containing: row[0]) {
                 SplitRow(split: split).tag(SidebarRow.split(split.id))
             } else if let tab = state.tabs[row[0]] {
@@ -120,11 +129,11 @@ private struct FavoritesGrid: View {
             Text("Drop a tab here to keep it in every Space")
                 .font(.callout)
                 .foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 8))
                 .dropDestination(for: String.self) { items, _ in browser.drop(items, on: .favorites(index: 0)) }
         } else {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 52, maximum: 80), spacing: 8)], spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 40, maximum: 64), spacing: 6)], spacing: 6) {
                 ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                     FavoriteTile(tab: tab, selected: tab.id == selected)
                         .dropDestination(for: String.self) { items, _ in browser.drop(items, on: .favorites(index: index)) }
@@ -147,29 +156,128 @@ private struct FavoriteTile: View {
     var body: some View {
         let status = browser.store.status(of: tab.id)
         ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(selected ? AnyShapeStyle(.tint.opacity(0.22)) : AnyShapeStyle(.quaternary.opacity(hovering ? 1 : 0.6)))
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), lineWidth: 1.5)
             if status.isLoading {
                 ProgressView().controlSize(.small)
             } else {
-                Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 20)
+                Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 16)
             }
         }
-        .frame(height: 44)
+        .frame(maxWidth: .infinity)
+        .frame(height: 34)
+        .glassEffect(selected ? .regular.tint(.accentColor.opacity(0.35)).interactive() : .regular.interactive(),
+                     in: .rect(cornerRadius: 10, style: .continuous))
         .overlay(alignment: .topTrailing) {
-            MediaBadge(tab: tab.id).padding(2)
+            MediaBadge(tab: tab.id).controlSize(.mini).padding(1)
         }
-        .contentShape(.rect(cornerRadius: 10))
-        .onTapGesture { browser.store.send(.selectTab(tab.id)) }
+        .contentShape(.rect(cornerRadius: 8))
         .onHover { hovering = $0 }
-        .help(tab.displayTitle)
+        .onTapGesture { browser.store.send(.selectTab(tab.id)) }
         .contextMenu { TabMenu(tab: tab) }
         .tabDrag(tab, source: .row, session: drag)
+        .help(tab.displayTitle)
         .accessibilityElement()
         .accessibilityLabel(tab.displayTitle)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// A folder of pinned tabs: click it to open or close it, drop tabs on it or between its tabs.
+private struct FolderRow: View {
+    let folder: TabFolder
+    @Environment(Browser.self) private var browser
+    @State private var editing = false
+    @State private var name = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let state = browser.store.state
+        DisclosureGroup(isExpanded: Binding(get: { folder.isOpen }, set: { setOpen($0) })) {
+            ForEach(folder.tabs, id: \.self) { id in
+                if let tab = state.tabs[id] {
+                    TabRow(tab: tab, kind: .pinned).tag(SidebarRow.tab(id))
+                }
+            }
+            .dropDestination(for: String.self) { items, index in browser.drop(items, on: .folder(folder.id, index: index)) }
+            if folder.tabs.isEmpty {
+                DropHint(text: "Drag tabs here", target: .folder(folder.id, index: 0))
+            }
+        } label: {
+            Label {
+                if editing {
+                    TextField("Folder name", text: $name)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .focused($focused)
+                        .onSubmit(commit)
+                        .onExitCommand { editing = false }
+                        .onChange(of: focused) { _, now in if !now { commit() } }
+                } else {
+                    HStack {
+                        Text(folder.name).fadingTail()
+                        Spacer(minLength: 4)
+                        if !folder.isOpen, !folder.tabs.isEmpty {
+                            Text("\(folder.tabs.count)").font(.caption).foregroundStyle(.tertiary).monospacedDigit()
+                        }
+                    }
+                    .contentShape(.rect)
+                    .onTapGesture { setOpen(!folder.isOpen) }
+                }
+            } icon: {
+                Image(systemName: folder.isOpen ? "folder" : "folder.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .contextMenu { FolderMenu(folder: folder, rename: startEditing) }
+            .dropDestination(for: String.self) { items, _ in browser.drop(items, on: .folder(folder.id, index: .max)) }
+        }
+        .onAppear { if browser.renameFolder == folder.id { startEditing() } }
+        .onChange(of: browser.renameFolder) { _, id in if id == folder.id { startEditing() } }
+    }
+
+    private func setOpen(_ open: Bool) {
+        animate(Motion.travel) { _ = browser.store.send(.setFolderOpen(folder.id, open)) }
+    }
+
+    private func startEditing() {
+        browser.renameFolder = nil
+        name = folder.name
+        editing = true
+        DispatchQueue.main.async { focused = true }
+    }
+
+    private func commit() {
+        guard editing else { return }
+        editing = false
+        browser.store.send(.renameFolder(folder.id, name))
+    }
+}
+
+private struct FolderMenu: View {
+    let folder: TabFolder
+    let rename: () -> Void
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        let store = browser.store
+        let folders = store.state.activeSpace.folders
+        let index = folders.firstIndex { $0.id == folder.id } ?? 0
+        Button("Rename…", action: rename)
+        Button(folder.isOpen ? "Close Folder" : "Open Folder") {
+            animate(Motion.travel) { _ = store.send(.setFolderOpen(folder.id, !folder.isOpen)) }
+        }
+        if folders.count > 1 {
+            Divider()
+            if index > 0 {
+                Button("Move Up") { animate(Motion.travel) { _ = store.send(.moveFolder(folder.id, to: index - 1)) } }
+            }
+            if index < folders.count - 1 {
+                Button("Move Down") { animate(Motion.travel) { _ = store.send(.moveFolder(folder.id, to: index + 1)) } }
+            }
+        }
+        Divider()
+        Button("Delete Folder, Keep Tabs") { animate(Motion.travel) { _ = store.send(.deleteFolder(folder.id)) } }
+        Button("Delete Folder and Its Tabs", role: .destructive) {
+            animate(Motion.travel) { _ = store.send(.deleteFolder(folder.id, closeTabs: true)) }
+        }
     }
 }
 
@@ -201,9 +309,13 @@ private struct SpaceHeader: View {
     var body: some View {
         let profile = browser.store.state.profile(space.profileID)
         HStack(spacing: 6) {
+            SpaceIcon(icon: space.icon, name: space.name, size: 11)
+                .foregroundStyle(Theme.accent(space.hue))
+                .frame(width: 14)
             if editing {
                 TextField("Space name", text: $name)
-                    .textFieldStyle(.plain)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
                     .focused($focused)
                     .onSubmit(commit)
                     .onExitCommand { editing = false }
@@ -234,6 +346,8 @@ private struct SpaceHeader: View {
             .fixedSize()
             .help("Space options")
         }
+        // Headers run to the list's edge; bring their buttons in line with the rows' highlight.
+        .padding(.trailing, SidebarMetrics.headerTrailing)
         .contextMenu { SpaceMenu(space: space) }
         .onChange(of: browser.renameSpace) { _, id in
             // Renaming the Space on screen happens right here, not in an alert.
@@ -263,14 +377,117 @@ private struct TodayHeader: View {
     @Environment(Browser.self) private var browser
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text("Today")
+        HStack(spacing: 2) {
+            Text("Today").fixedSize()
             Spacer(minLength: 4)
+            if Tidy.candidates(space).count > 1 { TidyButton() }
             if !space.today.isEmpty {
-                Button("Clear") { animate(Motion.travel) { _ = browser.store.send(.clearToday) } }
-                    .buttonStyle(.borderless)
-                    .help("Close today's tabs, except this one (⌘⇧K)")
+                HeaderButton("Clear", systemImage: "arrow.down") {
+                    animate(Motion.travel) { _ = browser.store.send(.clearToday) }
+                }
+                .help("Close today's tabs, except this one (⌘⇧K)")
             }
+        }
+        .padding(.trailing, SidebarMetrics.headerTrailing)
+    }
+}
+
+/// Gathers today's tabs into folders, the way you last asked (right-click to ask another way).
+private struct TidyButton: View {
+    @Environment(Browser.self) private var browser
+    @State private var working = false
+    @State private var asking = false
+    @State private var how = ""
+
+    var body: some View {
+        HeaderButton("Tidy", systemImage: "sparkles", busy: working) { tidy(browser.preferences.tidyInstruction) }
+            .disabled(working)
+            .help(browser.tidyUsesModel
+                  ? "Put today's tabs in folders \(label(browser.preferences.tidyInstruction)). Right-click to choose how."
+                  : "Put today's tabs in folders by site. Turn on Apple Intelligence to group them any way you like.")
+            .contextMenu {
+                ForEach(["by topic", "by site", "by project", "work and personal"], id: \.self) { way in
+                    Toggle(label(way).capitalized, isOn: Binding(get: { label(browser.preferences.tidyInstruction) == way },
+                                                                set: { _ in tidy(way) }))
+                }
+                Divider()
+                Button("Other…") {
+                    how = browser.preferences.tidyInstruction
+                    asking = true
+                }
+            }
+            .popover(isPresented: $asking, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Group today's tabs…").font(.headline)
+                    TextField("by client, by trip, to read later…", text: $how)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 240)
+                        .onSubmit {
+                            asking = false
+                            tidy(how)
+                        }
+                }
+                .padding(12)
+            }
+    }
+
+    private func label(_ way: String) -> String { way.isEmpty ? "by topic" : way }
+
+    private func tidy(_ way: String) {
+        browser.preferences.tidyInstruction = way == "by topic" ? "" : way
+        working = true
+        Task {
+            let plan = await browser.tidyPlan(how: way)
+            working = false
+            animate(Motion.travel) { browser.applyTidy(plan.groups, in: plan.space) }
+        }
+    }
+}
+
+/// A small text button in a section header: an icon and a word, highlighted on hover.
+private struct HeaderButton: View {
+    let title: String
+    let systemImage: String
+    var busy = false
+    let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    init(_ title: String, systemImage: String, busy: Bool = false, action: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.busy = busy
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            // In a narrow sidebar, just the icon.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 3) {
+                    icon
+                    Text(title)
+                }
+                .fixedSize()
+                icon
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(.primary.opacity(hovering && isEnabled ? 0.08 : 0), in: .rect(cornerRadius: 6))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .onHover { hovering = $0 }
+        .animation(Motion.feedback, value: hovering)
+        .accessibilityLabel(title)
+    }
+
+    @ViewBuilder private var icon: some View {
+        if busy {
+            ProgressView().controlSize(.mini)
+        } else {
+            Image(systemName: systemImage).imageScale(.small)
         }
     }
 }
@@ -305,8 +522,8 @@ private struct TabRow: View {
         let status = browser.store.status(of: tab.id)
         HStack(spacing: 4) {
             Label {
-                Text(tab.displayTitle)
-                    .lineLimit(1)
+                Text(tab.shortTitle)
+                    .fadingTail()
                     // Pinned tabs and favorites that are asleep read a little quieter.
                     .foregroundStyle(status.isAwake || kind == .today ? .primary : .secondary)
             } icon: {
@@ -332,7 +549,7 @@ private struct TabRow: View {
             }
         }
         .onHover { hovering = $0 }
-        .help(tab.url.absoluteString)
+        .help("\(tab.displayTitle)\n\(tab.url.absoluteString)")
         .contextMenu { TabMenu(tab: tab) }
         .tabDrag(tab, source: .row, session: drag)
     }
@@ -381,8 +598,8 @@ private struct SplitRow: View {
                 if let tab = state.tabs[id] {
                     HStack(spacing: 4) {
                         Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 14)
-                        Text(tab.displayTitle)
-                            .lineLimit(1)
+                        Text(tab.shortTitle)
+                            .fadingTail()
                             .fontWeight(focused == id ? .semibold : .regular)
                         MediaBadge(tab: id)
                     }
@@ -499,6 +716,19 @@ struct TabMenu: View {
         if state.activeSpace.split(containing: tab.id) != nil {
             Button("Remove from Split") { animate(Motion.travel) { _ = browser.store.send(.leaveSplit(tab.id)) } }
         }
+        Menu("Move to Folder") {
+            let space = state.space(containing: tab.id) ?? state.activeSpace
+            let current = space.folder(containing: tab.id)
+            ForEach(space.folders) { folder in
+                Button(folder.name) { animate(Motion.travel) { _ = browser.store.send(.moveTabToFolder(tab.id, folder: folder.id)) } }
+                    .disabled(folder.id == current?.id)
+            }
+            if !space.folders.isEmpty { Divider() }
+            Button("New Folder") { animate(Motion.travel) { browser.newFolder(with: [tab.id]) } }
+            if current != nil {
+                Button("Remove from Folder") { animate(Motion.travel) { _ = browser.store.send(.moveTabToFolder(tab.id, folder: nil)) } }
+            }
+        }
         if !favorite {
             Menu("Move to Space") {
                 ForEach(state.spaces.filter { !$0.contains(tab.id) }) { space in
@@ -531,11 +761,18 @@ struct SpaceMenu: View {
     var body: some View {
         let state = browser.store.state
         Button("Rename…") { browser.renameSpace = space.id }
-        Picker("Icon", selection: Binding(get: { space.icon }, set: { browser.store.send(.setSpaceIcon(space.id, $0)) })) {
-            Text("First Letter").tag(String?.none)
+        if space.id == state.activeSpaceID {
+            Button("New Folder") { animate(Motion.travel) { browser.newFolder() } }
+        }
+        Menu("Icon") {
+            Toggle("First Letter", isOn: Binding(get: { space.icon == nil },
+                                                 set: { if $0 { browser.store.send(.setSpaceIcon(space.id, nil)) } }))
             Divider()
             ForEach(Self.icons, id: \.symbol) { icon in
-                Label(icon.name, systemImage: icon.symbol).tag(Optional(icon.symbol))
+                Toggle(isOn: Binding(get: { space.icon == icon.symbol },
+                                     set: { if $0 { browser.store.send(.setSpaceIcon(space.id, icon.symbol)) } })) {
+                    Label(icon.name, systemImage: icon.symbol)
+                }
             }
         }
         Menu("Profile") {
@@ -581,6 +818,11 @@ private struct AgentActivityBadge: View {
     }
 }
 
+enum SidebarMetrics {
+    /// Section headers' trailing inset, so their buttons end where a selected row's highlight does.
+    static let headerTrailing: CGFloat = 12
+}
+
 extension Preferences.Density {
     var rowSize: SidebarRowSize {
         switch self {
@@ -588,5 +830,34 @@ extension Preferences.Density {
         case .comfortable: .medium
         case .roomy: .large
         }
+    }
+}
+
+/// The window's backdrop behind the sidebar and toolbar: the desktop shows through, softly.
+struct WindowBackdrop: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+extension View {
+    /// A long title runs on and fades out at the end of the row instead of ending in "…".
+    func fadingTail(_ fade: CGFloat = 20) -> some View {
+        lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .clipped()
+            .mask {
+                HStack(spacing: 0) {
+                    Rectangle()
+                    LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: fade)
+                }
+            }
     }
 }

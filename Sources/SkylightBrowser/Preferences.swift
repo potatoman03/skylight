@@ -111,6 +111,8 @@ public final class Preferences {
         var highlightFocusedPane: Bool?
         var autoPictureInPicture: Bool?
         var showMediaControls: Bool?
+        var tidyInstruction: String?
+        var sidebarWidth: Double?
     }
 
     public var searchEngine: SearchEngine = .google { didSet { save() } }
@@ -122,6 +124,8 @@ public final class Preferences {
     /// Today tabs untouched this long are archived.
     public var archiveAfterHours: Double = 12 { didSet { save() } }
     public var sidebarCollapsed = false { didSet { save() } }
+    /// The sidebar's width, as you last dragged it.
+    public var sidebarWidth: Double = 240 { didSet { save() } }
     /// The app's theme; Spaces can pick their own.
     public var themeID = SkyTheme.standard.id { didSet { save() } }
     public var customThemes: [SkyTheme] = [] { didSet { save() } }
@@ -134,6 +138,8 @@ public final class Preferences {
     public var autoPictureInPicture = true { didSet { save() } }
     /// Play, pause and picture-in-picture buttons on tabs that play media.
     public var showMediaControls = true { didSet { save() } }
+    /// How Tidy groups tabs ("by project", "work and personal"); empty is by topic.
+    public var tidyInstruction = "" { didSet { save() } }
 
     /// Every theme you can pick: the presets, then your own.
     public var themes: [SkyTheme] { SkyTheme.presets + customThemes }
@@ -197,6 +203,8 @@ public final class Preferences {
         highlightFocusedPane = stored.highlightFocusedPane ?? highlightFocusedPane
         autoPictureInPicture = stored.autoPictureInPicture ?? autoPictureInPicture
         showMediaControls = stored.showMediaControls ?? showMediaControls
+        tidyInstruction = stored.tidyInstruction ?? tidyInstruction
+        sidebarWidth = stored.sidebarWidth ?? sidebarWidth
     }
 
     public func applyAppearance() {
@@ -214,7 +222,7 @@ public final class Preferences {
                             customThemes: customThemes, hiddenSidebarItems: hiddenSidebarItems, density: density,
                             extensionPlacement: extensionPlacement, skyBackdrop: skyBackdrop,
                             highlightFocusedPane: highlightFocusedPane, autoPictureInPicture: autoPictureInPicture,
-                            showMediaControls: showMediaControls)
+                            showMediaControls: showMediaControls, tidyInstruction: tidyInstruction, sidebarWidth: sidebarWidth)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)

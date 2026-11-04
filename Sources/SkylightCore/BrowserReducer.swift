@@ -23,6 +23,12 @@ public struct ReducerEnvironment: Sendable {
 /// Applies actions to `BrowserState` and lists the engine work they imply. No side effects.
 public enum BrowserReducer {
     public static func reduce(_ state: inout BrowserState, _ action: BrowserAction, env: ReducerEnvironment) -> ReduceResult {
+        let result = apply(&state, action, env: env)
+        if result.applied { pruneFolders(&state) }
+        return result
+    }
+
+    private static func apply(_ state: inout BrowserState, _ action: BrowserAction, env: ReducerEnvironment) -> ReduceResult {
         switch action {
         case let .openTab(url, placement, select, spaceID):
             return openTab(&state, url: url, placement: placement, select: select, spaceID: spaceID, env: env)
@@ -200,6 +206,63 @@ public enum BrowserReducer {
             if !sameProfile { result.effects.append(.discardPage(id)) }
             result.effects.append(.showTab(id))
             return result
+
+        case let .createFolder(id, spaceID, name, tabs):
+            guard let si = state.spaces.firstIndex(where: { $0.id == spaceID }) else { return .ignored }
+            state.spaces[si].folders.append(TabFolder(id: id, name: name))
+            for tab in tabs { _ = apply(&state, .moveTabToFolder(tab, folder: id), env: env) }
+            return ReduceResult()
+
+        case let .renameFolder(id, name):
+            let name = name.trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty, let (si, k) = folderIndex(state, id) else { return .ignored }
+            state.spaces[si].folders[k].name = name
+            return ReduceResult()
+
+        case let .deleteFolder(id, closeTabs):
+            guard let (si, k) = folderIndex(state, id) else { return .ignored }
+            let folder = state.spaces[si].folders.remove(at: k)
+            var result = ReduceResult()
+            if closeTabs {
+                for tab in folder.tabs { result.effects += apply(&state, .removeTab(tab), env: env).effects }
+            }
+            return result
+
+        case let .setFolderOpen(id, open):
+            guard let (si, k) = folderIndex(state, id), state.spaces[si].folders[k].isOpen != open else { return .ignored }
+            state.spaces[si].folders[k].isOpen = open
+            return ReduceResult()
+
+        case let .moveFolder(id, index):
+            guard let (si, k) = folderIndex(state, id) else { return .ignored }
+            let folder = state.spaces[si].folders.remove(at: k)
+            state.spaces[si].folders.insert(folder, at: max(0, min(index, state.spaces[si].folders.count)))
+            return ReduceResult()
+
+        case let .moveTabToFolder(id, folderID, index):
+            guard state.tabs[id] != nil else { return .ignored }
+            guard let folderID else {
+                guard let si = state.spaceIndex(containing: id), let k = state.spaces[si].folders.firstIndex(where: { $0.tabs.contains(id) })
+                else { return .ignored }
+                state.spaces[si].folders[k].tabs.removeAll { $0 == id }
+                return ReduceResult()
+            }
+            guard let (si, _) = folderIndex(state, folderID) else { return .ignored }
+            // Folders hold pinned tabs of their own Space, one pane at a time.
+            leaveSplits(&state, id)
+            if state.isFavorite(id) {
+                state.favorites.removeAll { $0 == id }
+            } else if let from = state.spaceIndex(containing: id) {
+                state.spaces[from].pinned.removeAll { $0 == id }
+                state.spaces[from].today.removeAll { $0 == id }
+                if state.spaces[from].selectedTabID == id, from != si { state.spaces[from].selectedTabID = nil }
+            }
+            state.spaces[si].pinned.append(id)
+            for f in state.spaces[si].folders.indices { state.spaces[si].folders[f].tabs.removeAll { $0 == id } }
+            let k = state.spaces[si].folders.firstIndex { $0.id == folderID }!
+            let tabs = state.spaces[si].folders[k].tabs
+            state.spaces[si].folders[k].tabs.insert(id, at: max(0, min(index, tabs.count)))
+            return ReduceResult()
 
         case let .createSpace(name, hue):
             let hues = state.spaces.map(\.hue)
@@ -461,6 +524,23 @@ public enum BrowserReducer {
         state.tabs[id]?.lastActiveAt = env.now()
         effects.append(.showTab(id))
         return ReduceResult(effects: effects)
+    }
+
+    private static func folderIndex(_ state: BrowserState, _ id: String) -> (Int, Int)? {
+        for si in state.spaces.indices {
+            if let k = state.spaces[si].folders.firstIndex(where: { $0.id == id }) { return (si, k) }
+        }
+        return nil
+    }
+
+    /// A tab that stops being pinned (unpinned, moved, closed for good) leaves its folder.
+    private static func pruneFolders(_ state: inout BrowserState) {
+        for si in state.spaces.indices where !state.spaces[si].folders.isEmpty {
+            let pinned = Set(state.spaces[si].pinned)
+            for k in state.spaces[si].folders.indices where state.spaces[si].folders[k].tabs.contains(where: { !pinned.contains($0) }) {
+                state.spaces[si].folders[k].tabs.removeAll { !pinned.contains($0) }
+            }
+        }
     }
 
     /// Takes a tab out of whichever split holds it; splits left with one pane go away.

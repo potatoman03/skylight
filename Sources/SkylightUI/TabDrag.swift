@@ -66,6 +66,8 @@ enum TabDropTarget: Equatable {
     case favorites(index: Int)
     case space(SpaceID)
     case split(TabID, SplitEdge)
+    /// Into a folder, before its `index`th tab.
+    case folder(String, index: Int)
 }
 
 extension Browser {
@@ -95,17 +97,31 @@ extension Browser {
                 if !state.isFavorite(id), state.space(containing: id)?.id != state.activeSpaceID {
                     store.send(.moveTabToSpace(id, state.activeSpaceID))
                 }
-                // Rows before the drop point, counted in tabs, leaving out what's moving.
+                if store.state.activeSpace.folder(containing: id) != nil { store.send(.moveTabToFolder(id, folder: nil)) }
                 let space = store.state.activeSpace
                 let moving = Set(store.state.isFavorite(id) ? [id] : space.group(of: id))
-                let index = SidebarRows.make(space[section], space: space).prefix(row)
-                    .filter { !$0.contains(where: moving.contains) }
-                    .reduce(0) { $0 + $1.count }
+                let index: Int
+                if section == .pinned {
+                    // Folders' tabs are pinned too, but listed apart: land before the next loose row.
+                    let next = SidebarRows.make(space.loosePinned, space: space).dropFirst(row).first { !$0.contains(where: moving.contains) }
+                    let pinned = space.pinned.filter { !moving.contains($0) }
+                    index = next.flatMap { pinned.firstIndex(of: $0[0]) } ?? pinned.count
+                } else {
+                    // Rows before the drop point, counted in tabs, leaving out what's moving.
+                    index = SidebarRows.make(space[section], space: space).prefix(row)
+                        .filter { !$0.contains(where: moving.contains) }
+                        .reduce(0) { $0 + $1.count }
+                }
                 applied = store.send(.moveTab(id, to: section, index: index)).applied
             case let .favorites(index):
                 let others = state.favorites.filter { $0 != id }
                 let before = state.favorites.prefix(index).filter { $0 != id }.count
                 applied = store.send(.moveToFavorites(id, index: min(before, others.count))).applied
+            case let .folder(folderID, index):
+                // The list counts the tab where it is now; the reducer takes it out first.
+                let current = state.spaces.lazy.flatMap(\.folders).first { $0.id == folderID }?.tabs.firstIndex(of: id)
+                let target = current.map { $0 < index ? index - 1 : index } ?? index
+                applied = store.send(.moveTabToFolder(id, folder: folderID, index: target)).applied
             case let .space(spaceID):
                 applied = store.send(.moveTabToSpace(id, spaceID)).applied
             case let .split(tab, edge):

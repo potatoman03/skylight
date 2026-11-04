@@ -16,17 +16,25 @@ public struct RootView: View {
         let prefs = browser.preferences
         let state = browser.store.state
 
-        NavigationSplitView(columnVisibility: Binding(
-            get: { prefs.sidebarCollapsed ? .detailOnly : .all },
-            set: { prefs.sidebarCollapsed = $0 == .detailOnly }
-        )) {
-            Sidebar()
-                .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)
-        } detail: {
+        // Our own sidebar column, flush with the page: the system's floating glass sidebar casts a
+        // shadow on the page, and moves its toggle about.
+        HStack(spacing: 0) {
+            if !prefs.sidebarCollapsed {
+                Sidebar()
+                    .frame(width: prefs.sidebarWidth)
+                    .overlay(alignment: .trailing) { SidebarEdge() }
+                    .transition(.move(edge: .leading))
+            }
             ContentArea()
-                .toolbar { BrowserToolbar() }
-                .toolbar(removing: .title)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.background)
         }
+        // One translucent backdrop behind the toolbar and sidebar; only the page is opaque.
+        .background { WindowBackdrop().ignoresSafeArea() }
+        .toolbar { BrowserToolbar() }
+        .toolbar(removing: .title)
+        // The sidebar runs up behind the traffic lights; the page keeps the window's own background.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .navigationTitle(state.selectedTab?.displayTitle ?? "Skylight")
         .environment(drag)
         .frame(minWidth: 760, minHeight: 480)
@@ -92,5 +100,63 @@ private struct BrowserToolbar: ToolbarContent {
             }
             .help("New Tab (⌘T)")
         }
+    }
+}
+
+/// The sidebar's edge: a hairline you can drag to resize it, which remembers the width.
+private struct SidebarEdge: View {
+    @Environment(Browser.self) private var browser
+    @State private var start: Double?
+
+    static let widths = 200.0...420.0
+
+    var body: some View {
+        Rectangle()
+            .fill(.separator)
+            .frame(width: 1)
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(.rect)
+                    .pointerStyle(.frameResize(position: .trailing))
+                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { drag in
+                            let prefs = browser.preferences
+                            let from = start ?? prefs.sidebarWidth
+                            start = from
+                            prefs.sidebarWidth = min(max(from + drag.translation.width, Self.widths.lowerBound), Self.widths.upperBound).rounded()
+                        }
+                        .onEnded { _ in start = nil })
+                    .ignoresSafeArea()
+            }
+    }
+}
+
+/// The sidebar button, hosted beside the traffic lights as a titlebar accessory so it never moves,
+/// whether the sidebar is open or not.
+public struct SidebarToggle: View {
+    @Environment(Browser.self) private var browser
+    @State private var hovering = false
+
+    public init() {}
+
+    public var body: some View {
+        let collapsed = browser.preferences.sidebarCollapsed
+        Button {
+            withAnimation { browser.toggleSidebar() }
+        } label: {
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 13))
+                .frame(width: 28, height: 24)
+                .background(.primary.opacity(hovering ? 0.08 : 0), in: .rect(cornerRadius: 6))
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .onHover { hovering = $0 }
+        .help(collapsed ? "Show Sidebar (⌘S)" : "Hide Sidebar (⌘S)")
+        .accessibilityLabel(collapsed ? "Show Sidebar" : "Hide Sidebar")
+        .padding(.leading, 4)
+        .frame(maxHeight: .infinity)
     }
 }

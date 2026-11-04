@@ -98,6 +98,56 @@ public struct Tab: Identifiable, Codable, Equatable, Sendable {
         if !title.isEmpty { return title }
         return url.host(percentEncoded: false) ?? url.absoluteString
     }
+
+    /// The title without the site's name around it, for the sidebar, where the favicon already says
+    /// which site it is: "Page not found · GitHub · GitHub" is "Page not found".
+    public var shortTitle: String {
+        guard !title.isEmpty else { return displayTitle }
+        let labels = Self.siteLabels(url)
+        guard !labels.isEmpty else { return title }
+        func isSite(_ part: Substring) -> Bool {
+            let word = part.lowercased().filter { $0.isLetter || $0.isNumber }
+            return word.count >= 3 && labels.contains { word.contains($0) || $0.contains(word) }
+        }
+        var rest = Substring(title)
+        // The site's name tacked on the end, often more than once.
+        for _ in 0..<3 {
+            guard let cut = Self.separators.compactMap({ rest.range(of: $0, options: .backwards) }).max(by: { $0.lowerBound < $1.lowerBound }),
+                  isSite(rest[cut.upperBound...]), !rest[..<cut.lowerBound].trimmingCharacters(in: .whitespaces).isEmpty else { break }
+            rest = rest[..<cut.lowerBound]
+        }
+        // Or at the start: "GitHub - owner/repo". A home page's title describes the site, so it stays.
+        if url.path.count > 1, let cut = Self.separators.compactMap({ rest.range(of: $0) }).min(by: { $0.lowerBound < $1.lowerBound }),
+           isSite(rest[..<cut.lowerBound]), !rest[cut.upperBound...].trimmingCharacters(in: .whitespaces).isEmpty {
+            rest = rest[cut.upperBound...]
+        }
+        return rest.trimmingCharacters(in: .whitespaces)
+    }
+
+    private static let separators = [" · ", " - ", " | ", " — ", " – ", " • "]
+
+    /// The words of a host that name the site: mail.google.com → ["mail", "google"].
+    private static func siteLabels(_ url: URL) -> [String] {
+        guard var parts = url.host(percentEncoded: false)?.lowercased().split(separator: "."), parts.count > 1 else { return [] }
+        parts.removeLast()
+        return parts.map(String.init).filter { $0.count >= 3 && $0 != "www" }
+    }
+}
+
+/// A named group of a Space's pinned tabs, which you can open and close in the sidebar.
+public struct TabFolder: Identifiable, Codable, Equatable, Sendable {
+    public let id: String
+    public var name: String
+    /// In the folder's own order. Every one is also in the Space's `pinned`.
+    public var tabs: [TabID]
+    public var isOpen: Bool
+
+    public init(id: String = UUID().uuidString, name: String, tabs: [TabID] = [], isOpen: Bool = true) {
+        self.id = id
+        self.name = name
+        self.tabs = tabs
+        self.isOpen = isOpen
+    }
 }
 
 public enum TabSection: String, Codable, Sendable, CaseIterable {
@@ -123,10 +173,12 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
     public var selectedTabID: TabID?
     /// Tabs shown together. Each split's tabs sit in one section.
     public var splits: [TabSplit]
+    /// Folders of pinned tabs, shown above the loose ones. Their tabs stay in `pinned`.
+    public var folders: [TabFolder]
 
     public init(id: SpaceID = SpaceID(), name: String, hue: Double, icon: String? = nil, profileID: ProfileID = .standard,
                 themeID: String? = nil, pinned: [TabID] = [], today: [TabID] = [], selectedTabID: TabID? = nil,
-                splits: [TabSplit] = []) {
+                splits: [TabSplit] = [], folders: [TabFolder] = []) {
         self.id = id
         self.name = name
         self.hue = hue
@@ -137,9 +189,10 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         self.today = today
         self.selectedTabID = selectedTabID
         self.splits = splits
+        self.folders = folders
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, hue, icon, profileID, themeID, pinned, today, selectedTabID, splits }
+    enum CodingKeys: String, CodingKey { case id, name, hue, icon, profileID, themeID, pinned, today, selectedTabID, splits, folders }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -153,6 +206,7 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         today = try c.decodeIfPresent([TabID].self, forKey: .today) ?? []
         selectedTabID = try c.decodeIfPresent(TabID.self, forKey: .selectedTabID)
         splits = try c.decodeIfPresent([TabSplit].self, forKey: .splits) ?? []
+        folders = try c.decodeIfPresent([TabFolder].self, forKey: .folders) ?? []
     }
 
     public var allTabIDs: [TabID] { pinned + today }
@@ -163,6 +217,16 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         if pinned.contains(id) { return .pinned }
         if today.contains(id) { return .today }
         return nil
+    }
+
+    /// The folder a tab is in, if any.
+    public func folder(containing id: TabID) -> TabFolder? { folders.first { $0.tabs.contains(id) } }
+
+    /// Pinned tabs that aren't in a folder, in order.
+    public var loosePinned: [TabID] {
+        guard !folders.isEmpty else { return pinned }
+        let foldered = Set(folders.flatMap(\.tabs))
+        return pinned.filter { !foldered.contains($0) }
     }
 
     public subscript(section: TabSection) -> [TabID] {

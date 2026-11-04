@@ -37,13 +37,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
-        // SwiftUI's toolbar and title become the window's own: one unified NSToolbar, like Safari's.
+        // SwiftUI's toolbar and title become the window's own: one compact unified NSToolbar.
         let root = NSHostingController(rootView: RootView().environment(browser))
         root.sceneBridgingOptions = [.toolbars, .title]
         window.contentViewController = root
-        window.toolbarStyle = .unified
+        window.toolbarStyle = .unifiedCompact
         window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
         window.tabbingMode = .disallowed
+        // The sidebar button sits right after the traffic lights, outside the toolbar's layout, so it
+        // stays put when the sidebar opens or closes.
+        let toggle = NSTitlebarAccessoryViewController()
+        toggle.layoutAttribute = .leading
+        let toggleView = NSHostingView(rootView: SidebarToggle().environment(browser))
+        toggleView.frame = NSRect(x: 0, y: 0, width: 36, height: 38)
+        toggle.view = toggleView
+        window.addTitlebarAccessoryViewController(toggle)
         window.delegate = self
         browser.showSettings = { [weak self, weak browser] section in
             guard let self, let browser else { return }
@@ -120,6 +130,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func nextSpace(_ sender: Any?) { store?.send(.switchSpaceByOffset(1)) }
     @objc func previousSpace(_ sender: Any?) { store?.send(.switchSpaceByOffset(-1)) }
     @objc func newSpace(_ sender: Any?) { store?.send(.createSpace(name: "Space \((store?.state.spaces.count ?? 0) + 1)")) }
+    @objc func newFolder(_ sender: Any?) {
+        withAnimation(.smooth(duration: 0.28)) { browser?.newFolder() }
+    }
     @objc func developerTools(_ sender: Any?) { browser?.showDeveloperTools() }
     @objc func copyURL(_ sender: Any?) {
         guard let url = store?.state.selectedTab?.url else { return }
