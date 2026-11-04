@@ -25,4 +25,27 @@ import Testing
         #expect(short("React - A JavaScript library", "https://react.dev") == "React - A JavaScript library")
         #expect(short("", "https://example.com/page") == "example.com")
     }
+
+    @Test func aNameYouGiveOutlastsThePageTitle() {
+        let env = ReducerEnvironment(now: { .distantPast })
+        var state = BrowserState.initial()
+        let id = BrowserReducer.reduce(&state, .openTab(URL(string: "https://github.com/x")!, placement: .end), env: env).openedTabID!
+        state.tabs[id]?.title = "Page not found · GitHub"
+        BrowserReducer.reduce(&state, .renameTab(id, "  Bug list "), env: env)
+        #expect(state.tabs[id]?.shortTitle == "Bug list")
+        #expect(state.tabs[id]?.displayTitle == "Bug list")
+        state.tabs[id]?.title = "Issues · GitHub"
+        #expect(state.tabs[id]?.shortTitle == "Bug list")
+        BrowserReducer.reduce(&state, .renameTab(id, " "), env: env)
+        #expect(state.tabs[id]?.customTitle == nil)
+        #expect(state.tabs[id]?.shortTitle == "Issues")
+        #expect(!BrowserReducer.reduce(&state, .renameTab(TabID(), "x"), env: env).applied)
+    }
+
+    @Test func tabsSavedBeforeRenamingLoad() throws {
+        let old = #"{"id":"a","url":"https://example.com","title":"Example","createdAt":0,"lastActiveAt":0}"#
+        let tab = try JSONDecoder().decode(Tab.self, from: Data(old.utf8))
+        #expect(tab.customTitle == nil)
+        #expect(tab.displayTitle == "Example")
+    }
 }

@@ -517,15 +517,28 @@ private struct TabRow: View {
     @Environment(Browser.self) private var browser
     @Environment(TabDragSession.self) private var drag
     @State private var hovering = false
+    @State private var editing = false
+    @State private var name = ""
+    @FocusState private var focused: Bool
 
     var body: some View {
         let status = browser.store.status(of: tab.id)
         HStack(spacing: 4) {
             Label {
-                Text(tab.shortTitle)
-                    .fadingTail()
-                    // Pinned tabs and favorites that are asleep read a little quieter.
-                    .foregroundStyle(status.isAwake || kind == .today ? .primary : .secondary)
+                if editing {
+                    TextField("Tab name", text: $name, prompt: Text(tab.title.isEmpty ? tab.displayTitle : tab.title))
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .focused($focused)
+                        .onSubmit(commit)
+                        .onExitCommand { editing = false }
+                        .onChange(of: focused) { _, now in if !now { commit() } }
+                } else {
+                    Text(tab.shortTitle)
+                        .fadingTail()
+                        // Pinned tabs and favorites that are asleep read a little quieter.
+                        .foregroundStyle(status.isAwake || kind == .today ? .primary : .secondary)
+                }
             } icon: {
                 if status.isLoading {
                     ProgressView().controlSize(.small)
@@ -557,6 +570,22 @@ private struct TabRow: View {
         .help("\(tab.displayTitle)\n\(tab.url.absoluteString)")
         .contextMenu { TabMenu(tab: tab) }
         .tabDrag(tab, source: .row, session: drag)
+        .onAppear { if browser.renameTab == tab.id { startEditing() } }
+        .onChange(of: browser.renameTab) { _, id in if id == tab.id { startEditing() } }
+    }
+
+    private func startEditing() {
+        browser.renameTab = nil
+        name = tab.customTitle ?? ""
+        editing = true
+        DispatchQueue.main.async { focused = true }
+    }
+
+    /// An empty name goes back to the page's own title.
+    private func commit() {
+        guard editing else { return }
+        editing = false
+        browser.store.send(.renameTab(tab.id, name))
     }
 }
 
@@ -695,6 +724,12 @@ struct TabMenu: View {
         }
         if !favorite {
             Button(pinned ? "Unpin" : "Pin") { animate(Motion.travel) { _ = browser.store.send(.togglePin(tab.id)) } }
+        }
+        if !favorite, state.activeSpace.split(containing: tab.id) == nil {
+            Button("Rename…") { browser.renameTab = tab.id }
+        }
+        if tab.customTitle != nil {
+            Button("Use Page Title") { browser.store.send(.renameTab(tab.id, "")) }
         }
         Button("Copy Link") {
             NSPasteboard.general.clearContents()

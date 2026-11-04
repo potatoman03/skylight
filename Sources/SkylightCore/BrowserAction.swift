@@ -30,6 +30,8 @@ public enum BrowserAction: Equatable, Sendable {
     case moveTabToSpace(TabID, SpaceID)
     /// Puts a tab in the favorites at `index` (or moves it there within them).
     case moveToFavorites(TabID, index: Int)
+    /// Names a tab yourself; an empty name goes back to the page's title.
+    case renameTab(TabID, String)
 
     /// A new folder in a Space's pinned tabs, holding `tabs` (which get pinned if they aren't).
     case createFolder(id: String, space: SpaceID, name: String, tabs: [TabID] = [])

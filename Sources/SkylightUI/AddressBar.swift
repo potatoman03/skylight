@@ -1,3 +1,4 @@
+import AppKit
 import SkylightBrowser
 import SkylightCore
 import SwiftUI
@@ -23,6 +24,7 @@ extension Browser {
 /// (selected) when you click it, with suggestions below while you type.
 struct AddressField: View {
     @Environment(Browser.self) private var browser
+    @Environment(AddressAnchor.self) private var anchor
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -84,6 +86,7 @@ struct AddressField: View {
             }
             .allowsHitTesting(false)
         }
+        .background { ViewProbe { anchor.field = $0 } }
         .contentShape(.rect)
         .onTapGesture { if !editing { browser.presentCommandBar(.editCurrent) } }
         .onChange(of: editing) { _, now in
@@ -111,27 +114,61 @@ struct AddressField: View {
 /// Suggestions under the address field while you type, styled like a menu.
 struct SuggestionsList: View {
     @Environment(Browser.self) private var browser
+    @Environment(AddressAnchor.self) private var anchor
 
     var body: some View {
         let bar = browser.commandBar
         let items = bar.isPresented && bar.mode == .editCurrent ? bar.items : []
         if !items.isEmpty {
-            VStack(spacing: 0) {
-                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                    SuggestionRow(item: item, highlighted: index == bar.selection)
-                        .onTapGesture { bar.submit(item) }
-                        .onHover { if $0 { bar.selection = index } }
+            // Read again when the window resizes, which moves the field.
+            GeometryReader { geo in
+                let field = anchor.fieldFrame(size: geo.size) ?? CGRect(x: (geo.size.width - 560) / 2, y: -6, width: 560, height: 0)
+                VStack(spacing: 0) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        SuggestionRow(item: item, highlighted: index == bar.selection)
+                            .onTapGesture { bar.submit(item) }
+                            .onHover { if $0 { bar.selection = index } }
+                    }
                 }
+                .padding(5)
+                .frame(width: max(field.width, 360))
+                .background(.regularMaterial, in: .rect(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.18), radius: 16, y: 8)
+                .offset(x: max(field.minX, 8), y: field.maxY + 6)
             }
-            .padding(5)
-            .frame(width: 560)
-            .background(.regularMaterial, in: .rect(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.18), radius: 16, y: 8)
-            .padding(.top, 6)
             .transition(.opacity)
         }
     }
+}
+
+/// Where the address field is. It sits in the toolbar and the suggestions over the page, which
+/// are separate hosting views, so they meet in AppKit's coordinates.
+@MainActor
+@Observable
+final class AddressAnchor {
+    @ObservationIgnored weak var field: NSView?
+    @ObservationIgnored weak var page: NSView?
+
+    /// The field's frame in the page's coordinates, y down; `size` is the page's.
+    func fieldFrame(size: CGSize) -> CGRect? {
+        guard let field, let page, field.window != nil, field.window === page.window else { return nil }
+        let r = page.convert(field.bounds, from: field)
+        return page.isFlipped ? r : CGRect(x: r.minX, y: size.height - r.maxY, width: r.width, height: r.height)
+    }
+}
+
+/// An empty AppKit view, to find where a SwiftUI view is in the window.
+struct ViewProbe: NSViewRepresentable {
+    let found: (NSView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        found(view)
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
 }
 
 private struct SuggestionRow: View {

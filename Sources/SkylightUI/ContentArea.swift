@@ -9,6 +9,7 @@ import SwiftUI
 struct ContentArea: View {
     @Environment(Browser.self) private var browser
     @Environment(TabDragSession.self) private var drag
+    @Environment(AddressAnchor.self) private var anchor
 
     var body: some View {
         let state = browser.store.state
@@ -49,7 +50,8 @@ struct ContentArea: View {
             }
             .coordinateSpace(.named(PaneLayout.space))
         }
-        .overlay(alignment: .top) { SuggestionsList() }
+        .background { ViewProbe { anchor.page = $0 } }
+        .overlay(alignment: .topLeading) { SuggestionsList() }
         .overlay {
             let bar = browser.commandBar
             if bar.isPresented, bar.mode != .editCurrent { CommandPalette() }

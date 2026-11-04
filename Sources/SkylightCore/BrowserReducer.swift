@@ -213,6 +213,12 @@ public enum BrowserReducer {
             for tab in tabs { _ = apply(&state, .moveTabToFolder(tab, folder: id), env: env) }
             return ReduceResult()
 
+        case let .renameTab(id, name):
+            guard state.tabs[id] != nil else { return .ignored }
+            let name = name.trimmingCharacters(in: .whitespaces)
+            state.tabs[id]?.customTitle = name.isEmpty ? nil : name
+            return ReduceResult()
+
         case let .renameFolder(id, name):
             let name = name.trimmingCharacters(in: .whitespaces)
             guard !name.isEmpty, let (si, k) = folderIndex(state, id) else { return .ignored }

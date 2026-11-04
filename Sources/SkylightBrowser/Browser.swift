@@ -26,6 +26,8 @@ public final class Browser {
     public var renameSpace: SpaceID?
     /// The folder whose name is being edited in the sidebar, as when it's just been made.
     public var renameFolder: String?
+    /// The tab whose name is being edited in the sidebar.
+    public var renameTab: TabID?
     /// Opens the Settings window; the app provides it.
     @ObservationIgnored public var showSettings: @MainActor (String?) -> Void = { _ in }
 

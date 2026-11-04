@@ -80,6 +80,8 @@ public struct Tab: Identifiable, Codable, Equatable, Sendable {
     public let id: TabID
     public var url: URL
     public var title: String
+    /// A name you gave the tab, shown instead of the page's title.
+    public var customTitle: String?
     public var faviconURL: URL?
     public var createdAt: Date
     public var lastActiveAt: Date
@@ -95,6 +97,7 @@ public struct Tab: Identifiable, Codable, Equatable, Sendable {
 
     /// The title to show, falling back to the host while a page has none yet.
     public var displayTitle: String {
+        if let customTitle { return customTitle }
         if !title.isEmpty { return title }
         return url.host(percentEncoded: false) ?? url.absoluteString
     }
@@ -102,7 +105,7 @@ public struct Tab: Identifiable, Codable, Equatable, Sendable {
     /// The title without the site's name around it, for the sidebar, where the favicon already says
     /// which site it is: "Page not found · GitHub · GitHub" is "Page not found".
     public var shortTitle: String {
-        guard !title.isEmpty else { return displayTitle }
+        guard customTitle == nil, !title.isEmpty else { return displayTitle }
         let labels = Self.siteLabels(url)
         guard !labels.isEmpty else { return title }
         func isSite(_ part: Substring) -> Bool {

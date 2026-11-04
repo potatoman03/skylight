@@ -8,6 +8,7 @@ import SwiftUI
 public struct RootView: View {
     @Environment(Browser.self) private var browser
     @State private var drag = TabDragSession()
+    @State private var anchor = AddressAnchor()
     @State private var newName = ""
 
     public init() {}
@@ -37,6 +38,7 @@ public struct RootView: View {
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .navigationTitle(state.selectedTab?.displayTitle ?? "Skylight")
         .environment(drag)
+        .environment(anchor)
         .frame(minWidth: 760, minHeight: 480)
         // The Space on screen renames in place in its header; others (from the Space bar) here.
         .alert("Rename Space", isPresented: Binding(get: { browser.renameSpace.map { $0 != state.activeSpaceID } ?? false },
