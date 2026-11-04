@@ -76,21 +76,33 @@ private struct BrowserToolbar: ToolbarContent {
             }
             .help("Forward")
             .disabled(!status.canGoForward)
+            Button {
+                if let id { browser.store.send(status.isLoading ? .stop(id) : .reload(id)) }
+            } label: {
+                Label(status.isLoading ? "Stop" : "Reload", systemImage: status.isLoading ? "xmark" : "arrow.clockwise")
+            }
+            .help(status.isLoading ? "Stop Loading (⌘.)" : "Reload Page (⌘R)")
+            .disabled(id == nil)
         }
+        // Plain icons and text, no capsules behind them.
+        .sharedBackgroundVisibility(.hidden)
 
-        ToolbarItem(placement: .principal) {
+        ToolbarItem(placement: .navigation) {
             AddressField()
         }
+        .sharedBackgroundVisibility(.hidden)
 
         if browser.preferences.extensionPlacement.showsButtons, !browser.extensions.toolbar.isEmpty {
             ToolbarItem(placement: .primaryAction) {
                 PinnedExtensionButtons()
             }
+            .sharedBackgroundVisibility(.hidden)
         }
 
         ToolbarItem(placement: .primaryAction) {
             ExtensionsMenuButton()
         }
+        .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .primaryAction) {
             Button {
@@ -100,6 +112,7 @@ private struct BrowserToolbar: ToolbarContent {
             }
             .help("New Tab (⌘T)")
         }
+        .sharedBackgroundVisibility(.hidden)
     }
 }
 

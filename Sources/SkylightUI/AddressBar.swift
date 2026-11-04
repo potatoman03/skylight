@@ -31,12 +31,12 @@ struct AddressField: View {
         let status = browser.selectedStatus
         let editing = bar.isPresented && bar.mode == .editCurrent
 
-        HStack(spacing: 6) {
-            Image(systemName: symbol(tab: tab, editing: editing))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 14)
+        // At rest, just where you are: the site, then the page's title. Click to type.
+        HStack(spacing: 8) {
             if editing {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 TextField("Search or enter website name", text: $bar.query)
                     .textFieldStyle(.plain)
                     .focused($focused)
@@ -44,43 +44,44 @@ struct AddressField: View {
                     .onKeyPress(.downArrow) { bar.moveSelection(1); return .handled }
                     .onKeyPress(.upArrow) { bar.moveSelection(-1); return .handled }
                     .onKeyPress(.escape) { browser.dismissCommandBar(); return .handled }
-            } else {
-                Text(tab.map(Self.display) ?? "Search or enter website name")
-                    .foregroundStyle(tab == nil ? .tertiary : .primary)
+            } else if let tab {
+                Text(Self.display(tab))
+                    .fontWeight(.medium)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity)
-                LoginKeyButton(url: tab?.url)
-                if let tab {
-                    Button {
-                        browser.store.send(status.isLoading ? .stop(tab.id) : .reload(tab.id))
-                    } label: {
-                        Image(systemName: status.isLoading ? "xmark" : "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help(status.isLoading ? "Stop Loading (⌘.)" : "Reload Page (⌘R)")
-                }
+                    .layoutPriority(1)
+                Rectangle()
+                    .fill(.separator)
+                    .frame(width: 1, height: 16)
+                Text(tab.shortTitle)
+                    .foregroundStyle(.secondary)
+                    .fadingTail()
+                LoginKeyButton(url: tab.url)
+            } else {
+                Text("Search or enter website name")
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .font(.system(size: 13))
         .padding(.horizontal, 8)
         .frame(height: 28)
-        .frame(minWidth: 200, idealWidth: 420, maxWidth: 640)
-        .background(.quinary, in: .rect(cornerRadius: 8))
+        .frame(minWidth: 220, idealWidth: 520, maxWidth: 640, alignment: .leading)
+        .background(editing ? AnyShapeStyle(.quinary) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 8))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(focused ? AnyShapeStyle(.tint) : AnyShapeStyle(.separator), lineWidth: focused ? 2 : 0.5)
+                .strokeBorder(.tint, lineWidth: 2)
+                .opacity(focused ? 1 : 0)
         }
-        // Loading shows along the bottom of the field.
+        // Loading shows as a hairline under the address.
         .overlay(alignment: .bottomLeading) {
             GeometryReader { geo in
-                Rectangle()
+                Capsule()
                     .fill(.tint)
                     .frame(width: geo.size.width * max(status.progress, 0.05), height: 2)
                     .frame(maxHeight: .infinity, alignment: .bottom)
                     .opacity(status.isLoading && !editing ? 1 : 0)
                     .animation(.easeOut(duration: 0.2), value: status.progress)
             }
-            .clipShape(.rect(cornerRadius: 8))
             .allowsHitTesting(false)
         }
         .contentShape(.rect)
@@ -99,11 +100,6 @@ struct AddressField: View {
             }
         }
         .accessibilityLabel("Address and search")
-    }
-
-    private func symbol(tab: BrowserTab?, editing: Bool) -> String {
-        if editing || tab == nil { return "magnifyingglass" }
-        return tab?.url.scheme == "https" ? "lock.fill" : "globe"
     }
 
     static func display(_ tab: BrowserTab) -> String {

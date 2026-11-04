@@ -548,7 +548,12 @@ private struct TabRow: View {
                 .help(kind == .today ? "Close Tab (⌘W)" : "Unload Tab")
             }
         }
+        .contentShape(.rect)
         .onHover { hovering = $0 }
+        // A draggable row keeps its clicks from the list, so the row selects itself.
+        .onTapGesture {
+            if browser.store.state.selectedTabID != tab.id { browser.store.send(.selectTab(tab.id)) }
+        }
         .help("\(tab.displayTitle)\n\(tab.url.absoluteString)")
         .contextMenu { TabMenu(tab: tab) }
         .tabDrag(tab, source: .row, session: drag)
