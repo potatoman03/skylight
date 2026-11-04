@@ -11,12 +11,18 @@ public enum CEFRuntime {
         /// Avoids the login-keychain prompt for unsigned development builds.
         public var useMockKeychain: Bool
         public var remoteDebuggingPort: Int
+        /// The profile Chromium starts in, where extensions run.
+        public var defaultProfile: URL?
+        public var extensions: Bool
 
-        public init(cacheRoot: URL, logFile: URL? = nil, useMockKeychain: Bool = false, remoteDebuggingPort: Int = 0) {
+        public init(cacheRoot: URL, logFile: URL? = nil, useMockKeychain: Bool = false, remoteDebuggingPort: Int = 0,
+                    defaultProfile: URL? = nil, extensions: Bool = true) {
             self.cacheRoot = cacheRoot
             self.logFile = logFile
             self.useMockKeychain = useMockKeychain
             self.remoteDebuggingPort = remoteDebuggingPort
+            self.defaultProfile = defaultProfile
+            self.extensions = extensions
         }
     }
 
@@ -35,6 +41,11 @@ public enum CEFRuntime {
         settings.logFilePath = config.logFile?.path
         settings.useMockKeychain = config.useMockKeychain
         settings.remoteDebuggingPort = config.remoteDebuggingPort
+        if let profile = config.defaultProfile {
+            try? FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
+            settings.defaultProfilePath = profile.path
+        }
+        settings.enableDevToolsPipe = config.extensions
         // CEF calls back on the main thread.
         guard SKEngine.initialize(with: settings, ready: { MainActor.assumeIsolated { ready() } }) else {
             throw Failure.initializationFailed
@@ -55,9 +66,15 @@ public enum CEFRuntime {
 /// `WebEngine` backed by the Chromium Embedded Framework.
 @MainActor
 public final class CEFEngine: WebEngine {
-    public init() {
-        SKEngine.setPageScripts([Self.bootstrapScript])
+    public let extensions: ExtensionHost?
+
+    /// `support` is where the engine keeps files of its own (the tab-id helper extension).
+    public init(support: URL? = nil) {
+        extensions = SKEngine.hasDevToolsPipe() ? CEFExtensionHost(helperFolder: support?.appending(path: "Tabs Helper")) : nil
+        SKEngine.setPageScripts(Self.engineScripts)
     }
+
+    private static var engineScripts: [String] { [bootstrapScript, tabIDScript, extensionPageScript] }
 
     public func makeProfile(directory: URL) -> WebProfile {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -70,7 +87,7 @@ public final class CEFEngine: WebEngine {
     }
 
     public func setPageScripts(_ scripts: [String]) {
-        SKEngine.setPageScripts([Self.bootstrapScript] + scripts)
+        SKEngine.setPageScripts(Self.engineScripts + scripts)
     }
 
     public func closeAll(completion: @escaping @MainActor () -> Void) {
@@ -96,6 +113,66 @@ public final class CEFEngine: WebEngine {
       Object.defineProperty(window, '__skylight', {
         value: Object.freeze({ post }), configurable: false, enumerable: false, writable: false,
       });
+    })();
+    """
+}
+
+extension CEFEngine {
+    /// Passes on the tab id the helper extension writes into the page (see `CEFExtensionHost`).
+    static let tabIDScript = """
+    (() => {
+      if (!window.__skylight || !/^(https?|file):$/.test(location.protocol)) return;
+      let sent = false;
+      const report = () => {
+        const root = document.documentElement;
+        const id = root && Number(root.getAttribute('data-skylight-tab'));
+        if (sent || !id) return;
+        sent = true;
+        window.__skylight.post({ type: '__skylight.tabID', id }).catch(() => {});
+      };
+      const watch = () => {
+        report();
+        if (!sent) new MutationObserver((_, observer) => { report(); if (sent) observer.disconnect(); })
+          .observe(document.documentElement, { attributes: true, attributeFilter: ['data-skylight-tab'] });
+      };
+      if (document.documentElement) watch(); else document.addEventListener('readystatechange', watch, { once: true });
+    })();
+    """
+
+    /// In extension pages (popups, options): the tabs shim, and the page's preferred size so a
+    /// popup can fit its content the way Chrome's do.
+    static let extensionPageScript = """
+    (() => {
+      if (location.protocol !== 'chrome-extension:' || !window.__skylight) return;
+      const install = () => { \(CEFExtensionHost.shim) };
+      install();
+      // Chromium adds the extension APIs just after this runs. Mutation callbacks run before
+      // the parser executes the page's first script, so the shim is in place by then.
+      if (!globalThis.__skylightTabs) {
+        queueMicrotask(install);
+        const early = new MutationObserver(() => { install(); if (globalThis.__skylightTabs) early.disconnect(); });
+        early.observe(document, { childList: true, subtree: true });
+      }
+      let last = '';
+      const measure = () => {
+        const root = document.documentElement;
+        if (!root || !document.body) return;
+        const width = root.style.width;
+        root.style.width = 'max-content';
+        const w = Math.ceil(root.getBoundingClientRect().width);
+        root.style.width = width;
+        const h = Math.ceil(Math.max(root.scrollHeight, document.body.scrollHeight));
+        const key = w + 'x' + h;
+        if (key === last) return;
+        last = key;
+        window.__skylight.post({ type: 'extensions.size', width: w, height: h }).catch(() => {});
+      };
+      const watch = () => {
+        new ResizeObserver(measure).observe(document.body);
+        new MutationObserver(() => requestAnimationFrame(measure)).observe(document.body, { childList: true, subtree: true, attributes: true });
+        measure();
+      };
+      if (document.body) watch(); else document.addEventListener('DOMContentLoaded', watch, { once: true });
     })();
     """
 }

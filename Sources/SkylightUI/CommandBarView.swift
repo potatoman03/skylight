@@ -74,7 +74,7 @@ private struct CommandBarPanel: View {
 
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Image(systemName: bar.mode == .newTab ? "plus.magnifyingglass" : "magnifyingglass")
+                Image(systemName: bar.mode == .split ? "rectangle.split.2x1" : bar.mode == .newTab ? "plus.magnifyingglass" : "magnifyingglass")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(.secondary)
                 TextField("Search or enter address", text: $bar.query)

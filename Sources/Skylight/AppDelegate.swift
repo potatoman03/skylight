@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Development runs (SKYLIGHT_DEV) keep passwords in memory, away from your Keychain.
         let credentials: CredentialStore = ProcessInfo.processInfo.environment["SKYLIGHT_DEV"] != nil
             ? MemoryCredentialStore.demo() : KeychainCredentialStore()
-        let browser = Browser(engine: CEFEngine(), paths: paths, version: version, credentials: credentials)
+        let browser = Browser(engine: CEFEngine(support: paths.engineRoot.appending(path: "Skylight")), paths: paths, version: version, credentials: credentials)
         self.browser = browser
         NSApp.mainMenu = MainMenu.build(target: self)
         CEFRuntime.onTerminate { [weak self] in self?.quit() }
@@ -100,6 +100,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func stopLoading(_ sender: Any?) { if let id = selected { store?.send(.stop(id)) } }
     @objc func goBack(_ sender: Any?) { if let id = selected { store?.send(.goBack(id)) } }
     @objc func goForward(_ sender: Any?) { if let id = selected { store?.send(.goForward(id)) } }
+    @objc func pictureInPicture(_ sender: Any?) { browser?.togglePictureInPicture() }
+    @objc func newSplitTab(_ sender: Any?) { if selected != nil { browser?.presentCommandBar(.split) } }
+    @objc func nextPane(_ sender: Any?) { browser?.focusPane(offset: 1) }
+    @objc func previousPane(_ sender: Any?) { browser?.focusPane(offset: -1) }
+    @objc func rotateSplit(_ sender: Any?) { if let id = selected { store?.send(.rotateSplit(id)) } }
+    @objc func separateSplit(_ sender: Any?) { if let id = selected { store?.send(.dissolveSplit(id)) } }
     @objc func togglePin(_ sender: Any?) { if let id = selected { store?.send(.togglePin(id)) } }
     @objc func nextTab(_ sender: Any?) { store?.send(.selectAdjacentTab(offset: 1)) }
     @objc func previousTab(_ sender: Any?) { store?.send(.selectAdjacentTab(offset: -1)) }

@@ -16,6 +16,16 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) BOOL useMockKeychain;
 /// Port for Chromium's remote debugging (0 = off).
 @property (nonatomic) NSInteger remoteDebuggingPort;
+/// The profile Chromium starts with. Extensions run in this one.
+@property (nonatomic, copy, nullable) NSString *defaultProfilePath;
+/// Opens a DevTools connection private to this process (a pipe, not a port), for extensions.
+@property (nonatomic) BOOL enableDevToolsPipe;
+@end
+
+/// A browser Chromium opened by itself, such as an extension's window.
+@interface SKForeignBrowser : NSObject
+@property (nonatomic, readonly) NSInteger identifier;
+- (void)close;
 @end
 
 /// The NSApplication subclass CEF requires (it tracks event dispatch).
@@ -43,6 +53,15 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Closes every browser and calls `completion` when the last one is gone.
 + (void)closeAllBrowsersWithCompletion:(void (^)(void))completion;
+
+/// True when `enableDevToolsPipe` worked.
++ (BOOL)hasDevToolsPipe;
+/// Sends one DevTools protocol message (JSON) down the private pipe.
++ (void)sendDevToolsMessage:(NSString *)json;
+/// Receives every DevTools reply and event, on the main thread.
++ (void)setDevToolsMessageHandler:(void (^_Nullable)(NSString *message))handler;
+/// Called on the main thread when a browser Chromium opened by itself commits its first address.
++ (void)setForeignBrowserHandler:(void (^_Nullable)(SKForeignBrowser *browser, NSString *url))handler;
 
 @end
 
@@ -109,6 +128,8 @@ typedef NS_ENUM(NSInteger, SKDialogKind) {
 /// Hosts Chromium's view and keeps it sized to fill.
 @property (nonatomic, readonly) NSView *view;
 @property (nonatomic, readonly) BOOL isClosed;
+/// Chromium's id for the browser, which extensions see as the tab id. 0 until created.
+@property (nonatomic, readonly) NSInteger identifier;
 
 - (void)loadURL:(NSString *)url;
 - (void)goBack;
@@ -116,6 +137,9 @@ typedef NS_ENUM(NSInteger, SKDialogKind) {
 - (void)reload;
 - (void)stopLoad;
 - (void)executeJavaScript:(NSString *)script;
+/// Runs `script` as if the user had just clicked: APIs that need a gesture (picture in picture,
+/// fullscreen) work.
+- (void)evaluateWithUserGesture:(NSString *)script;
 - (void)setHidden:(BOOL)hidden;
 - (void)showDevTools;
 - (void)close;

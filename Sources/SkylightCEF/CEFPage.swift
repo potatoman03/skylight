@@ -28,6 +28,8 @@ final class CEFPage: NSObject, WebPage {
     func setVisible(_ visible: Bool) { browser.setHidden(!visible) }
     func showDeveloperTools() { browser.showDevTools() }
     func close() { browser.close() }
+    private(set) var extensionTabID = 0
+    func runWithUserGesture(_ script: String) { browser.evaluate(withUserGesture: script) }
 
     func evaluate(_ expression: String) async throws -> JSONValue {
         guard !browser.isClosed else { throw WebEngineError.pageClosed }
@@ -95,6 +97,15 @@ extension CEFPage: @preconcurrency SKBrowserDelegate {
         let reply = MainThreadBox(value: reply)
         guard let message = try? JSONValue.parse(request) else {
             reply.value(nil, "Malformed message")
+            return
+        }
+        if message["type"]?.stringValue == "__skylight.tabID", let id = message["id"]?.intValue {
+            // Each document reports once, after the helper extension marks it.
+            if extensionTabID != id {
+                extensionTabID = id
+                emit { $0.extensionTabID = id }
+            }
+            reply.value("null", nil)
             return
         }
         if message["type"]?.stringValue == "__skylight.eval", let id = message["id"]?.stringValue {

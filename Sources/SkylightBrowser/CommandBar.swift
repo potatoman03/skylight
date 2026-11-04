@@ -44,6 +44,8 @@ public final class CommandBarModel {
         case newTab
         /// ⌘L: Enter navigates the selected tab.
         case editCurrent
+        /// Enter opens a new tab beside the selected one, in a split.
+        case split
     }
 
     public private(set) var isPresented = false

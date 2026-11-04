@@ -24,6 +24,10 @@ struct Sidebar: View {
         let prefs = browser.preferences
         VStack(alignment: .leading, spacing: 10) {
             if prefs.shows(.addressBar) { URLPill(omnibox: omnibox).transition(.opacity) }
+            // With the address bar hidden, extensions still get a row.
+            if prefs.extensionPlacement == .toolbar || !prefs.shows(.addressBar) {
+                ExtensionStrip(compact: false).frame(maxWidth: .infinity, alignment: .leading).transition(.opacity)
+            }
 
             if prefs.shows(.favorites) { FavoritesGrid(selection: selection).transition(.opacity) }
 
@@ -120,8 +124,10 @@ private struct URLPill: View {
                         .truncationMode(.middle)
                     Spacer(minLength: 0)
                     LoginKeyButton(url: tab?.url)
+                    if browser.preferences.extensionPlacement != .toolbar { ExtensionStrip(compact: true) }
                 }
-                .padding(.horizontal, 12)
+                .padding(.leading, 12)
+                .padding(.trailing, browser.extensions.enabled.isEmpty || browser.preferences.extensionPlacement == .toolbar ? 12 : 6)
                 .frame(height: 34)
                 .surface(hovering ? .selected : .field, radius: 11, lifted: true)
                 .matchedGeometryEffect(id: "omnibox", in: omnibox)
@@ -148,31 +154,55 @@ private struct URLPill: View {
 private struct FavoritesGrid: View {
     let selection: Namespace.ID
     @Environment(Browser.self) private var browser
+    @Environment(TabDrag.self) private var drag
 
     var body: some View {
         let state = browser.store.state
         let tabs = state.favoriteTabs
-        if !tabs.isEmpty {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: tabs.count < 4 ? max(tabs.count, 3) : 4),
-                      spacing: 7) {
+        let dropIndex: Int? = if case let .favorites(index)? = drag.target { index } else { nil }
+        let dragged = drag.item?.id
+        if !tabs.isEmpty || drag.isDragging {
+            let columns = tabs.count + (dropIndex == nil ? 0 : 1) < 4 ? 3 : 4
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: columns), spacing: 7) {
+                // The tile being dragged keeps its place (and its gesture) but steps back.
+                let others = tabs.filter { $0.id != dragged }
                 ForEach(tabs) { tab in
+                    if let dropIndex, tab.id != dragged, others.firstIndex(where: { $0.id == tab.id }) == dropIndex {
+                        DropSlot(radius: 12).frame(height: 46).id("slot")
+                    }
                     FavoriteTile(tab: tab, selected: state.selectedTabID == tab.id, selection: selection)
+                        .opacity(tab.id == dragged && dropIndex != nil ? 0.25 : 1)
+                        .reportFrame { drag.favoriteTiles[tab.id] = $0 }
                         .transition(Arrive(scale: 0.85))
+                }
+                if let dropIndex, dropIndex >= others.count {
+                    DropSlot(radius: 12).frame(height: 46).id("slot")
+                }
+                if tabs.isEmpty, dropIndex == nil {
+                    Text("Drop here to favorite")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity).frame(height: 46)
+                        .gridCellColumns(columns)
                 }
             }
             .motion(Motion.travel, value: state.favorites)
-            .dropDestination(for: String.self) { ids, _ in
-                drop(ids) { id in
-                    if !state.isFavorite(id) { browser.store.send(.toggleFavorite(id)) }
-                }
-            }
+            .motion(Motion.travel, value: dropIndex)
+            .reportFrame { drag.favoritesFrame = $0 }
+            .onDisappear { drag.favoritesFrame = .zero }
         }
     }
+}
 
-    private func drop(_ ids: [String], _ perform: (TabID) -> Void) -> Bool {
-        guard let raw = ids.first else { return false }
-        animate(Motion.travel) { perform(TabID(raw)) }
-        return true
+/// Where a dragged tab will land.
+struct DropSlot: View {
+    var radius: CGFloat = 10
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+            .foregroundStyle(.tint.opacity(0.7))
+            .background(.tint.opacity(0.08), in: .rect(cornerRadius: radius, style: .continuous))
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
     }
 }
 
@@ -181,6 +211,7 @@ private struct FavoriteTile: View {
     let selected: Bool
     let selection: Namespace.ID
     @Environment(Browser.self) private var browser
+    @Environment(TabDrag.self) private var drag
     @State private var hovering = false
 
     var body: some View {
@@ -201,7 +232,7 @@ private struct FavoriteTile: View {
             .onTapGesture { animate(Motion.travel) { _ = browser.store.send(.selectTab(tab.id)) } }
             .onHover { h in animate(Motion.feedback) { hovering = h } }
             .help(tab.displayTitle)
-            .draggable(tab.id.rawValue)
+            .tabDrag(tab.id, source: .favorite, drag: drag, browser: browser)
             .contextMenu { TabMenu(tab: tab) }
     }
 }
@@ -274,53 +305,97 @@ private struct SpaceTabs: View {
     let space: Space
     let selection: Namespace.ID
     @Environment(Browser.self) private var browser
+    @Environment(TabDrag.self) private var drag
 
     var body: some View {
-        let state = browser.store.state
-        let pinned = state.tabs(in: space, .pinned)
-        let today = state.tabs(in: space, .today)
+        let pitch = browser.preferences.density.rowHeight + 2
+        let pinnedDrop: Bool = if case .section(.pinned, _)? = drag.target { true } else { false }
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 2) {
-                // Pinned. With none, a thin strip still takes drops.
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(pinned) { tab in
-                        TabRow(tab: tab, pinned: true, selected: space.selectedTabID == tab.id, selection: selection)
-                            .transition(Arrive(anchor: .top, scale: 0.98))
+                TabList(space: space, section: .pinned, selection: selection)
+                    // Empty, it's a thin strip that still takes drops, and grows while you drag.
+                    .frame(maxWidth: .infinity, minHeight: drag.isDragging && space.pinned.isEmpty ? pitch : 6, alignment: .top)
+                    .overlay {
+                        if drag.isDragging, space.pinned.isEmpty, !pinnedDrop {
+                            Text("Drop here to pin").font(.system(size: 11, weight: .medium)).foregroundStyle(.tertiary)
+                                .transition(.opacity)
+                        }
                     }
-                }
-                .frame(maxWidth: .infinity, minHeight: 6, alignment: .top)
-                .contentShape(.rect)
-                .dropDestination(for: String.self) { ids, _ in move(ids, to: .pinned, at: space.pinned.count) }
 
-                if !pinned.isEmpty {
+                if !space.pinned.isEmpty || pinnedDrop {
                     Rectangle().fill(.primary.opacity(0.08)).frame(height: 1)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .transition(.opacity)
                 }
 
-                VStack(alignment: .leading, spacing: 2) {
-                    if browser.preferences.shows(.newTab) { NewTabRow() }
-                    ForEach(today) { tab in
-                        TabRow(tab: tab, pinned: false, selected: space.selectedTabID == tab.id, selection: selection)
-                            .transition(Arrive(anchor: .top, scale: 0.98))
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .top)
-                .contentShape(.rect)
-                .dropDestination(for: String.self) { ids, _ in move(ids, to: .today, at: 0) }
+                if browser.preferences.shows(.newTab) { NewTabRow() }
+                TabList(space: space, section: .today, selection: selection)
+                    .frame(maxWidth: .infinity, alignment: .top)
             }
             .motion(Motion.travel, value: space.pinned)
             .motion(Motion.travel, value: space.today)
+            .motion(Motion.travel, value: space.splits)
+            .motion(Motion.travel, value: drag.isDragging)
         }
         .scrollIndicators(.never)
         .frame(maxHeight: .infinity, alignment: .top)
+        .onAppear { drag.rowPitch = pitch }
+        .onChange(of: pitch) { _, new in drag.rowPitch = new }
+    }
+}
+
+/// One section's rows. While a tab is dragged over it, the rows part to show where it will land.
+private struct TabList: View {
+    let space: Space
+    let section: SkylightCore.TabSection
+    let selection: Namespace.ID
+    @Environment(Browser.self) private var browser
+    @Environment(TabDrag.self) private var drag
+
+    var body: some View {
+        let state = browser.store.state
+        let rows = SidebarRows.make(space[section], space: space)
+        let dragged = drag.item?.id
+        let slot = dropSlot(rows: rows, dragged: dragged)
+        let others = rows.filter { dragged == nil || !$0.contains(dragged!) }
+        VStack(alignment: .leading, spacing: 2) {
+            Color.clear.frame(height: 0).reportFrame { drag.listTops[section] = $0.minY }
+            ForEach(rows, id: \.self) { row in
+                let isDragged = dragged.map(row.contains) ?? false
+                if let slot, !isDragged, others.firstIndex(of: row) == slot {
+                    DropSlot().frame(height: browser.preferences.density.rowHeight)
+                }
+                Group {
+                    if row.count > 1, let split = space.split(containing: row[0]) {
+                        SplitRow(split: split, section: section, selection: selection)
+                    } else if let tab = state.tabs[row[0]] {
+                        TabRow(tab: tab, pinned: section == .pinned, selected: space.selectedTabID == tab.id, selection: selection)
+                    }
+                }
+                // The dragged row keeps its place in the hierarchy (and its gesture), folded away.
+                .frame(height: isDragged && drag.target != nil ? 0 : nil, alignment: .top)
+                .opacity(isDragged && drag.target != nil ? 0 : isDragged ? 0.4 : 1)
+                .clipped()
+                .transition(Arrive(anchor: .top, scale: 0.98))
+            }
+            if let slot, slot >= others.count {
+                DropSlot().frame(height: browser.preferences.density.rowHeight)
+            }
+        }
+        .reportFrame { drag.sectionFrames[section] = $0 }
     }
 
-    private func move(_ ids: [String], to section: SkylightCore.TabSection, at index: Int) -> Bool {
-        guard let raw = ids.first else { return false }
-        animate(Motion.travel) { _ = browser.store.send(.moveTab(TabID(raw), to: section, index: index)) }
-        return true
+    /// The target is counted in tabs; the sidebar draws rows (a split is one row).
+    private func dropSlot(rows: [[TabID]], dragged: TabID?) -> Int? {
+        guard case let .section(target, index)? = drag.target, target == section else { return nil }
+        var count = 0, slot = 0
+        for row in rows where dragged.map({ !row.contains($0) }) ?? true {
+            if count >= index { break }
+            count += row.count
+            slot += 1
+        }
+        return slot
     }
 }
 
@@ -350,6 +425,7 @@ private struct TabRow: View {
     let selected: Bool
     let selection: Namespace.ID
     @Environment(Browser.self) private var browser
+    @Environment(TabDrag.self) private var drag
     @State private var hovering = false
 
     var body: some View {
@@ -371,6 +447,7 @@ private struct TabRow: View {
                 .foregroundStyle(status.isAwake || selected ? HierarchicalShapeStyle.primary : .secondary)
                 .lineLimit(1)
             Spacer(minLength: 0)
+            MediaBadge(tab: tab.id)
             if hovering {
                 Button {
                     animate(Motion.travel) { _ = browser.store.send(.closeTab(tab.id)) }
@@ -399,16 +476,141 @@ private struct TabRow: View {
         .contentShape(.rect)
         .onTapGesture { animate(Motion.travel) { _ = browser.store.send(.selectTab(tab.id)) } }
         .onHover { h in animate(Motion.feedback) { hovering = h } }
-        .draggable(tab.id.rawValue) {
-            HStack(spacing: 8) {
-                Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle)
-                Text(tab.displayTitle).font(.system(size: 13)).lineLimit(1)
-            }
-            .padding(.horizontal, 10)
-            .frame(width: 220, height: 34, alignment: .leading)
-            .surface(.selected)
-        }
+        .tabDrag(tab.id, source: .sidebar, drag: drag, browser: browser)
         .contextMenu { TabMenu(tab: tab) }
+    }
+}
+
+/// A playing tab's sound control, and its way back from Picture in Picture.
+struct MediaBadge: View {
+    let tab: TabID
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        let media = browser.media.state(of: tab)
+        if browser.preferences.showMediaControls, media.playing || media.inPictureInPicture {
+            HStack(spacing: 0) {
+                if media.inPictureInPicture {
+                    badge("pip.exit", help: "Back to the page") { browser.media.togglePictureInPicture(tab) }
+                }
+                if media.playing {
+                    badge(media.muted ? "speaker.slash.fill" : "speaker.wave.2.fill", help: media.muted ? "Unmute" : "Mute") {
+                        browser.media.toggleMute(tab)
+                    }
+                    .symbolEffect(.variableColor.iterative, options: .repeating, isActive: !media.muted)
+                }
+            }
+            .transition(.opacity.combined(with: .scale(scale: 0.7)))
+        }
+    }
+
+    private func badge(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 10.5, weight: .medium)).frame(width: 20, height: 20).contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(help)
+    }
+}
+
+/// A split as one row: its panes side by side (or stacked, like the card), the focused one lit.
+private struct SplitRow: View {
+    let split: TabSplit
+    let section: SkylightCore.TabSection
+    let selection: Namespace.ID
+    @Environment(Browser.self) private var browser
+    @Environment(TabDrag.self) private var drag
+    @State private var hovering = false
+
+    var body: some View {
+        let state = browser.store.state
+        let selected = state.activeSpace.selectedTabID
+        let active = selected.map(split.tabs.contains) ?? false
+        HStack(spacing: 3) {
+            ForEach(split.tabs, id: \.self) { id in
+                if let tab = state.tabs[id] {
+                    SplitPaneChip(tab: tab, focused: active && selected == id, dimmed: section == .pinned && !browser.store.status(of: id).isAwake)
+                        .frame(maxWidth: .infinity)
+                        .tabDrag(id, source: .sidebar, drag: drag, browser: browser)
+                }
+            }
+            if hovering {
+                Menu {
+                    SplitMenu(tab: split.tabs[0])
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 10, weight: .bold)).frame(width: 18, height: 20)
+                }
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .foregroundStyle(.secondary)
+                .transition(.opacity)
+            }
+        }
+        .padding(3)
+        .frame(height: browser.preferences.density.rowHeight)
+        .background {
+            if active {
+                Color.clear.surface(.selected, lifted: true).matchedGeometryEffect(id: "selection", in: selection)
+            } else if hovering {
+                Color.clear.surface(.hover)
+            }
+        }
+        .contentShape(.rect)
+        .onHover { h in animate(Motion.feedback) { hovering = h } }
+        .contextMenu { SplitMenu(tab: split.tabs[0]) }
+    }
+}
+
+private struct SplitPaneChip: View {
+    let tab: BrowserTab
+    let focused: Bool
+    let dimmed: Bool
+    @Environment(Browser.self) private var browser
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 14)
+                .opacity(dimmed ? 0.7 : 1)
+            Text(tab.displayTitle)
+                .font(.system(size: 12, weight: focused ? .medium : .regular))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            MediaBadge(tab: tab.id)
+        }
+        .padding(.horizontal, 7)
+        .frame(maxHeight: .infinity)
+        .background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(.primary.opacity(focused ? 0.09 : hovering ? 0.05 : 0))
+        }
+        .contentShape(.rect)
+        .onTapGesture { animate(Motion.travel) { _ = browser.store.send(.selectTab(tab.id)) } }
+        .onHover { h in animate(Motion.feedback) { hovering = h } }
+        .help(tab.displayTitle)
+    }
+}
+
+/// What you can do with a split, from its row, its panes and the menu bar.
+struct SplitMenu: View {
+    let tab: TabID
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        let store = browser.store
+        let split = store.state.activeSpace.split(containing: tab)
+        Button(split?.axis == .horizontal ? "Stack Vertically" : "Arrange Side by Side") {
+            animate(Motion.travel) { _ = store.send(.rotateSplit(tab)) }
+        }
+        Button("Make Panes Equal") {
+            guard let split else { return }
+            animate(Motion.travel) { _ = store.send(.resizeSplit(tab, fractions: Array(repeating: 1, count: split.tabs.count))) }
+        }
+        if (split?.tabs.count ?? 0) < TabSplit.maxPanes {
+            Button("Add New Tab to Split") { browser.presentCommandBar(.split) }
+        }
+        Divider()
+        Button("Separate Tabs") { animate(Motion.travel) { _ = store.send(.dissolveSplit(tab)) } }
     }
 }
 
@@ -429,6 +631,28 @@ private struct TabMenu: View {
         Button("Copy Link") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(tab.url.absoluteString, forType: .string)
+        }
+        let media = browser.media.state(of: tab.id)
+        if media.playing || media.hasVideo || media.inPictureInPicture {
+            Divider()
+            if media.playing { Button(media.muted ? "Unmute Tab" : "Mute Tab") { browser.media.toggleMute(tab.id) } }
+            Button(media.playing ? "Pause" : "Play") { browser.media.togglePlayback(tab.id) }
+            if media.hasVideo || media.inPictureInPicture {
+                Button(media.inPictureInPicture ? "Exit Picture in Picture" : "Picture in Picture") {
+                    browser.media.togglePictureInPicture(tab.id)
+                }
+            }
+            Divider()
+        }
+        if let selected = state.selectedTab, selected.id != tab.id, !tab.url.isSkylightPage, !selected.url.isSkylightPage,
+           state.activeSpace.split(containing: tab.id) == nil {
+            let selected = selected.id
+            Button("Open in Split View") {
+                animate(Motion.travel) { _ = browser.store.send(.splitTab(tab.id, beside: selected, edge: .trailing)) }
+            }
+        }
+        if state.activeSpace.split(containing: tab.id) != nil {
+            Button("Remove from Split") { animate(Motion.travel) { _ = browser.store.send(.leaveSplit(tab.id)) } }
         }
         if !favorite {
             Menu("Move to Space") {
@@ -497,6 +721,7 @@ struct SpaceMenu: View {
 
 private struct BottomBar: View {
     @Environment(Browser.self) private var browser
+    @Environment(TabDrag.self) private var drag
     @Environment(\.colorScheme) private var scheme
     @State private var newName = ""
     @State private var themes = false
@@ -511,16 +736,20 @@ private struct BottomBar: View {
             Spacer(minLength: 4)
             ForEach(state.spaces) { space in
                 let active = space.id == state.activeSpaceID
+                let dropping = drag.target == .space(space.id)
                 Button { animate(Motion.swap) { _ = browser.store.send(.switchSpace(space.id)) } } label: {
                     SpaceIcon(icon: space.icon, name: space.name, size: 12)
-                        .foregroundStyle(active ? AnyShapeStyle(Theme.accent(space.hue, scheme)) : AnyShapeStyle(.tertiary))
+                        .foregroundStyle(active || dropping ? AnyShapeStyle(Theme.accent(space.hue, scheme)) : AnyShapeStyle(.tertiary))
                         .frame(width: 26, height: 26)
-                        .surface(active ? .selected : nil, radius: 8, lifted: active)
+                        .surface(active || dropping ? .selected : nil, radius: 8, lifted: active || dropping)
+                        .scaleEffect(dropping ? 1.18 : 1)
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .help(space.name)
                 .contextMenu { SpaceMenu(space: space) }
+                .reportFrame { drag.spaceButtons[space.id] = $0 }
+                .onDisappear { drag.spaceButtons[space.id] = nil }
             }
             .motion(Motion.travel, value: state.activeSpaceID)
             Spacer(minLength: 4)

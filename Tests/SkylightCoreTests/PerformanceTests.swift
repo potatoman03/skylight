@@ -48,11 +48,11 @@ import Testing
         let load = try time("load 2,000 tabs", count: 1) { loaded = try store.load() }
         let size = (try? FileManager.default.attributesOfItem(atPath: dir.appending(path: "state.json").path)[.size] as? Int) ?? 0
         print("BENCH state.json with 2,000 tabs: \(size / 1024) KB")
-        // Saved dates keep milliseconds.
+        // Saved dates keep milliseconds (truncated, so up to 1 ms off, plus floating-point slack).
         let loadedState = try #require(loaded)
         #expect(loadedState.spaces == state.spaces && loadedState.tabs.keys == state.tabs.keys)
         let drift = state.tabs.values.map { abs($0.lastActiveAt.timeIntervalSince(loadedState.tabs[$0.id]!.lastActiveAt)) }.max() ?? 0
-        #expect(drift < 0.001)
+        #expect(drift < 0.0011)
         #expect(save < .seconds(2) && load < .seconds(2))
     }
 

@@ -81,8 +81,11 @@ public struct AppPaths: Sendable {
     public var stateFile: URL { root.appending(path: "state.json") }
     public var packagesDirectory: URL { root.appending(path: "Packages", directoryHint: .isDirectory) }
     public var engineRoot: URL { root.appending(path: "Engine", directoryHint: .isDirectory) }
+    /// Chromium only accepts profile folders directly inside its root. The default profile is
+    /// Chromium's own first one, `Default`, which is also where extensions run.
     public func profileDirectory(for profile: ProfileID) -> URL {
-        engineRoot.appending(path: "Profiles/\(profile.rawValue)", directoryHint: .isDirectory)
+        let name = profile == .standard ? "Default" : "Profile-\(profile.rawValue)"
+        return engineRoot.appending(path: name, directoryHint: .isDirectory)
     }
 
     public var preferencesFile: URL { root.appending(path: "preferences.json") }

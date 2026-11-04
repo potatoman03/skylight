@@ -121,9 +121,12 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
     public var pinned: [TabID]
     public var today: [TabID]
     public var selectedTabID: TabID?
+    /// Tabs shown together. Each split's tabs sit in one section.
+    public var splits: [TabSplit]
 
     public init(id: SpaceID = SpaceID(), name: String, hue: Double, icon: String? = nil, profileID: ProfileID = .standard,
-                themeID: String? = nil, pinned: [TabID] = [], today: [TabID] = [], selectedTabID: TabID? = nil) {
+                themeID: String? = nil, pinned: [TabID] = [], today: [TabID] = [], selectedTabID: TabID? = nil,
+                splits: [TabSplit] = []) {
         self.id = id
         self.name = name
         self.hue = hue
@@ -133,9 +136,10 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         self.pinned = pinned
         self.today = today
         self.selectedTabID = selectedTabID
+        self.splits = splits
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, hue, icon, profileID, themeID, pinned, today, selectedTabID }
+    enum CodingKeys: String, CodingKey { case id, name, hue, icon, profileID, themeID, pinned, today, selectedTabID, splits }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -148,6 +152,7 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         pinned = try c.decodeIfPresent([TabID].self, forKey: .pinned) ?? []
         today = try c.decodeIfPresent([TabID].self, forKey: .today) ?? []
         selectedTabID = try c.decodeIfPresent(TabID.self, forKey: .selectedTabID)
+        splits = try c.decodeIfPresent([TabSplit].self, forKey: .splits) ?? []
     }
 
     public var allTabIDs: [TabID] { pinned + today }

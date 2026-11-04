@@ -44,6 +44,7 @@ struct SettingsPage: View {
                     case .profiles: ProfilesSettings()
                     case .importing: ImportSettings()
                     case .agents: AgentSettings()
+                    case .extensions: ExtensionSettings()
                     case .packages: PackageSettings()
                     }
                 }
@@ -61,7 +62,7 @@ struct SettingsPage: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, appearance, spaces, profiles, passwords, importing = "import", agents, packages
+    case general, appearance, spaces, profiles, passwords, extensions, importing = "import", agents, packages
 
     var id: String { rawValue }
 
@@ -76,6 +77,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .profiles: "Profiles"
         case .importing: "Import"
         case .agents: "Agents"
+        case .extensions: "Extensions"
         case .packages: "Packages"
         }
     }
@@ -89,7 +91,8 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .profiles: "person.2.fill"
         case .importing: "square.and.arrow.down.fill"
         case .agents: "sparkles"
-        case .packages: "puzzlepiece.extension.fill"
+        case .extensions: "puzzlepiece.extension.fill"
+        case .packages: "shippingbox.fill"
         }
     }
 
@@ -102,6 +105,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .profiles: .purple
         case .importing: .green
         case .agents: .orange
+        case .extensions: .cyan
         case .packages: .pink
         }
     }

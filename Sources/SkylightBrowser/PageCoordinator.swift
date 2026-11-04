@@ -23,7 +23,12 @@ public final class PageCoordinator: BrowserEffectHandler {
     /// Holds every awake page's view. The visible page is the only one not hidden, so page views
     /// are never re-parented (which Chromium dislikes).
     @ObservationIgnored public let hostView = PageHostView()
+    /// The focused tab: the one the address bar and shortcuts act on.
     public private(set) var visibleTabID: TabID?
+    /// Every tab on screen: the focused tab's split, or just the focused tab.
+    public private(set) var visibleTabIDs: [TabID] = []
+    /// Space between split panes and their corner radius.
+    @ObservationIgnored public var paneStyle: @MainActor () -> (gap: CGFloat, radius: CGFloat) = { (6, 12) }
 
     @ObservationIgnored public var policy = HibernationPolicy()
     /// Today tabs idle this long are archived.
@@ -31,6 +36,8 @@ public final class PageCoordinator: BrowserEffectHandler {
     @ObservationIgnored public weak var sink: PageEventSink?
     /// A tab's page went away. `tabClosed` is true when the tab itself is gone.
     @ObservationIgnored public var onPageGone: (@MainActor (TabID, _ tabClosed: Bool) -> Void)?
+    /// Pages woke, slept, appeared or got their address: extensions want to know.
+    @ObservationIgnored public var onPagesChange: (@MainActor () -> Void)?
 
     @ObservationIgnored private let engine: WebEngine
     @ObservationIgnored private let paths: AppPaths
@@ -41,6 +48,7 @@ public final class PageCoordinator: BrowserEffectHandler {
     @ObservationIgnored private var lastSeen: [TabID: Date] = [:]
     @ObservationIgnored private var closing: Set<ObjectIdentifier> = []
     @ObservationIgnored private var sweepTimer: Timer?
+    @ObservationIgnored private var clickMonitor: Any?
 
     public init(engine: WebEngine, paths: AppPaths, store: BrowserStore) {
         self.engine = engine
@@ -53,6 +61,19 @@ public final class PageCoordinator: BrowserEffectHandler {
         sweepTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.sweep() }
         }
+        // A click in another pane of a split moves focus there (the click still reaches the page).
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            MainActor.assumeIsolated { self?.focusPane(at: event) }
+            return event
+        }
+    }
+
+    private func focusPane(at event: NSEvent) {
+        guard visibleTabIDs.count > 1, event.window === hostView.window, let store else { return }
+        let point = hostView.convert(event.locationInWindow, from: nil)
+        guard let hit = visibleTabIDs.first(where: { pages[$0].map { !$0.view.isHidden && $0.view.frame.contains(point) } ?? false }),
+              hit != visibleTabID else { return }
+        store.send(.selectTab(hit))
     }
 
     // MARK: - Effects
@@ -62,7 +83,7 @@ public final class PageCoordinator: BrowserEffectHandler {
             switch effect {
             case let .showTab(id): show(id)
             case let .load(id, url):
-                if let page = pages[id] { page.load(url) } else if id == visibleTabID { wake(id) }
+                if let page = pages[id] { page.load(url) } else if visibleTabIDs.contains(id) { wake(id) }
             case let .goBack(id): pages[id]?.goBack()
             case let .goForward(id): pages[id]?.goForward()
             case let .reload(id): if let page = pages[id] { page.reload() } else { wake(id) }
@@ -74,7 +95,13 @@ public final class PageCoordinator: BrowserEffectHandler {
     }
 
     private func show(_ id: TabID?) {
-        if visibleTabID != id, let layer = hostView.layer {
+        let state = store?.state
+        let split = id.flatMap { state?.activeSpace.split(containing: $0) }
+        var panes = split?.tabs ?? id.map { [$0] } ?? []
+        panes = panes.filter { state?.tabs[$0] != nil }
+        guard let id, panes.contains(id) else { return hideAll() }
+
+        if Set(panes) != Set(visibleTabIDs), let layer = hostView.layer {
             // Tabs swap as a quick crossfade, never a hard cut.
             let fade = CATransition()
             fade.type = .fade
@@ -82,22 +109,41 @@ public final class PageCoordinator: BrowserEffectHandler {
             fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0.75, 0.1, 1)
             layer.add(fade, forKey: "swap")
         }
-        if let old = visibleTabID, old != id, let page = pages[old] {
-            page.view.isHidden = true
-            page.setVisible(false)
-            lastSeen[old] = .now
-        }
+        for old in visibleTabIDs where !panes.contains(old) { conceal(old) }
+        let focusChanged = visibleTabID != id
+        visibleTabIDs = panes
         visibleTabID = id
-        guard let id, store?.state.tabs[id] != nil else {
-            visibleTabID = nil
-            return
+        var views: [NSView] = []
+        for pane in panes {
+            guard let page = pages[pane] ?? wake(pane) else { continue }
+            page.view.isHidden = false
+            page.setVisible(true)
+            lastSeen[pane] = .now
+            views.append(page.view)
         }
-        let page = pages[id] ?? wake(id)
-        page?.view.isHidden = false
-        page?.setVisible(true)
-        lastSeen[id] = .now
-        if let page { hostView.window?.makeFirstResponder(page.view) }
+        let style = paneStyle()
+        hostView.arrange(views, split: views.count == panes.count ? split : nil, gap: style.gap, radius: style.radius)
+        if focusChanged || views.count == 1, let page = pages[id] { hostView.window?.makeFirstResponder(page.view) }
+        onPagesChange?()
     }
+
+    private func hideAll() {
+        for old in visibleTabIDs { conceal(old) }
+        visibleTabIDs = []
+        visibleTabID = nil
+        hostView.arrange([], split: nil, gap: 0, radius: 0)
+        onPagesChange?()
+    }
+
+    private func conceal(_ id: TabID) {
+        guard let page = pages[id] else { return }
+        page.view.isHidden = true
+        page.setVisible(false)
+        lastSeen[id] = .now
+    }
+
+    /// Lays the visible panes out again (after the gap or radius preference changes).
+    public func relayout() { show(visibleTabID) }
 
     // MARK: - Page lifetimes
 
@@ -110,8 +156,8 @@ public final class PageCoordinator: BrowserEffectHandler {
         pages[id] = page
         tabForPage[ObjectIdentifier(page)] = id
         lastSeen[id] = .now
-        page.view.isHidden = id != visibleTabID
-        page.setVisible(id == visibleTabID)
+        page.view.isHidden = !visibleTabIDs.contains(id)
+        page.setVisible(visibleTabIDs.contains(id))
         hostView.addPage(page.view)
         store.updateStatus(id) { $0.isAwake = true }
         return page
@@ -120,6 +166,9 @@ public final class PageCoordinator: BrowserEffectHandler {
     public func page(for id: TabID) -> WebPage? { pages[id] }
 
     public var awakePages: [WebPage] { Array(pages.values) }
+
+    /// Awake pages with their tabs.
+    public var awake: [(tab: TabID, page: WebPage)] { pages.map { ($0.key, $0.value) } }
 
     /// Gives keyboard focus back to the visible page.
     public func focusVisiblePage() {
@@ -136,9 +185,10 @@ public final class PageCoordinator: BrowserEffectHandler {
         page.close()
         lastSeen[id] = nil
         store?.updateStatus(id) { $0 = PageStatus() }
+        onPagesChange?()
     }
 
-    private func profile(for id: ProfileID) -> WebProfile {
+    public func profile(for id: ProfileID) -> WebProfile {
         if let profile = profiles[id] { return profile }
         let profile = engine.makeProfile(directory: paths.profileDirectory(for: id))
         profiles[id] = profile
@@ -149,7 +199,7 @@ public final class PageCoordinator: BrowserEffectHandler {
     func sweep(now: Date = .now) {
         guard let store else { return }
         var protected = store.state.selectedTabIDs
-        if let visibleTabID { protected.insert(visibleTabID) }
+        protected.formUnion(visibleTabIDs)
         for id in policy.pagesToSleep(awake: lastSeen, protected: protected, now: now) { sleep(id) }
         store.send(.archiveTabs(idleSince: now.addingTimeInterval(-archiveAfter())))
     }
@@ -166,6 +216,7 @@ public final class PageCoordinator: BrowserEffectHandler {
 
     public func closeAll(completion: @escaping @MainActor () -> Void) {
         sweepTimer?.invalidate()
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         for page in pages.values { closing.insert(ObjectIdentifier(page)) }
         engine.closeAll(completion: completion)
     }
@@ -181,6 +232,7 @@ extension PageCoordinator: WebPageDelegate {
         if event.url != nil || event.title != nil || event.faviconURL != nil {
             store.send(.pageDidUpdate(id, PageMetadata(url: event.url, title: event.title, faviconURL: event.faviconURL)))
         }
+        if event.url != nil || event.extensionTabID != nil { onPagesChange?() }
         store.updateStatus(id) { status in
             if let v = event.isLoading { status.isLoading = v }
             if let v = event.progress { status.progress = v }
@@ -227,17 +279,47 @@ extension PageCoordinator: WebPageDelegate {
     }
 }
 
-/// Hosts page views, each filling the bounds.
+/// Hosts page views. Alone, a page fills the bounds; in a split, each visible page gets its pane.
 public final class PageHostView: NSView {
     public override var isFlipped: Bool { true }
 
+    private var panes: [NSView] = []
+    private var split: TabSplit?
+    private var gap: CGFloat = 0
+    private var radius: CGFloat = 0
+
     func addPage(_ view: NSView) {
         view.frame = bounds
-        view.autoresizingMask = [.width, .height]
+        view.autoresizingMask = []
+        view.wantsLayer = true
         addSubview(view)
     }
 
-    public override func resizeSubviews(withOldSize oldSize: NSSize) {
-        for view in subviews { view.frame = bounds }
+    func arrange(_ views: [NSView], split: TabSplit?, gap: CGFloat, radius: CGFloat) {
+        panes = views
+        self.split = views.count > 1 ? split : nil
+        self.gap = gap
+        self.radius = radius
+        layoutPanes()
+    }
+
+    /// Each visible page's frame, in this view's coordinates.
+    public var paneFrames: [CGRect] { panes.map(\.frame) }
+
+    public override func resizeSubviews(withOldSize oldSize: NSSize) { layoutPanes() }
+
+    private func layoutPanes() {
+        let frames = split?.frames(in: bounds.size, gap: gap)
+        for view in subviews {
+            if let frames, let i = panes.firstIndex(where: { $0 === view }) {
+                view.frame = frames[i]
+                view.layer?.cornerRadius = radius
+                view.layer?.cornerCurve = .continuous
+                view.layer?.masksToBounds = true
+            } else {
+                view.frame = bounds
+                view.layer?.cornerRadius = 0
+            }
+        }
     }
 }

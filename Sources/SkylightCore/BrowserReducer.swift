@@ -31,6 +31,7 @@ public enum BrowserReducer {
             return closeTab(&state, id, now: env.now())
 
         case let .removeTab(id):
+            leaveSplits(&state, id)
             if state.isFavorite(id) {
                 state.favorites.removeAll { $0 == id }
                 state.spaces[state.activeSpaceIndex].today.insert(id, at: 0)
@@ -81,6 +82,7 @@ public enum BrowserReducer {
             return state.tabs[id] == nil ? .ignored : ReduceResult(effects: [.stop(id)])
 
         case let .togglePin(id):
+            leaveSplits(&state, id)
             if state.isFavorite(id) {
                 state.favorites.removeAll { $0 == id }
                 state.spaces[state.activeSpaceIndex].pinned.append(id)
@@ -97,6 +99,7 @@ public enum BrowserReducer {
 
         case let .toggleFavorite(id):
             guard state.tabs[id] != nil else { return .ignored }
+            leaveSplits(&state, id)
             if state.isFavorite(id) {
                 state.favorites.removeAll { $0 == id }
                 state.spaces[state.activeSpaceIndex].today.insert(id, at: 0)
@@ -125,17 +128,68 @@ public enum BrowserReducer {
                 state.spaces[si][section].insert(id, at: max(0, min(index, state.spaces[si][section].count)))
                 return ReduceResult()
             }
-            guard let si = state.spaceIndex(containing: id), let from = state.spaces[si].section(of: id) else { return .ignored }
-            state.spaces[si][from].removeAll { $0 == id }
+            guard let si = state.spaceIndex(containing: id), state.spaces[si].section(of: id) != nil else { return .ignored }
+            // A split moves as one row. `index` counts the destination without the moved tabs.
+            let group = state.spaces[si].group(of: id)
+            for section in TabSection.allCases { state.spaces[si][section].removeAll { group.contains($0) } }
             let count = state.spaces[si][section].count
-            state.spaces[si][section].insert(id, at: max(0, min(index, count)))
+            state.spaces[si][section].insert(contentsOf: group, at: max(0, min(index, count)))
             return ReduceResult()
+
+        case let .moveToFavorites(id, index):
+            guard state.tabs[id] != nil else { return .ignored }
+            leaveSplits(&state, id)
+            if let si = state.spaceIndex(containing: id) {
+                for section in TabSection.allCases { state.spaces[si][section].removeAll { $0 == id } }
+                if state.spaces[si].selectedTabID == id, si != state.activeSpaceIndex { state.spaces[si].selectedTabID = nil }
+            }
+            state.favorites.removeAll { $0 == id }
+            state.favorites.insert(id, at: max(0, min(index, state.favorites.count)))
+            return ReduceResult()
+
+        case let .splitTab(id, target, edge):
+            return splitTab(&state, id, beside: target, edge: edge, env: env)
+
+        case let .leaveSplit(id):
+            guard let si = state.spaceIndex(containing: id), state.spaces[si].split(containing: id) != nil else { return .ignored }
+            leaveSplits(&state, id)
+            return relayout(state, si)
+
+        case let .dissolveSplit(id):
+            guard let si = state.spaceIndex(containing: id), let k = state.spaces[si].splitIndex(containing: id) else { return .ignored }
+            state.spaces[si].splits.remove(at: k)
+            return relayout(state, si)
+
+        case let .resizeSplit(id, fractions):
+            guard let si = state.spaceIndex(containing: id), let k = state.spaces[si].splitIndex(containing: id),
+                  fractions.count == state.spaces[si].splits[k].tabs.count else { return .ignored }
+            state.spaces[si].splits[k].fractions = fractions
+            state.spaces[si].splits[k].normalize()
+            return relayout(state, si)
+
+        case let .rotateSplit(id):
+            guard let si = state.spaceIndex(containing: id), let k = state.spaces[si].splitIndex(containing: id) else { return .ignored }
+            state.spaces[si].splits[k].axis = state.spaces[si].splits[k].axis.flipped
+            return relayout(state, si)
+
+        case let .movePane(id, to):
+            guard let si = state.spaceIndex(containing: id), let k = state.spaces[si].splitIndex(containing: id),
+                  let from = state.spaces[si].splits[k].tabs.firstIndex(of: id) else { return .ignored }
+            var split = state.spaces[si].splits[k]
+            let fraction = split.fractions.remove(at: from)
+            split.tabs.remove(at: from)
+            let index = max(0, min(to, split.tabs.count))
+            split.tabs.insert(id, at: index)
+            split.fractions.insert(fraction, at: index)
+            state.spaces[si].splits[k] = split
+            return relayout(state, si)
 
         case let .moveTabToSpace(id, spaceID):
             guard let from = state.spaceIndex(containing: id),
                   let to = state.spaces.firstIndex(where: { $0.id == spaceID }), from != to,
                   let tab = state.tabs[id] else { return .ignored }
             let sameProfile = state.spaces[from].profileID == state.spaces[to].profileID
+            leaveSplits(&state, id)
             var result = closeTab(&state, id, remember: false, unloadPinned: false, now: env.now())
             state.tabs[id] = tab
             state.spaces[to].today.insert(id, at: 0)
@@ -316,13 +370,16 @@ public enum BrowserReducer {
 
     private static func closeTab(_ state: inout BrowserState, _ id: TabID, remember: Bool = true, unloadPinned: Bool = true,
                                  now: Date = .now) -> ReduceResult {
+        // Closing a pane leaves its split; focus stays in what's left of it.
+        let partner = state.space(containing: id)?.split(containing: id)?.tabs.first { $0 != id }
+        leaveSplits(&state, id)
         // Closing a favorite or a pinned tab only puts it to sleep; it stays where it is.
         let keep = state.isFavorite(id) || (unloadPinned && state.space(containing: id)?.section(of: id) == .pinned)
         if keep {
             var effects: [BrowserEffect] = [.discardPage(id)]
             for si in state.spaces.indices where state.spaces[si].selectedTabID == id {
                 // Fall to a Today tab rather than waking another pinned one.
-                let next = state.spaces[si].today.first
+                let next = partner ?? state.spaces[si].today.first
                 state.spaces[si].selectedTabID = next
                 if si == state.activeSpaceIndex { effects.append(.showTab(next)) }
             }
@@ -347,12 +404,85 @@ public enum BrowserReducer {
             // Select the neighbor below, else above, like closing a row in a list.
             let pos = order.firstIndex(of: id) ?? 0
             let remaining = order.filter { $0 != id }
-            let next = remaining.isEmpty ? nil : remaining[min(pos, remaining.count - 1)]
+            let next = partner ?? (remaining.isEmpty ? nil : remaining[min(pos, remaining.count - 1)])
             state.spaces[si].selectedTabID = next
             if let next { state.tabs[next]?.lastActiveAt = now }
             if state.spaces[si].id == state.activeSpaceID { effects.append(.showTab(next)) }
         }
         return ReduceResult(effects: effects)
+    }
+
+    // MARK: - Splits
+
+    private static func splitTab(_ state: inout BrowserState, _ id: TabID, beside target: TabID, edge: SplitEdge,
+                                 env: ReducerEnvironment) -> ReduceResult {
+        guard id != target, state.tabs[id] != nil, state.tabs[target] != nil else { return .ignored }
+        // A favorite target joins the active Space, where it's showing.
+        if state.isFavorite(target) {
+            state.favorites.removeAll { $0 == target }
+            state.spaces[state.activeSpaceIndex].today.insert(target, at: 0)
+        }
+        guard let si = state.spaceIndex(containing: target), let section = state.spaces[si].section(of: target) else { return .ignored }
+        if let k = state.spaces[si].splitIndex(containing: target), !state.spaces[si].splits[k].tabs.contains(id) {
+            let split = state.spaces[si].splits[k]
+            guard split.tabs.count < TabSplit.maxPanes, split.axis == edge.axis else { return .ignored }
+        }
+
+        var effects: [BrowserEffect] = []
+        let fromSpace = state.spaceIndex(containing: id)
+        if let from = fromSpace, state.spaces[from].profileID != state.spaces[si].profileID { effects.append(.discardPage(id)) }
+        leaveSplits(&state, id)
+        state.favorites.removeAll { $0 == id }
+        if let from = fromSpace {
+            for s in TabSection.allCases { state.spaces[from][s].removeAll { $0 == id } }
+            if from != si, state.spaces[from].selectedTabID == id { state.spaces[from].selectedTabID = nil }
+        }
+
+        // The new pane sits next to the target in the sidebar too.
+        let at = state.spaces[si][section].firstIndex(of: target) ?? 0
+        state.spaces[si][section].insert(id, at: edge.isAfter ? at + 1 : at)
+
+        if let k = state.spaces[si].splitIndex(containing: target) {
+            var split = state.spaces[si].splits[k]
+            let pane = split.tabs.firstIndex(of: target) ?? 0
+            // The new pane takes half of the one it lands beside.
+            let half = split.fractions[pane] / 2
+            split.fractions[pane] = half
+            let index = edge.isAfter ? pane + 1 : pane
+            split.tabs.insert(id, at: index)
+            split.fractions.insert(half, at: index)
+            split.normalize()
+            state.spaces[si].splits[k] = split
+        } else {
+            state.spaces[si].splits.append(TabSplit(tabs: edge.isAfter ? [target, id] : [id, target], axis: edge.axis))
+        }
+        state.spaces[si].selectedTabID = id
+        state.activeSpaceID = state.spaces[si].id
+        state.tabs[id]?.lastActiveAt = env.now()
+        effects.append(.showTab(id))
+        return ReduceResult(effects: effects)
+    }
+
+    /// Takes a tab out of whichever split holds it; splits left with one pane go away.
+    private static func leaveSplits(_ state: inout BrowserState, _ id: TabID) {
+        for si in state.spaces.indices {
+            guard let k = state.spaces[si].splitIndex(containing: id) else { continue }
+            var split = state.spaces[si].splits[k]
+            let pane = split.tabs.firstIndex(of: id)!
+            split.tabs.remove(at: pane)
+            split.fractions.remove(at: pane)
+            if split.tabs.count < 2 {
+                state.spaces[si].splits.remove(at: k)
+            } else {
+                split.normalize()
+                state.spaces[si].splits[k] = split
+            }
+        }
+    }
+
+    /// The panes on screen changed shape: show the selection again.
+    private static func relayout(_ state: BrowserState, _ si: Int) -> ReduceResult {
+        si == state.activeSpaceIndex ? ReduceResult(effects: [.showTab(state.selectedTabID)]) : ReduceResult()
     }
 
     /// Picks a hue far from the ones already in use.

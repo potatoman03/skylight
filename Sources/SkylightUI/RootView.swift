@@ -13,6 +13,7 @@ public struct RootView: View {
     @Namespace private var omnibox
     @State private var peeking = false
     @State private var lights = TrafficLights()
+    @State private var drag = TabDrag()
 
     static let sidebarWidth: CGFloat = 252
 
@@ -78,12 +79,47 @@ public struct RootView: View {
             }
         }
         .overlay(alignment: .bottom) { ToastView() }
+        .overlay(alignment: .topLeading) { DragGhost() }
+        .coordinateSpace(.named(TabDrag.space))
+        .environment(drag)
         .environment(\.palette, palette)
         .tint(Color(palette.accent))
         .background(TrafficLightReader(lights: $lights))
         .ignoresSafeArea()
         .frame(minWidth: 760, minHeight: 480)
         .onChange(of: collapsed) { _, now in if !now { peeking = false } }
+    }
+}
+
+/// The tab being dragged, following the pointer.
+private struct DragGhost: View {
+    @Environment(Browser.self) private var browser
+    @Environment(TabDrag.self) private var drag
+
+    var body: some View {
+        if let item = drag.item, let tab = browser.store.state.tabs[item.id] {
+            let onPage: Bool = if case .split? = drag.target { true } else { false }
+            HStack(spacing: 7) {
+                Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 14)
+                Text(tab.displayTitle).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                if item.group.count > 1 {
+                    Text("+\(item.group.count - 1)")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .padding(.horizontal, 5).frame(height: 16)
+                        .background(.primary.opacity(0.08), in: .capsule)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: 200, alignment: .leading)
+            .frame(height: 30)
+            .surface(.selected, radius: 9, lifted: true)
+            .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+            .scaleEffect(onPage ? 0.9 : 1, anchor: .topLeading)
+            .offset(x: drag.location.x + 10, y: drag.location.y + 8)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+            .animation(Motion.feedback, value: onPage)
+        }
     }
 }
 

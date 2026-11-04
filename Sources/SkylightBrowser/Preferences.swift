@@ -68,6 +68,25 @@ public final class Preferences {
         }
     }
 
+    /// Where extension buttons go.
+    public enum ExtensionPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
+        /// Small icons at the end of the address bar.
+        case addressBar
+        /// A row of buttons under the address bar.
+        case toolbar
+        /// One button that opens them all.
+        case menu
+        public var id: String { rawValue }
+
+        public var name: String {
+            switch self {
+            case .addressBar: "In the address bar"
+            case .toolbar: "Row below the address bar"
+            case .menu: "Behind one button"
+            }
+        }
+    }
+
     private struct Stored: Codable {
         var searchEngine: SearchEngine?
         var appearance: Appearance?
@@ -79,6 +98,11 @@ public final class Preferences {
         var hiddenSidebarItems: Set<SidebarItem>?
         var density: Density?
         var cornerRadius: Double?
+        var extensionPlacement: ExtensionPlacement?
+        var splitGap: Double?
+        var highlightFocusedPane: Bool?
+        var autoPictureInPicture: Bool?
+        var showMediaControls: Bool?
     }
 
     public var searchEngine: SearchEngine = .google { didSet { save() } }
@@ -96,6 +120,15 @@ public final class Preferences {
     public var density: Density = .comfortable { didSet { save() } }
     /// Corner radius of the page card, in points.
     public var cornerRadius: Double = 12 { didSet { save() } }
+    public var extensionPlacement: ExtensionPlacement = .addressBar { didSet { save() } }
+    /// Space between split panes, in points.
+    public var splitGap: Double = 6 { didSet { save() } }
+    /// Ring the pane that has focus in a split.
+    public var highlightFocusedPane = true { didSet { save() } }
+    /// A playing video floats in picture in picture when you switch away from its tab.
+    public var autoPictureInPicture = true { didSet { save() } }
+    /// Play, pause and picture-in-picture buttons on tabs that play media.
+    public var showMediaControls = true { didSet { save() } }
 
     /// Every theme you can pick: the presets, then your own.
     public var themes: [SkyTheme] { SkyTheme.presets + customThemes }
@@ -155,6 +188,11 @@ public final class Preferences {
         hiddenSidebarItems = stored.hiddenSidebarItems ?? []
         density = stored.density ?? density
         cornerRadius = stored.cornerRadius ?? cornerRadius
+        extensionPlacement = stored.extensionPlacement ?? extensionPlacement
+        splitGap = stored.splitGap ?? splitGap
+        highlightFocusedPane = stored.highlightFocusedPane ?? highlightFocusedPane
+        autoPictureInPicture = stored.autoPictureInPicture ?? autoPictureInPicture
+        showMediaControls = stored.showMediaControls ?? showMediaControls
     }
 
     public func applyAppearance() {
@@ -170,7 +208,9 @@ public final class Preferences {
         let stored = Stored(searchEngine: searchEngine, appearance: appearance, godRays: godRays,
                             archiveAfterHours: archiveAfterHours, sidebarCollapsed: sidebarCollapsed, themeID: themeID,
                             customThemes: customThemes, hiddenSidebarItems: hiddenSidebarItems, density: density,
-                            cornerRadius: cornerRadius)
+                            cornerRadius: cornerRadius, extensionPlacement: extensionPlacement, splitGap: splitGap,
+                            highlightFocusedPane: highlightFocusedPane, autoPictureInPicture: autoPictureInPicture,
+                            showMediaControls: showMediaControls)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)

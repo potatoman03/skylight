@@ -21,6 +21,27 @@ public protocol WebEngine: AnyObject {
 
     /// Closes every page, then calls `completion` once the engine can shut down.
     func closeAll(completion: @escaping @MainActor () -> Void)
+
+    /// Chrome extensions, when the engine can run them.
+    var extensions: ExtensionHost? { get }
+}
+
+/// Runs Chrome extensions in the default profile.
+///
+/// Engines without Chrome's tab strip must still give extensions a current tab and a window:
+/// `setTabs` says which pages exist and which one is in front, and `openTab` receives the tabs
+/// extensions ask for.
+@MainActor
+public protocol ExtensionHost: AnyObject {
+    /// Loads an unpacked extension folder. Returns the extension's id.
+    func load(_ directory: URL) async throws -> String
+    func unload(_ id: String) async throws
+    /// The pages extensions can see, and the one they treat as the current tab.
+    func setTabs(_ pages: [WebPage], active: WebPage?)
+    /// Clicks the extension's toolbar button for an extension without a popup.
+    func triggerAction(_ id: String, page: WebPage?) async throws
+    /// An extension asked to open a tab.
+    var openTab: (@MainActor (URL) -> Void)? { get set }
 }
 
 @MainActor
@@ -47,6 +68,13 @@ public protocol WebPage: AnyObject {
 
     func showDeveloperTools()
     func close()
+
+    /// The id extensions know this page by (`chrome.tabs`). 0 before the page exists.
+    var extensionTabID: Int { get }
+
+    /// Runs `script` as if the user had just clicked, for APIs that need a gesture
+    /// (picture in picture, fullscreen). Fire and forget.
+    func runWithUserGesture(_ script: String)
 }
 
 /// A permission a site asks for, answered by the UI.
@@ -100,6 +128,8 @@ public struct PageEvent: Sendable, Equatable {
     public var canGoBack: Bool?
     public var canGoForward: Bool?
     public var progress: Double?
+    /// The page learned the id extensions know it by.
+    public var extensionTabID: Int?
 
     public init() {}
 }

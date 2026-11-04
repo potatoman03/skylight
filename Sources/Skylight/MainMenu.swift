@@ -59,6 +59,7 @@ enum MainMenu {
             item("Stop", #selector(AppDelegate.stopLoading(_:)), ".", target: target),
             .separator(),
             item("Boost This Site", #selector(AppDelegate.boostSite(_:)), "b", [.command, .shift], target: target),
+            item("Picture in Picture", #selector(AppDelegate.pictureInPicture(_:)), "p", [.command, .option], target: target),
             item("Developer Tools", #selector(AppDelegate.developerTools(_:)), "i", [.command, .option], target: target),
         ]))
 
@@ -73,6 +74,12 @@ enum MainMenu {
             item("Pin Tab", #selector(AppDelegate.togglePin(_:)), "d", target: target),
             item("Add to Favorites", #selector(AppDelegate.toggleFavorite(_:)), "d", [.command, .shift], target: target),
             item("Clear Today", #selector(AppDelegate.clearToday(_:)), "k", [.command, .shift], target: target),
+            .separator(),
+            item("New Tab in Split View", #selector(AppDelegate.newSplitTab(_:)), "n", [.command, .control], target: target),
+            item("Focus Next Pane", #selector(AppDelegate.nextPane(_:)), "]", [.command, .control], target: target),
+            item("Focus Previous Pane", #selector(AppDelegate.previousPane(_:)), "[", [.command, .control], target: target),
+            item("Rotate Split", #selector(AppDelegate.rotateSplit(_:)), "r", [.command, .control], target: target),
+            item("Separate Split", #selector(AppDelegate.separateSplit(_:)), "", target: target),
             .separator(),
             item("Next Space", #selector(AppDelegate.nextSpace(_:)), String(UnicodeScalar(NSRightArrowFunctionKey)!), [.command, .option], target: target),
             item("Previous Space", #selector(AppDelegate.previousSpace(_:)), String(UnicodeScalar(NSLeftArrowFunctionKey)!), [.command, .option], target: target),

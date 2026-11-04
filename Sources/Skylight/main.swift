@@ -22,7 +22,8 @@ do {
         logFile: paths.root.appending(path: "engine.log"),
         // Unsigned builds would prompt for the login keychain on every launch.
         useMockKeychain: devBuild,
-        remoteDebuggingPort: debugPort
+        remoteDebuggingPort: debugPort,
+        defaultProfile: paths.profileDirectory(for: .standard)
     )) {
         delegate.engineDidStart()
     }

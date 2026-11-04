@@ -28,6 +28,21 @@ public enum BrowserAction: Equatable, Sendable {
     case clearToday
     case moveTab(TabID, to: TabSection, index: Int)
     case moveTabToSpace(TabID, SpaceID)
+    /// Puts a tab in the favorites at `index` (or moves it there within them).
+    case moveToFavorites(TabID, index: Int)
+
+    /// Puts `tab` beside `target`'s pane, making a split if there isn't one.
+    case splitTab(TabID, beside: TabID, edge: SplitEdge)
+    /// Takes a tab out of its split. A split with one pane left goes away.
+    case leaveSplit(TabID)
+    /// Undoes the split the tab is in.
+    case dissolveSplit(TabID)
+    /// New pane sizes for the split the tab is in.
+    case resizeSplit(TabID, fractions: [Double])
+    /// Side by side becomes stacked, and back.
+    case rotateSplit(TabID)
+    /// Moves a pane to another position in its split.
+    case movePane(TabID, to: Int)
 
     case createSpace(name: String, hue: Double? = nil)
     case renameSpace(SpaceID, String)

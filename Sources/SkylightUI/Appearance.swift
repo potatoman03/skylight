@@ -192,6 +192,31 @@ struct AppearanceSettings: View {
                     }
                     .settingsCard()
                 }
+
+                SettingsBlock("Split View", note: "Drag a tab onto the page to split it. Drag a pane's grip to move it, or a divider to resize.") {
+                    VStack(spacing: 0) {
+                        SettingsRow("Space between panes") {
+                            HStack {
+                                Slider(value: $prefs.splitGap, in: 0...16, step: 1).frame(width: 200)
+                                Text("\(Int(prefs.splitGap)) pt").monospacedDigit().foregroundStyle(.secondary).frame(width: 40)
+                            }
+                        }
+                        Divider()
+                        SettingsRow("Outline the focused pane") { Toggle("", isOn: $prefs.highlightFocusedPane).toggleStyle(.switch).controlSize(.small).labelsHidden() }
+                    }
+                    .settingsCard()
+                }
+
+                SettingsBlock("Media", note: "Picture in Picture: ⌥⌘P, or from a playing tab's menu.") {
+                    VStack(spacing: 0) {
+                        SettingsRow("Show sound controls on tabs") { Toggle("", isOn: $prefs.showMediaControls).toggleStyle(.switch).controlSize(.small).labelsHidden() }
+                        Divider()
+                        SettingsRow("Picture in Picture when you leave a playing video") {
+                            Toggle("", isOn: $prefs.autoPictureInPicture).toggleStyle(.switch).controlSize(.small).labelsHidden()
+                        }
+                    }
+                    .settingsCard()
+                }
             }
             .padding(20)
             .padding(.bottom, 20)

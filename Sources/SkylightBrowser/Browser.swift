@@ -19,6 +19,8 @@ public final class Browser {
     public let commandBar = CommandBarModel()
     public let preferences: Preferences
     public let passwords: PasswordService
+    public let extensions: ExtensionService
+    public let media = MediaService()
     public private(set) var mcpConnection: MCPConnection?
     /// The Space being renamed, if the rename alert is up.
     public var renameSpace: SpaceID?
@@ -33,6 +35,7 @@ public final class Browser {
         self.preferences = preferences
         self.passwords = PasswordService(store: credentials, toasts: toasts,
                                          neverFile: paths.root.appending(path: "password-exceptions.json"))
+        self.extensions = ExtensionService(host: engine.extensions, root: paths.root, toasts: toasts)
         let store = BrowserStore(persistence: JSONFileStateStore(fileURL: paths.stateFile))
         self.store = store
         self.pages = PageCoordinator(engine: engine, paths: paths, store: store)
@@ -49,9 +52,34 @@ public final class Browser {
         pages.onPageGone = { [weak self] id, tabClosed in
             self?.agents.forgetTab(id)
             self?.passwords.pageWentAway(id)
+            self?.media.pageWentAway(id)
             if tabClosed { self?.prompts.dismissAll(for: id) }
         }
         commandBar.source = self
+        extensions.makePage = { [weak self] url, delegate in
+            guard let self else { return nil }
+            return self.engine.makePage(url: url, profile: self.pages.profile(for: .standard), delegate: delegate)
+        }
+        extensions.openTab = { [weak self] url in self?.store.send(.openTab(url)) }
+        extensions.currentTabs = { [weak self] in
+            guard let self else { return ([], nil) }
+            let state = self.store.state
+            // Extensions run in the default profile, so they only see its pages.
+            let visible = self.pages.awake.filter { state.profileID(forTab: $0.tab) == .standard }
+            let active = self.pages.visibleTabID.flatMap { id in visible.first { $0.tab == id }?.page }
+            return (visible.map(\.page), active)
+        }
+        media.page = { [weak self] id in self?.pages.page(for: id) }
+        media.autoPictureInPicture = { preferences.autoPictureInPicture }
+        var shown: [TabID] = []
+        pages.onPagesChange = { [weak self] in
+            guard let self else { return }
+            self.extensions.syncTabs()
+            if shown != self.pages.visibleTabIDs {
+                self.media.visibleTabsChanged(from: shown, to: self.pages.visibleTabIDs)
+                shown = self.pages.visibleTabIDs
+            }
+        }
         packages.onScriptsChange = { [weak self] _ in self?.updatePageScripts() }
         packages.evaluateEverywhere = { [weak self] script in
             for page in self?.pages.awakePages ?? [] { Task { _ = try? await page.evaluate(script) } }
@@ -62,8 +90,21 @@ public final class Browser {
         preferences.applyAppearance()
         packages.start()
         updatePageScripts()
-        pages.start()
+        startPages()
         mcp.start { [weak self] connection in self?.mcpConnection = connection }
+    }
+
+    /// Pages wait for extensions (briefly), so content scripts reach the first page too.
+    private func startPages() {
+        guard extensions.isAvailable, !extensions.enabled.isEmpty else { return pages.start() }
+        var started = false
+        let begin = { [weak self] in
+            guard !started else { return }
+            started = true
+            self?.pages.start()
+        }
+        Task { await extensions.start(); begin() }
+        Task { try? await Task.sleep(for: .seconds(1.5)); begin() }
     }
 
     /// Closes every page, saves, then calls `completion` once the engine may shut down.
@@ -74,7 +115,7 @@ public final class Browser {
     }
 
     private func updatePageScripts() {
-        engine.setPageScripts(AgentService.pageScripts + [PasswordService.pageScript] + packages.scripts)
+        engine.setPageScripts(AgentService.pageScripts + [PasswordService.pageScript, MediaService.pageScript] + packages.scripts)
     }
 
     static let agentInstructions = """
@@ -89,11 +130,40 @@ public final class Browser {
     /// Opens what the user typed: a URL or a search.
     public func open(_ input: String, inNewTab: Bool) {
         guard let url = omnibox.interpret(input)?.url else { return }
+        open(url, inNewTab: inNewTab)
+    }
+
+    /// Opens `url` beside the selected tab, in a split.
+    public func openInSplit(_ url: URL) {
+        guard let selected = store.state.selectedTabID, let id = store.send(.openTab(url, placement: .afterSelected)).openedTabID else {
+            return open(url, inNewTab: true)
+        }
+        store.send(.splitTab(id, beside: selected, edge: .trailing))
+    }
+
+    private func open(_ url: URL, inNewTab: Bool) {
         if !inNewTab, let id = store.state.selectedTabID {
             store.send(.navigate(id, url))
         } else {
             store.send(.openTab(url))
         }
+    }
+
+    /// Puts the focused tab's video into Picture in Picture, or brings it back.
+    public func togglePictureInPicture() {
+        guard let id = store.state.selectedTabID else { return }
+        guard media.state(of: id).hasVideo || media.state(of: id).inPictureInPicture else {
+            return toasts.show("No video on this page", symbol: "pip")
+        }
+        media.togglePictureInPicture(id)
+    }
+
+    /// Moves focus to the next (or previous) pane of the selected tab's split.
+    public func focusPane(offset: Int) {
+        let state = store.state
+        guard let id = state.selectedTabID, let split = state.activeSpace.split(containing: id),
+              let index = split.tabs.firstIndex(of: id) else { return }
+        store.send(.selectTab(split.tabs[(index + offset + split.tabs.count) % split.tabs.count]))
     }
 
     public var selectedStatus: PageStatus {
@@ -222,6 +292,10 @@ extension Browser: PageEventSink {
             return .null
         case let type? where type.hasPrefix("passwords."):
             return passwords.handle(message, tab: id, url: store.state.tabs[id]?.url)
+        case let type? where type.hasPrefix("media."):
+            return media.handle(message, tab: id)
+        case let type? where type.hasPrefix("extensions."):
+            return extensions.handle(message, from: pages.page(for: id))
         default:
             throw WebEngineError.script("Unknown message.")
         }
@@ -247,19 +321,22 @@ extension Browser: CommandSource {
     public func commandItems(for raw: String, mode: CommandBarModel.Mode) -> [CommandItem] {
         let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         var rows: [CommandItem] = []
-        let newTab = mode == .newTab
+        let newTab = mode != .editCurrent
+        let split = mode == .split
 
         if let interpretation = omnibox.interpret(query) {
+            let url = interpretation.url
+            let go: @MainActor () -> Void = { [weak self] in
+                if split { self?.openInSplit(url) } else { self?.open(url, inNewTab: newTab) }
+            }
             switch interpretation {
             case let .address(url):
                 rows.append(CommandItem(id: "open", kind: .address, title: url.absoluteString,
-                                        subtitle: newTab ? "Open in a new tab" : "Go", symbol: "arrow.up.right", pageURL: url) { [weak self] in
-                    self?.open(query, inNewTab: newTab)
-                })
+                                        subtitle: split ? "Open in split view" : newTab ? "Open in a new tab" : "Go",
+                                        symbol: split ? "rectangle.split.2x1" : "arrow.up.right", pageURL: url, perform: go))
             case let .search(text, _):
-                rows.append(CommandItem(id: "search", kind: .search, title: text, subtitle: "Search", symbol: "magnifyingglass") { [weak self] in
-                    self?.open(query, inNewTab: newTab)
-                })
+                rows.append(CommandItem(id: "search", kind: .search, title: text, subtitle: split ? "Search in split view" : "Search",
+                                        symbol: "magnifyingglass", perform: go))
             }
         }
 
@@ -274,10 +351,23 @@ extension Browser: CommandSource {
                 guard query.isEmpty || score > .min else { continue }
                 let spaceNote = space.id == state.activeSpaceID ? "" : " · \(space.name)"
                 let id = tab.id
+                if split, tab.url.isSkylightPage || state.activeSpace.split(containing: id) != nil { continue }
+                let selected = state.selectedTabID
                 tabRows.append((score, CommandItem(
                     id: "tab-\(tab.id)", kind: .tab, title: tab.displayTitle,
-                    subtitle: "Switch to tab\(spaceNote)", symbol: "square.on.square", faviconURL: tab.faviconURL, pageURL: tab.url
-                ) { [weak self] in self?.store.send(.selectTab(id)) }))
+                    subtitle: split ? "Show beside this tab\(spaceNote)" : "Switch to tab\(spaceNote)",
+                    symbol: split ? "rectangle.split.2x1" : "square.on.square", faviconURL: tab.faviconURL, pageURL: tab.url
+                ) { [weak self] in
+                    guard let self else { return }
+                    if split, let selected {
+                        if !state.isFavorite(id), state.space(containing: id)?.id != state.activeSpaceID {
+                            self.store.send(.moveTabToSpace(id, state.activeSpaceID))
+                        }
+                        self.store.send(.splitTab(id, beside: selected, edge: .trailing))
+                    } else {
+                        self.store.send(.selectTab(id))
+                    }
+                }))
             }
         }
         rows += tabRows.sorted { $0.0 > $1.0 }.prefix(query.isEmpty ? 5 : 6).map(\.1)
@@ -309,6 +399,13 @@ extension Browser: CommandSource {
         command("settings", "Settings", "gearshape") { [weak self] in self?.openSettings() }
         command("sidebar", "Toggle sidebar", "sidebar.left") { [weak self] in self?.toggleSidebar() }
         if let selected = state.selectedTabID {
+            if media.state(of: selected).hasVideo || media.state(of: selected).inPictureInPicture {
+                command("pip", "Picture in Picture", "pip.enter") { [weak self] in self?.togglePictureInPicture() }
+            }
+            if state.activeSpace.split(containing: selected) != nil {
+                command("split-rotate", "Rotate split", "rectangle.split.2x1") { [weak self] in self?.store.send(.rotateSplit(selected)) }
+                command("split-separate", "Separate split", "rectangle") { [weak self] in self?.store.send(.dissolveSplit(selected)) }
+            }
             let favorite = state.isFavorite(selected)
             command("favorite", favorite ? "Remove from favorites" : "Add to favorites", favorite ? "star.slash" : "star") { [weak self] in
                 self?.store.send(.toggleFavorite(selected))

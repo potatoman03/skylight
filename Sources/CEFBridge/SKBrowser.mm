@@ -463,6 +463,19 @@ class BrowserClient : public CefClient,
   frame->ExecuteJavaScript(skylight::ToCef(script), frame->GetURL(), 0);
 }
 
+- (NSInteger)identifier {
+  return _browser ? _browser->GetIdentifier() : 0;
+}
+
+- (void)evaluateWithUserGesture:(NSString*)script {
+  if (!_browser) return;
+  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+  params->SetString("expression", skylight::ToCef(script));
+  params->SetBool("userGesture", true);
+  params->SetBool("awaitPromise", false);
+  _browser->GetHost()->ExecuteDevToolsMethod(0, "Runtime.evaluate", params);
+}
+
 - (void)setHidden:(BOOL)hidden {
   _pendingHidden = hidden;
   if (_browser) _browser->GetHost()->WasHidden(hidden);

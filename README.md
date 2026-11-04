@@ -40,11 +40,17 @@ Data lives in `~/Library/Application Support/Skylight` (`state.json`, `preferenc
 | ⌃Tab | Next tab |
 | ⌃1–9, ⌥⌘←/→ | Switch Space |
 | ⌘⇧N | New Space |
+| ⌃⌘N | Open a new tab beside this one, in a split |
+| ⌃⌘[ / ⌃⌘] | Focus the previous / next pane of a split |
+| ⌃⌘R | Rotate a split (side by side ↔ stacked) |
+| ⌥⌘P | Picture in Picture |
 | ⌘⇧B | Boost this site |
 | ⌥⌘I | Developer tools |
 
 The sidebar works like Arc's. **Favorites** at the top belong to every Space. Each Space has
-**pinned** tabs, then a line with **Clear**, then **Today**. Drag tabs between them. Closing a
+**pinned** tabs, then a line with **Clear**, then **Today**. Drag tabs between them: the rows part
+to show where a tab will land, favorites make room in their grid, holding a tab over a Space's
+button at the bottom switches to that Space so you can drop it there, and Escape cancels. Closing a
 pinned tab or favorite only unloads it; Delete in its menu removes it. Today tabs untouched for 12
 hours are archived (⌘⇧T brings them back; the time is in Settings). Pages you haven't looked at in
 20 minutes go to sleep and reload when you return.
@@ -75,6 +81,26 @@ Space, which is how Aside's sidebar folders come across.
 The sky behind everything is a small Metal shader: light falls through it, slowly, in the theme's
 colors. It runs at 30 fps only while the window is in front, and stops with Reduce Motion or when
 "Light through the sky" is off.
+
+**Split view.** Drag a tab onto the page and drop it on a side (the drop zone shows where it will
+go), or pick Open in Split View from a tab's menu, or press ⌃⌘N. Up to four panes go side by side or
+stacked; each is its own card on the sky. Drag a divider to resize (double-click it to make the panes
+equal), drag a pane's grip to move it or pull it out of the split, and click a pane to focus it. The
+sidebar shows a split as one row; selecting any of its tabs shows them all. The gap between panes
+and the outline on the focused pane are in Settings → Appearance.
+
+**Picture in Picture.** ⌥⌘P (or a tab's menu, or the command bar) puts the page's main video in a
+floating window. Leave a tab with a video playing and it follows you in Picture in Picture; come
+back and it returns to the page (Settings → Appearance → Media turns this off). Tabs playing sound
+show a speaker you can click to mute.
+
+**Chrome extensions.** Settings → Extensions installs from a Chrome Web Store link (or the Web
+Store button) or from an unpacked folder. Toolbar buttons sit in the address bar, in their own row
+under it, or behind the puzzle-piece menu (your choice in the same settings); right-click one to
+pin, unpin, open its options or remove it, and drag to reorder. Popups open as bubbles sized to
+their content. Extensions get Chrome's tabs and windows API (`tabs.query`, `tabs.update`,
+`tabs.create`, `windows.getCurrent` and the rest), backed by Skylight's own tabs. They run in the
+default profile only, and badges and tab events (`tabs.onActivated`) aren't supported yet.
 
 ## Packages
 
@@ -187,11 +213,16 @@ SkylightHelper: Chromium's sub-process executable.
 
 1. **Now:** stock CEF 156 in Alloy style (embedded in our window).
 2. **Self-built CEF** with ungoogled-chromium's privacy patches and proprietary codecs.
-3. **Small patches toward full Chrome:** Chrome-style browsers inside a native parent view, for the
-   Chrome extension system. Stock CEF always uses Alloy style when a browser lives in our own view
-   on macOS, and Alloy style has no extension support, so extensions need this patch (or hosting
-   pages in CEF's own Chrome-style windows). Passkeys.
+3. **Small patches toward full Chrome:** Chrome-style browsers inside a native parent view, so
+   extensions get Chrome's own tab model (badges, tab events, per-profile extensions) instead of
+   Skylight's shim. Today they're loaded over a private DevTools pipe (no port is opened) and a
+   small shim maps Chrome's tabs and windows API onto Skylight's tabs. Passkeys.
 4. Tab sync between machines, easels, notes and highlights as built-in packages, an in-app agent.
+
+Profiles: Chromium only accepts profile folders directly inside its root, so the default profile
+is now `Engine/Default` and others `Engine/Profile-<id>`. Earlier builds used `Engine/Profiles/<id>`,
+which Chromium rejected ("Cannot create profile"), so pages there most likely never kept cookies;
+you may need to sign in to sites again once.
 
 Known limits: Google account sync is unavailable to third-party Chromium builds; Widevine (Netflix
 and similar) needs Google's signing; iCloud passkeys need an Apple entitlement for browsers.

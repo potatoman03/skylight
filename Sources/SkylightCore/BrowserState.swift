@@ -72,7 +72,15 @@ public struct BrowserState: Codable, Equatable, Sendable {
     public func profile(_ id: ProfileID) -> Profile? { profiles.first { $0.id == id } }
 
     /// Every tab that should stay alive because the user is looking at it in some Space.
-    public var selectedTabIDs: Set<TabID> { Set(spaces.compactMap(\.selectedTabID)) }
+    public var selectedTabIDs: Set<TabID> {
+        Set(spaces.flatMap { space in space.selectedTabID.map(space.group(of:)) ?? [] })
+    }
+
+    /// The panes on screen: the selected tab's split, or just the selected tab.
+    public var visibleTabIDs: [TabID] {
+        guard let id = selectedTabID else { return [] }
+        return activeSpace.group(of: id)
+    }
 
     /// Repairs references that can drift after a crash or a hand-edited file.
     public mutating func normalize() {
@@ -88,6 +96,19 @@ public struct BrowserState: Codable, Equatable, Sendable {
                 spaces[i][section] = spaces[i][section].filter { tabs[$0] != nil && seen.insert($0).inserted }
             }
             if let sel = spaces[i].selectedTabID, !spaces[i].contains(sel), !favorites.contains(sel) { spaces[i].selectedTabID = nil }
+            // A split keeps its tabs in one section, each tab in one split, two panes at least.
+            var placed = Set<TabID>()
+            let space = spaces[i]
+            spaces[i].splits = space.splits.compactMap { split in
+                var split = split
+                let keep = split.tabs.map { space.contains($0) && placed.insert($0).inserted }
+                let section = split.tabs.first.flatMap(space.section(of:))
+                split.fractions = zip(split.fractions, keep).filter(\.1).map(\.0)
+                split.tabs = zip(split.tabs, keep).filter(\.1).map(\.0).filter { space.section(of: $0) == section }
+                split.tabs = Array(split.tabs.prefix(TabSplit.maxPanes))
+                split.normalize()
+                return split.tabs.count >= 2 ? split : nil
+            }
         }
         tabs = tabs.filter { seen.contains($0.key) }
     }
