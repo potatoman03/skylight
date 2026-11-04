@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let browser = Browser(engine: CEFEngine(support: paths.engineRoot.appending(path: "Skylight")), paths: paths, version: version, credentials: credentials)
         self.browser = browser
         NSApp.mainMenu = MainMenu.build(target: self)
+        ShortcutMap.apply(browser.preferences.shortcuts)
         CEFRuntime.onTerminate { [weak self] in self?.quit() }
 
         let window = NSWindow(
@@ -152,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func close(_ sender: Any?) { quit() }
 
     @objc func showSettings(_ sender: Any?) { browser?.openSettings() }
+    @objc func showShortcuts(_ sender: Any?) { browser?.showShortcuts.toggle() }
 
     @objc func toggleSidebar(_ sender: Any?) {
         withAnimation { browser?.toggleSidebar() }

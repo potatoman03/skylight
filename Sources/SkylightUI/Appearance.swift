@@ -54,75 +54,116 @@ struct ThemePreview: View {
     }
 }
 
-/// A theme in the gallery: light on the left half, dark on the right, like the two looks it has.
-struct ThemeCard: View {
-    let theme: SkyTheme
+/// A choice shown as a picture with its name under it, ringed and ticked when chosen, like the
+/// appearance choices in System Settings.
+struct ChoiceCard<Preview: View>: View {
+    let title: String
     let selected: Bool
-    var hue: Double = SkyTheme.baseHue
-    var compact = false
+    var height: CGFloat = 64
+    var badge: String? = nil
+    @ViewBuilder let preview: () -> Preview
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 6) {
-                let shape = RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous)
-                ZStack {
-                    ThemePreview(theme: theme, dark: false, hue: hue)
-                    ThemePreview(theme: theme, dark: true, hue: hue)
-                        .mask(HStack(spacing: 0) { Color.clear; Color.black })
-                }
-                .frame(height: compact ? 54 : 76)
-                .clipShape(shape)
-                .overlay(shape.strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
-                .overlay(shape.inset(by: -3).strokeBorder(Color(theme.light.accent), lineWidth: 2).opacity(selected ? 1 : 0))
-                .scaleEffect(hovering && !selected ? 1.02 : 1)
-                HStack(spacing: 4) {
-                    Text(theme.name).font(.system(size: compact ? 11 : 12, weight: selected ? .semibold : .regular)).lineLimit(1)
-                    if theme.followsSpace {
-                        Image(systemName: "paintpalette").font(.system(size: 9)).foregroundStyle(.tertiary)
-                            .help("Follows each Space's color")
+            VStack(spacing: 7) {
+                let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+                preview()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: height)
+                    .clipShape(shape)
+                    .overlay(shape.strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
+                    .overlay(shape.inset(by: -3.5).strokeBorder(Color.accentColor, lineWidth: 2.5).opacity(selected ? 1 : 0))
+                    .overlay(alignment: .bottomTrailing) {
+                        if selected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 15))
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, Color.accentColor)
+                                .padding(5)
+                                .transition(.scale.combined(with: .opacity))
+                        }
                     }
+                    .scaleEffect(hovering && !selected ? 1.025 : 1)
+                HStack(spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? .primary : .secondary)
+                        .lineLimit(1)
+                    if let badge { Image(systemName: badge).font(.system(size: 9)).foregroundStyle(.tertiary) }
                 }
-                .padding(.leading, 2)
             }
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .onHover { h in animate(Motion.feedback) { hovering = h } }
+        .animation(Motion.resolved(Motion.feedback), value: selected)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
 
-/// Every theme, as a grid of cards.
-struct ThemeGallery: View {
-    let themes: [SkyTheme]
-    let selectedID: String?
-    var hue: Double = SkyTheme.baseHue
-    var compact = false
-    let select: (SkyTheme) -> Void
-    var create: (() -> Void)?
+/// A plain Skylight window, drawn small: translucent sidebar, toolbar and a page.
+struct WindowSketch: View {
+    let dark: Bool
 
     var body: some View {
-        let width: CGFloat = compact ? 92 : 132
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: width, maximum: width + 40), spacing: compact ? 10 : 14)],
-                  alignment: .leading, spacing: compact ? 10 : 16) {
-            ForEach(themes) { theme in
-                ThemeCard(theme: theme, selected: theme.id == selectedID, hue: hue, compact: compact) { select(theme) }
-            }
-            if let create {
-                Button(action: create) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                            .frame(height: 76)
-                            .overlay(Image(systemName: "plus").font(.system(size: 16, weight: .medium)).foregroundStyle(.secondary))
-                        Text("New Theme").font(.system(size: 12)).foregroundStyle(.secondary).padding(.leading, 2)
-                    }
-                    .contentShape(.rect)
+        let ink = Color.primary
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 2.5) {
+                    ForEach(0..<3) { _ in Circle().fill(ink.opacity(0.2)).frame(width: 4, height: 4) }
                 }
-                .buttonStyle(.plain)
+                .padding(.bottom, 3)
+                RoundedRectangle(cornerRadius: 2).fill(Color.accentColor.opacity(0.75)).frame(width: 24, height: 5)
+                ForEach(0..<3) { i in
+                    RoundedRectangle(cornerRadius: 2).fill(ink.opacity(0.13)).frame(width: [20, 26, 16][i], height: 4)
+                }
+                Spacer(minLength: 0)
             }
+            .padding(6)
+            .frame(width: 44, alignment: .leading)
+            .frame(maxHeight: .infinity)
+            .background(dark ? Color(white: 0.2) : Color(white: 0.9))
+            VStack(alignment: .leading, spacing: 4) {
+                RoundedRectangle(cornerRadius: 2).fill(ink.opacity(0.16)).frame(width: 30, height: 4)
+                RoundedRectangle(cornerRadius: 2).fill(ink.opacity(0.08)).frame(maxWidth: .infinity).frame(height: 4)
+                RoundedRectangle(cornerRadius: 2).fill(ink.opacity(0.08)).frame(width: 38, height: 4)
+                Spacer(minLength: 0)
+            }
+            .padding(7)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(dark ? Color(white: 0.11) : .white)
         }
+        .environment(\.colorScheme, dark ? .dark : .light)
+    }
+}
+
+/// Shows `light` on the left and `dark` on the right, split down the middle.
+struct HalfAndHalf<Light: View, Dark: View>: View {
+    @ViewBuilder let light: () -> Light
+    @ViewBuilder let dark: () -> Dark
+
+    var body: some View {
+        ZStack {
+            light()
+            dark().mask(HStack(spacing: 0) { Color.clear; Color.black })
+        }
+    }
+}
+
+/// A theme in the gallery: light on the left half, dark on the right, like the two looks it has.
+struct ThemeCard: View {
+    let theme: SkyTheme
+    let selected: Bool
+    var hue: Double = SkyTheme.baseHue
+    let action: () -> Void
+
+    var body: some View {
+        ChoiceCard(title: theme.name, selected: selected, height: 72, badge: theme.followsSpace ? "paintpalette" : nil) {
+            HalfAndHalf { ThemePreview(theme: theme, dark: false, hue: hue) } dark: { ThemePreview(theme: theme, dark: true, hue: hue) }
+        } action: { action() }
+        .help(theme.followsSpace ? "\(theme.name), in each Space's color" : theme.name)
     }
 }
 
@@ -130,18 +171,77 @@ struct ThemeGallery: View {
 
 struct AppearanceSettings: View {
     @Environment(Browser.self) private var browser
+    @Environment(\.colorScheme) private var scheme
+    @State private var customizing = false
 
     var body: some View {
         @Bindable var prefs = browser.preferences
         let hue = browser.store.state.activeSpace.hue
         let current = prefs.theme(prefs.themeID) ?? .standard
+        let dark = prefs.appearance == .dark || (prefs.appearance == .system && scheme == .dark)
 
         Form {
             Section {
-                Picker("Appearance", selection: $prefs.appearance) {
-                    ForEach(Preferences.Appearance.allCases) { Text($0.name).tag($0) }
+                VStack(alignment: .leading, spacing: 18) {
+                    labeled("Mode") {
+                        HStack(spacing: 14) {
+                            ForEach(Preferences.Appearance.allCases) { mode in
+                                ChoiceCard(title: mode.name, selected: prefs.appearance == mode) {
+                                    switch mode {
+                                    case .light: WindowSketch(dark: false)
+                                    case .dark: WindowSketch(dark: true)
+                                    case .system: HalfAndHalf { WindowSketch(dark: false) } dark: { WindowSketch(dark: true) }
+                                    }
+                                } action: { prefs.appearance = mode }
+                            }
+                        }
+                    }
+                    labeled("Background") {
+                        HStack(spacing: 14) {
+                            ChoiceCard(title: "Glass", selected: !prefs.skyBackdrop) {
+                                WindowSketch(dark: dark)
+                            } action: { animate(Motion.travel) { prefs.skyBackdrop = false } }
+                            ChoiceCard(title: "Sky", selected: prefs.skyBackdrop) {
+                                ThemePreview(theme: current, dark: dark, hue: hue)
+                            } action: { animate(Motion.travel) { prefs.skyBackdrop = true } }
+                            // Keeps the two cards the width of the mode cards above.
+                            Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
+                        }
+                    }
                 }
-                .pickerStyle(.segmented)
+                .padding(.vertical, 6)
+            } header: {
+                Text("Theme")
+            } footer: {
+                Text(prefs.skyBackdrop ? "A Space can have its own sky, from Spaces." : "Glass lets your desktop show softly through the sidebar.")
+            }
+
+            if prefs.skyBackdrop {
+                Section {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 128, maximum: 170), spacing: 14)], alignment: .leading, spacing: 14) {
+                        ForEach(prefs.themes) { theme in
+                            ThemeCard(theme: theme, selected: theme.id == current.id, hue: hue) { prefs.themeID = theme.id }
+                        }
+                        ChoiceCard(title: "New Sky", selected: false, height: 72) {
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .strokeBorder(.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                                .overlay(Image(systemName: "plus").font(.system(size: 16, weight: .medium)).foregroundStyle(.secondary))
+                        } action: {
+                            newTheme(from: current)
+                            customizing = true
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    Toggle("Light through the sky", isOn: $prefs.godRays)
+                    LabeledContent(current.isPreset ? "\(current.name) is built in" : "Colors of \(current.name)") {
+                        Button(current.isPreset ? "Customize…" : "Edit Colors…") {
+                            if current.isPreset { newTheme(from: current) }
+                            customizing = true
+                        }
+                    }
+                } header: {
+                    Text("Sky")
+                }
             }
 
             Section {
@@ -174,27 +274,30 @@ struct AppearanceSettings: View {
             } footer: {
                 Text("Picture in Picture: ⌥⌘P.")
             }
-
-            Section {
-                Toggle("Sky behind the sidebar", isOn: $prefs.skyBackdrop)
-                if prefs.skyBackdrop {
-                    Toggle("Light through the sky", isOn: $prefs.godRays)
-                    ThemeGallery(themes: prefs.themes, selectedID: prefs.themeID, hue: hue, compact: true, select: { theme in
-                        prefs.themeID = theme.id
-                    }, create: { newTheme(from: current) })
-                    .padding(.vertical, 4)
-                }
-            } header: {
-                Text("Sky")
-            } footer: {
-                Text("A Space can have its own sky from its settings in Spaces.")
-            }
-
-            if prefs.skyBackdrop {
-                ThemeEditor(theme: current, duplicate: { newTheme(from: current) })
-            }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $customizing) {
+            let theme = browser.preferences.theme(browser.preferences.themeID) ?? .standard
+            VStack(spacing: 0) {
+                Form {
+                    ThemeEditor(theme: theme, duplicate: { newTheme(from: theme) }, deleted: { customizing = false })
+                }
+                .formStyle(.grouped)
+                HStack {
+                    Spacer()
+                    Button("Done") { customizing = false }.keyboardShortcut(.defaultAction)
+                }
+                .padding(14)
+            }
+            .frame(width: 460, height: 520)
+        }
+    }
+
+    private func labeled(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            content()
+        }
     }
 
     private func newTheme(from base: SkyTheme) {
@@ -210,10 +313,18 @@ struct AppearanceSettings: View {
 private struct ThemeEditor: View {
     let theme: SkyTheme
     let duplicate: () -> Void
+    var deleted: () -> Void = {}
     @Environment(Browser.self) private var browser
     @State private var showAdvanced = false
 
     var body: some View {
+        let live = browser.preferences.theme(theme.id) ?? theme
+        Section {
+            HalfAndHalf { ThemePreview(theme: live, dark: false) } dark: { ThemePreview(theme: live, dark: true) }
+                .frame(height: 110)
+                .clipShape(.rect(cornerRadius: 10, style: .continuous))
+                .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+        }
         if theme.isPreset {
             Section("Customize \(theme.name)") {
                 LabeledContent("Built-in skies can't be changed.") {
@@ -221,7 +332,7 @@ private struct ThemeEditor: View {
                 }
             }
         } else {
-            Section("Customize \(theme.name)") {
+            Section {
                 TextField("Name", text: binding(\.name))
                 Toggle("Follow each Space's color", isOn: binding(\.followsSpace))
                 Toggle("More colors", isOn: $showAdvanced)
@@ -232,7 +343,10 @@ private struct ThemeEditor: View {
                 HStack {
                     Spacer()
                     Button("Duplicate", action: duplicate)
-                    Button("Delete Sky", role: .destructive) { browser.preferences.deleteTheme(theme.id) }
+                    Button("Delete Sky", role: .destructive) {
+                        browser.preferences.deleteTheme(theme.id)
+                        deleted()
+                    }
                 }
             }
         }

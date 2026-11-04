@@ -50,6 +50,9 @@ public struct RootView: View {
             }
             Button("Cancel", role: .cancel) { browser.renameSpace = nil }
         }
+        .sheet(isPresented: Binding(get: { browser.showShortcuts }, set: { browser.showShortcuts = $0 })) {
+            ShortcutsSheet()
+        }
         .onChange(of: browser.renameSpace) { _, id in
             newName = state.spaces.first { $0.id == id }?.name ?? ""
         }
@@ -93,6 +96,9 @@ private struct BrowserToolbar: ToolbarContent {
             AddressField()
         }
         .sharedBackgroundVisibility(.hidden)
+
+        // Extension buttons and New Tab keep to the window's right edge, however wide it is.
+        ToolbarSpacer(.flexible)
 
         if browser.preferences.extensionPlacement.showsButtons, !browser.extensions.toolbar.isEmpty {
             ToolbarItem(placement: .primaryAction) {

@@ -205,8 +205,7 @@ private struct FolderRow: View {
             Label {
                 if editing {
                     TextField("Folder name", text: $name)
-                        .textFieldStyle(.roundedBorder)
-                        .controlSize(.small)
+                        .inlineName()
                         .focused($focused)
                         .onSubmit(commit)
                         .onExitCommand { editing = false }
@@ -241,7 +240,7 @@ private struct FolderRow: View {
         browser.renameFolder = nil
         name = folder.name
         editing = true
-        DispatchQueue.main.async { focused = true }
+        focusAndSelect { focused = true }
     }
 
     private func commit() {
@@ -314,8 +313,7 @@ private struct SpaceHeader: View {
                 .frame(width: 14)
             if editing {
                 TextField("Space name", text: $name)
-                    .textFieldStyle(.roundedBorder)
-                    .controlSize(.small)
+                    .inlineName()
                     .focused($focused)
                     .onSubmit(commit)
                     .onExitCommand { editing = false }
@@ -361,7 +359,7 @@ private struct SpaceHeader: View {
     private func startEditing() {
         name = space.name
         editing = true
-        DispatchQueue.main.async { focused = true }
+        focusAndSelect { focused = true }
     }
 
     private func commit() {
@@ -526,9 +524,8 @@ private struct TabRow: View {
         HStack(spacing: 4) {
             Label {
                 if editing {
-                    TextField("Tab name", text: $name, prompt: Text(tab.title.isEmpty ? tab.displayTitle : tab.title))
-                        .textFieldStyle(.roundedBorder)
-                        .controlSize(.small)
+                    TextField("Tab name", text: $name)
+                        .inlineName()
                         .focused($focused)
                         .onSubmit(commit)
                         .onExitCommand { editing = false }
@@ -567,6 +564,8 @@ private struct TabRow: View {
         .onTapGesture {
             if browser.store.state.selectedTabID != tab.id { browser.store.send(.selectTab(tab.id)) }
         }
+        // Double-click the name to rename it. Alongside the click, so selecting doesn't wait.
+        .simultaneousGesture(TapGesture(count: 2).onEnded { if !editing, canRename { startEditing() } })
         .help("\(tab.displayTitle)\n\(tab.url.absoluteString)")
         .contextMenu { TabMenu(tab: tab) }
         .tabDrag(tab, source: .row, session: drag)
@@ -574,18 +573,24 @@ private struct TabRow: View {
         .onChange(of: browser.renameTab) { _, id in if id == tab.id { startEditing() } }
     }
 
+    /// Favorites and split panes have no name in their row to edit.
+    private var canRename: Bool {
+        let state = browser.store.state
+        return !state.isFavorite(tab.id) && state.activeSpace.split(containing: tab.id) == nil
+    }
+
     private func startEditing() {
         browser.renameTab = nil
-        name = tab.customTitle ?? ""
+        name = tab.shortTitle
         editing = true
-        DispatchQueue.main.async { focused = true }
+        focusAndSelect { focused = true }
     }
 
     /// An empty name goes back to the page's own title.
     private func commit() {
         guard editing else { return }
         editing = false
-        browser.store.send(.renameTab(tab.id, name))
+        if name != tab.shortTitle { browser.store.send(.renameTab(tab.id, name)) }
     }
 }
 
@@ -886,7 +891,30 @@ struct WindowBackdrop: NSViewRepresentable {
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
+/// Focuses a name field, then selects its text so typing replaces it.
+@MainActor
+func focusAndSelect(_ focus: @escaping @MainActor () -> Void) {
+    DispatchQueue.main.async {
+        focus()
+        // Only once the field has the cursor: before that, Select All would reach the page.
+        DispatchQueue.main.async {
+            if let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor { editor.selectAll(nil) }
+        }
+    }
+}
+
 extension View {
+    /// A name edited in place, as in Finder: the text stays where it was, on a soft highlight
+    /// rather than in a bordered box.
+    func inlineName() -> some View {
+        textFieldStyle(.plain)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(.background.opacity(0.75), in: .rect(cornerRadius: 5, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(.tint.opacity(0.45), lineWidth: 1))
+            .padding(.horizontal, -4)
+    }
+
     /// A long title runs on and fades out at the end of the row instead of ending in "…".
     func fadingTail(_ fade: CGFloat = 20) -> some View {
         lineLimit(1)

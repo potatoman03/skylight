@@ -113,6 +113,21 @@ public final class Preferences {
         var showMediaControls: Bool?
         var tidyInstruction: String?
         var sidebarWidth: Double?
+        var shortcuts: [String: KeyBinding]?
+    }
+
+    /// A shortcut you set yourself: the key, and the modifier flags' raw value. An empty key takes
+    /// the command's shortcut away.
+    public struct KeyBinding: Codable, Equatable, Sendable {
+        public var key: String
+        public var modifiers: UInt
+
+        public init(key: String, modifiers: UInt) {
+            self.key = key
+            self.modifiers = modifiers
+        }
+
+        public static let unassigned = KeyBinding(key: "", modifiers: 0)
     }
 
     public var searchEngine: SearchEngine = .google { didSet { save() } }
@@ -140,6 +155,8 @@ public final class Preferences {
     public var showMediaControls = true { didSet { save() } }
     /// How Tidy groups tabs ("by project", "work and personal"); empty is by topic.
     public var tidyInstruction = "" { didSet { save() } }
+    /// Your own shortcuts, by menu command, over the menus' own.
+    public var shortcuts: [String: KeyBinding] = [:] { didSet { save() } }
 
     /// Every theme you can pick: the presets, then your own.
     public var themes: [SkyTheme] { SkyTheme.presets + customThemes }
@@ -205,6 +222,7 @@ public final class Preferences {
         showMediaControls = stored.showMediaControls ?? showMediaControls
         tidyInstruction = stored.tidyInstruction ?? tidyInstruction
         sidebarWidth = stored.sidebarWidth ?? sidebarWidth
+        shortcuts = stored.shortcuts ?? shortcuts
     }
 
     public func applyAppearance() {
@@ -222,7 +240,8 @@ public final class Preferences {
                             customThemes: customThemes, hiddenSidebarItems: hiddenSidebarItems, density: density,
                             extensionPlacement: extensionPlacement, skyBackdrop: skyBackdrop,
                             highlightFocusedPane: highlightFocusedPane, autoPictureInPicture: autoPictureInPicture,
-                            showMediaControls: showMediaControls, tidyInstruction: tidyInstruction, sidebarWidth: sidebarWidth)
+                            showMediaControls: showMediaControls, tidyInstruction: tidyInstruction, sidebarWidth: sidebarWidth,
+                            shortcuts: shortcuts)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)

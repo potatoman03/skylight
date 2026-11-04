@@ -28,6 +28,8 @@ public final class Browser {
     public var renameFolder: String?
     /// The tab whose name is being edited in the sidebar.
     public var renameTab: TabID?
+    /// Whether the keyboard shortcuts sheet is up.
+    public var showShortcuts = false
     /// Opens the Settings window; the app provides it.
     @ObservationIgnored public var showSettings: @MainActor (String?) -> Void = { _ in }
 

@@ -34,6 +34,7 @@ enum MainMenu {
             submenu("Import From", Browser.ImportSource.allCases.filter(\.isAvailable).map { source in
                 let item = item(source.rawValue, #selector(AppDelegate.importFrom(_:)), "", target: target)
                 item.representedObject = source.rawValue
+                item.identifier = NSUserInterfaceItemIdentifier("importFrom:\(source.rawValue)")
                 return item
             } + [.separator(), item("Passwords from CSV…", #selector(AppDelegate.importPasswordsCSV(_:)), "", target: target)]),
             .separator(),
@@ -88,6 +89,7 @@ enum MainMenu {
         for n in 1...9 {
             let space = item("Space \(n)", #selector(AppDelegate.switchToSpace(_:)), "\(n)", [.control], target: target)
             space.tag = n - 1
+            space.identifier = NSUserInterfaceItemIdentifier("switchToSpace:\(n)")
             spaceItems.append(space)
         }
         main.addItem(submenu("Tabs", spaceItems))
@@ -98,6 +100,12 @@ enum MainMenu {
         ])
         NSApp.windowsMenu = window.submenu
         main.addItem(window)
+
+        let help = submenu("Help", [
+            item("Keyboard Shortcuts", #selector(AppDelegate.showShortcuts(_:)), "/", target: target),
+        ])
+        NSApp.helpMenu = help.submenu
+        main.addItem(help)
         return main
     }
 
@@ -114,6 +122,8 @@ enum MainMenu {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.keyEquivalentModifierMask = key.isEmpty ? [] : modifiers
         item.target = target
+        // Names the command for shortcuts you set yourself.
+        item.identifier = NSUserInterfaceItemIdentifier(NSStringFromSelector(action))
         return item
     }
 }
