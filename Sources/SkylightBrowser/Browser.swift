@@ -349,9 +349,8 @@ extension Browser: CommandSource {
         let favoritesSpace = Space(id: state.activeSpaceID, name: "Favorites", hue: 0, today: state.favorites)
         for space in [favoritesSpace] + state.spaces {
             for tab in state.tabs(in: space, .pinned) + state.tabs(in: space, .today) where tab.id != state.selectedTabID {
-                let score = query.isEmpty ? 0 : max(FuzzyMatch.score(query, in: tab.displayTitle) ?? .min,
-                                                    (FuzzyMatch.score(query, in: tab.url.absoluteString) ?? .min) - 50)
-                guard query.isEmpty || score > .min else { continue }
+                guard let score = query.isEmpty ? 0 : FuzzyMatch.score(query, title: tab.displayTitle, url: tab.url.absoluteString)
+                else { continue }
                 let spaceNote = space.id == state.activeSpaceID ? "" : " · \(space.name)"
                 let id = tab.id
                 if split, tab.url.isSkylightPage || state.activeSpace.split(containing: id) != nil { continue }
