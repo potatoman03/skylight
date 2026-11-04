@@ -18,6 +18,7 @@ public final class Browser {
     public let agents: AgentService
     public let commandBar = CommandBarModel()
     public let preferences: Preferences
+    public let passwords: PasswordService
     public private(set) var mcpConnection: MCPConnection?
     /// The Space being renamed, if the rename alert is up.
     public var renameSpace: SpaceID?
@@ -26,10 +27,12 @@ public final class Browser {
     @ObservationIgnored private let engine: WebEngine
     @ObservationIgnored private let mcp: MCPServer
 
-    public init(engine: WebEngine, paths: AppPaths, version: String) {
+    public init(engine: WebEngine, paths: AppPaths, version: String, credentials: CredentialStore) {
         self.engine = engine
         let preferences = Preferences(fileURL: paths.preferencesFile)
         self.preferences = preferences
+        self.passwords = PasswordService(store: credentials, toasts: toasts,
+                                         neverFile: paths.root.appending(path: "password-exceptions.json"))
         let store = BrowserStore(persistence: JSONFileStateStore(fileURL: paths.stateFile))
         self.store = store
         self.pages = PageCoordinator(engine: engine, paths: paths, store: store)
@@ -45,6 +48,7 @@ public final class Browser {
         pages.sink = self
         pages.onPageGone = { [weak self] id, tabClosed in
             self?.agents.forgetTab(id)
+            self?.passwords.pageWentAway(id)
             if tabClosed { self?.prompts.dismissAll(for: id) }
         }
         commandBar.source = self
@@ -70,7 +74,7 @@ public final class Browser {
     }
 
     private func updatePageScripts() {
-        engine.setPageScripts(AgentService.pageScripts + packages.scripts)
+        engine.setPageScripts(AgentService.pageScripts + [PasswordService.pageScript] + packages.scripts)
     }
 
     static let agentInstructions = """
@@ -128,17 +132,39 @@ public final class Browser {
         }
     }
 
-    public enum ImportSource: String, CaseIterable, Sendable {
-        case arc = "Arc", chrome = "Chrome"
+    /// Types a saved login into the selected tab.
+    public func fillLogin(_ credential: Credential) {
+        guard let id = store.state.selectedTabID, let page = pages.page(for: id) ?? pages.wake(id) else { return }
+        passwords.fill(credential, in: page, url: store.state.tabs[id]?.url)
+    }
 
+    public enum ImportSource: String, CaseIterable, Sendable {
+        case arc = "Arc", aside = "Aside", chrome = "Chrome", dia = "Dia", brave = "Brave", edge = "Edge", vivaldi = "Vivaldi"
+
+        /// Where the browser keeps what we import: Arc's sidebar, or a Chromium `Bookmarks` file.
         public var file: URL {
-            switch self {
+            let support = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
+            return switch self {
             case .arc: BrowserImporters.arcFile
-            case .chrome: BrowserImporters.chromeBookmarksFile
+            case .aside: support.appending(path: "Aside/Default/Bookmarks")
+            case .chrome: support.appending(path: "Google/Chrome/Default/Bookmarks")
+            case .dia: support.appending(path: "Dia/User Data/Default/Bookmarks")
+            case .brave: support.appending(path: "BraveSoftware/Brave-Browser/Default/Bookmarks")
+            case .edge: support.appending(path: "Microsoft Edge/Default/Bookmarks")
+            case .vivaldi: support.appending(path: "Vivaldi/Default/Bookmarks")
             }
         }
 
         public var isAvailable: Bool { FileManager.default.fileExists(atPath: file.path) }
+
+        /// What comes over, for the import screen.
+        public var summary: String {
+            switch self {
+            case .arc: "Spaces, pinned tabs and favorites"
+            case .aside: "Sidebar folders as Spaces, plus bookmarks"
+            default: "Bookmarks bar as favorites, folders as Spaces"
+            }
+        }
     }
 
     /// Brings Spaces, pinned tabs and favorites over from another browser. Returns a summary.
@@ -146,10 +172,8 @@ public final class Browser {
     public func importBrowser(_ source: ImportSource) -> String {
         do {
             let data = try Data(contentsOf: source.file)
-            let imported = switch source {
-            case .arc: try BrowserImporters.arc(data)
-            case .chrome: try BrowserImporters.chrome(data)
-            }
+            let imported = source == .arc ? try BrowserImporters.arc(data)
+                : try BrowserImporters.chromium(data, browser: source.rawValue)
             let before = store.state.tabs.count
             store.send(.importBrowserData(imported))
             let added = store.state.tabs.count - before
@@ -196,6 +220,8 @@ extension Browser: PageEventSink {
         case WebMCP.toolsMessageType:
             agents.updateSiteTools(WebMCP.parseTools(message), tab: id)
             return .null
+        case let type? where type.hasPrefix("passwords."):
+            return passwords.handle(message, tab: id, url: store.state.tabs[id]?.url)
         default:
             throw WebEngineError.script("Unknown message.")
         }
@@ -287,6 +313,17 @@ extension Browser: CommandSource {
             command("favorite", favorite ? "Remove from favorites" : "Add to favorites", favorite ? "star.slash" : "star") { [weak self] in
                 self?.store.send(.toggleFavorite(selected))
             }
+        }
+        for login in passwords.logins(for: state.selectedTab?.url) {
+            commands.append(CommandItem(id: "fill-\(login.id)", kind: .command, title: "Fill password",
+                                        subtitle: login.username.isEmpty ? login.displayHost : login.username, symbol: "key.fill") { [weak self] in
+                self?.fillLogin(login)
+            })
+        }
+        command("passwords", "Passwords", "key") { [weak self] in self?.openSettings("passwords") }
+        command("appearance", "Themes and appearance", "paintbrush") { [weak self] in self?.openSettings("appearance") }
+        for theme in preferences.themes {
+            command("theme-\(theme.id)", "Theme: \(theme.name)", "paintpalette") { [weak self] in self?.preferences.themeID = theme.id }
         }
         command("clear-today", "Clear Today tabs", "arrow.down.to.line") { [weak self] in self?.store.send(.clearToday) }
         for source in ImportSource.allCases where source.isAvailable {

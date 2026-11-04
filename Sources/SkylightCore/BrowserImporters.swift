@@ -18,10 +18,6 @@ public enum BrowserImporters {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/Arc/StorableSidebar.json")
     }
 
-    public static var chromeBookmarksFile: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/Google/Chrome/Default/Bookmarks")
-    }
-
     // MARK: - Arc
 
     /// Arc's `StorableSidebar.json`. Spaces and their pinned tabs (folders flattened), and the
@@ -96,28 +92,47 @@ public enum BrowserImporters {
         return h < 0 ? h + 1 : h
     }
 
-    // MARK: - Chrome
+    // MARK: - Chromium (Chrome, Aside, Brave, Edge, ...)
 
-    /// Chrome's `Bookmarks`. The bookmarks bar becomes favorites (up to eight) and a "Chrome" Space
-    /// holds the rest as pinned tabs.
-    public static func chrome(_ data: Data) throws -> BrowserImport {
+    /// A Chromium `Bookmarks` file. Loose links on the bookmarks bar become favorites (up to
+    /// eight). Each folder on the bar becomes a Space, the way Aside shows folders as sidebar
+    /// sections. Everything else lands in a Space named after the browser.
+    public static func chromium(_ data: Data, browser: String) throws -> BrowserImport {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let roots = root["roots"] as? [String: Any] else { throw ImportError.unreadable("Chrome") }
+              let roots = root["roots"] as? [String: Any] else { throw ImportError.unreadable(browser) }
+
+        func link(_ node: [String: Any]) -> BrowserImport.Link? {
+            guard let raw = node["url"] as? String, let url = URL(string: raw), url.scheme?.hasPrefix("http") == true else { return nil }
+            let name = (node["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            return BrowserImport.Link(url: url, title: name ?? url.host() ?? raw)
+        }
 
         func links(_ node: Any?, depth: Int = 0) -> [BrowserImport.Link] {
             guard depth < 8, let node = node as? [String: Any] else { return [] }
-            if node["type"] as? String == "url" {
-                guard let raw = node["url"] as? String, let url = URL(string: raw), url.scheme?.hasPrefix("http") == true else { return [] }
-                return [BrowserImport.Link(url: url, title: (node["name"] as? String) ?? raw)]
-            }
+            if node["type"] as? String == "url" { return link(node).map { [$0] } ?? [] }
             return (node["children"] as? [Any] ?? []).flatMap { links($0, depth: depth + 1) }
         }
 
-        let bar = links(roots["bookmark_bar"])
-        let rest = Array((bar.dropFirst(8) + links(roots["other"])).prefix(80))
-        let result = BrowserImport(source: "Chrome", spaces: [.init(name: "Chrome", icon: "bookmark", pinned: rest)],
-                                   favorites: Array(bar.prefix(8)))
-        if result.isEmpty { throw ImportError.notFound("Chrome") }
+        let bar = (roots["bookmark_bar"] as? [String: Any])?["children"] as? [Any] ?? []
+        var loose: [BrowserImport.Link] = []
+        var folders: [BrowserImport.ImportedSpace] = []
+        for case let node as [String: Any] in bar {
+            if node["type"] as? String == "url" {
+                if let link = link(node) { loose.append(link) }
+            } else if folders.count < 8 {
+                let pinned = Array(links(node).prefix(80))
+                guard !pinned.isEmpty else { continue }
+                let name = (node["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Folder \(folders.count + 1)"
+                folders.append(.init(name: name, icon: "folder", pinned: pinned))
+            } else {
+                loose += links(node)
+            }
+        }
+
+        let rest = Array((loose.dropFirst(8) + links(roots["other"]) + links(roots["synced"])).prefix(80))
+        let spaces = folders + (rest.isEmpty ? [] : [.init(name: browser, icon: "bookmark", pinned: rest)])
+        let result = BrowserImport(source: browser, spaces: spaces, favorites: Array(loose.prefix(8)))
+        if result.isEmpty { throw ImportError.notFound(browser) }
         return result
     }
 }

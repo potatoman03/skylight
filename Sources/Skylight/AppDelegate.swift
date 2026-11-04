@@ -2,6 +2,7 @@ import AppKit
 import SkylightBrowser
 import SkylightCEF
 import SkylightCore
+import SkylightKit
 import SkylightUI
 import SwiftUI
 
@@ -23,7 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Chromium is ready: build the browser and show the window.
     func engineDidStart() {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
-        let browser = Browser(engine: CEFEngine(), paths: paths, version: version)
+        // Development runs (SKYLIGHT_DEV) keep passwords in memory, away from your Keychain.
+        let credentials: CredentialStore = ProcessInfo.processInfo.environment["SKYLIGHT_DEV"] != nil
+            ? MemoryCredentialStore.demo() : KeychainCredentialStore()
+        let browser = Browser(engine: CEFEngine(), paths: paths, version: version, credentials: credentials)
         self.browser = browser
         NSApp.mainMenu = MainMenu.build(target: self)
         CEFRuntime.onTerminate { [weak self] in self?.quit() }
@@ -129,6 +133,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func clearToday(_ sender: Any?) {
         withAnimation(.timingCurve(0.45, 0, 0.1, 1, duration: 0.34)) { _ = store?.send(.clearToday) }
     }
-    @objc func importFromArc(_ sender: Any?) { browser?.importBrowser(.arc) }
-    @objc func importFromChrome(_ sender: Any?) { browser?.importBrowser(.chrome) }
+    @objc func importFrom(_ sender: NSMenuItem) {
+        if let source = (sender.representedObject as? String).flatMap(Browser.ImportSource.init(rawValue:)) {
+            browser?.importBrowser(source)
+        }
+    }
+    @objc func importPasswordsCSV(_ sender: Any?) { browser?.openSettings("passwords") }
 }

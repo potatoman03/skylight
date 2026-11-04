@@ -65,6 +65,7 @@ private struct CommandBarPanel: View {
     let omnibox: Namespace.ID
     @Environment(Browser.self) private var browser
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.palette) private var palette
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -104,7 +105,7 @@ private struct CommandBarPanel: View {
         .motion(Motion.travel, value: items.map(\.id))
         .glassEffect(.regular.tint(Surface.field.fill(scheme)), in: .rect(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Surface.field.edge(scheme), lineWidth: 0.75))
-        .shadow(color: Theme.shadow(browser.store.state.activeSpace.hue, scheme), radius: 40, y: 18)
+        .shadow(color: Theme.shadow(palette, scheme), radius: 40, y: 18)
         .matchedGeometryEffect(id: "omnibox", in: omnibox)
         .transition(.opacity)
         .onAppear {

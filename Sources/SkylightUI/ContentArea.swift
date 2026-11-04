@@ -9,14 +9,16 @@ import SwiftUI
 struct ContentArea: View {
     @Environment(Browser.self) private var browser
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.palette) private var palette
 
     var body: some View {
         let tab = browser.store.state.selectedTab
         let status = browser.selectedStatus
         let prompt = browser.prompts.prompt(for: browser.pages.visibleTabID)
+        let offer = browser.passwords.offer
 
         ZStack(alignment: .top) {
-            PageHost(view: browser.pages.hostView)
+            PageHost(view: browser.pages.hostView, radius: radius)
             if tab == nil {
                 StartView().transition(.opacity)
             } else if let tab, tab.url.isSkylightPage {
@@ -28,35 +30,46 @@ struct ContentArea: View {
                     .id(prompt.id)
                     .padding(.top, 14)
                     .transition(Arrive(anchor: .top, scale: 0.96, rise: -8))
+            } else if let offer, offer.tabID == browser.pages.visibleTabID {
+                PasswordOfferCard(offer: offer)
+                    .id(offer.id)
+                    .padding(.top, 14)
+                    .transition(Arrive(anchor: .top, scale: 0.96, rise: -8))
             }
         }
         .motion(Motion.arrive, value: prompt?.id)
+        .motion(Motion.arrive, value: offer?.id)
         .motion(Motion.swap, value: tab == nil)
         // An empty tab has no card: the field floats on the sky.
         .background(tab == nil ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
-        .clipShape(.rect(cornerRadius: Theme.cardRadius, style: .continuous))
+        .clipShape(.rect(cornerRadius: radius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .strokeBorder(Surface.selected.edge(scheme), lineWidth: 0.75)
                 .opacity(tab == nil ? 0 : 1)
         }
-        .shadow(color: Theme.shadow(browser.store.state.activeSpace.hue, scheme).opacity(tab == nil ? 0 : 1), radius: 18, y: 6)
+        .shadow(color: Theme.shadow(palette, scheme).opacity(tab == nil ? 0 : 1), radius: 18, y: 6)
     }
+
+    private var radius: CGFloat { browser.preferences.cornerRadius }
 }
 
 /// Hosts the coordinator's page container. SwiftUI never re-creates it, so pages keep running.
 struct PageHost: NSViewRepresentable {
     let view: PageHostView
+    var radius = Theme.cardRadius
 
     func makeNSView(context: Context) -> PageHostView {
         view.wantsLayer = true
-        view.layer?.cornerRadius = Theme.cardRadius
+        view.layer?.cornerRadius = radius
         view.layer?.cornerCurve = .continuous
         view.layer?.masksToBounds = true
         return view
     }
 
-    func updateNSView(_ view: PageHostView, context: Context) {}
+    func updateNSView(_ view: PageHostView, context: Context) {
+        if view.layer?.cornerRadius != radius { view.layer?.cornerRadius = radius }
+    }
 }
 
 private struct ProgressLine: View {

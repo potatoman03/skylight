@@ -36,11 +36,15 @@ public enum BrowserAction: Equatable, Sendable {
     case switchSpaceByOffset(Int)
     case setSpaceHue(SpaceID, Double)
     case setSpaceIcon(SpaceID, String?)
+    /// nil goes back to the app's theme.
+    case setSpaceTheme(SpaceID, String?)
     /// Changing a Space's profile reloads its pages in the new cookie jar.
     case assignProfile(SpaceID, ProfileID)
 
     case createProfile(name: String)
     case renameProfile(ProfileID, String)
+    case setProfileIcon(ProfileID, String?)
+    case setProfileHue(ProfileID, Double?)
     /// Spaces on the deleted profile move to the default one.
     case deleteProfile(ProfileID)
 

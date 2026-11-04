@@ -21,10 +21,11 @@ struct Sidebar: View {
         let state = browser.store.state
         let space = state.activeSpace
 
+        let prefs = browser.preferences
         VStack(alignment: .leading, spacing: 10) {
-            URLPill(omnibox: omnibox)
+            if prefs.shows(.addressBar) { URLPill(omnibox: omnibox).transition(.opacity) }
 
-            FavoritesGrid(selection: selection)
+            if prefs.shows(.favorites) { FavoritesGrid(selection: selection).transition(.opacity) }
 
             // The Space's tabs swap as one body: a crossfade with a small rise, never a slide.
             VStack(alignment: .leading, spacing: 4) {
@@ -36,7 +37,7 @@ struct Sidebar: View {
             .motion(Motion.swap, value: space.id)
             .onHover { h in animate(Motion.feedback) { hovering = h } }
 
-            AgentActivityBadge()
+            if prefs.shows(.agentActivity) { AgentActivityBadge() }
             BottomBar()
         }
         .padding(.horizontal, 10)
@@ -118,6 +119,7 @@ private struct URLPill: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: 0)
+                    LoginKeyButton(url: tab?.url)
                 }
                 .padding(.horizontal, 12)
                 .frame(height: 34)
@@ -226,12 +228,8 @@ private struct SpaceHeader: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.primary.opacity(0.78))
                 .lineLimit(1)
-            if let profile, space.profileID != .standard {
-                Text(profile.name.prefix(1).uppercased())
-                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 17, height: 17)
-                    .surface(.field, radius: 8.5)
+            if let profile, space.profileID != .standard || profile.icon != nil || profile.hue != nil {
+                ProfileBadge(profile: profile)
                     .help("Profile: \(profile.name)")
             }
             Spacer(minLength: 0)
@@ -302,7 +300,7 @@ private struct SpaceTabs: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    NewTabRow()
+                    if browser.preferences.shows(.newTab) { NewTabRow() }
                     ForEach(today) { tab in
                         TabRow(tab: tab, pinned: false, selected: space.selectedTabID == tab.id, selection: selection)
                             .transition(Arrive(anchor: .top, scale: 0.98))
@@ -338,7 +336,7 @@ private struct NewTabRow: View {
         }
         .foregroundStyle(.secondary)
         .padding(.horizontal, 10)
-        .frame(height: 34)
+        .frame(height: browser.preferences.density.rowHeight - 2)
         .surface(hovering ? .hover : nil)
         .contentShape(.rect)
         .onTapGesture { browser.presentCommandBar(.newTab) }
@@ -389,7 +387,7 @@ private struct TabRow: View {
             }
         }
         .padding(.horizontal, 10)
-        .frame(height: 36)
+        .frame(height: browser.preferences.density.rowHeight)
         .background {
             if selected {
                 Color.clear.surface(.selected, lifted: true)
@@ -476,6 +474,17 @@ struct SpaceMenu: View {
             Divider()
             Button("Manage Profiles…") { browser.openSettings("profiles") }
         }
+        Menu("Theme") {
+            Toggle("Same as the app", isOn: Binding(get: { space.themeID == nil },
+                                                    set: { if $0 { animate(Motion.swap) { _ = browser.store.send(.setSpaceTheme(space.id, nil)) } } }))
+            Divider()
+            ForEach(browser.preferences.themes) { theme in
+                Toggle(theme.name, isOn: Binding(get: { space.themeID == theme.id },
+                                                 set: { if $0 { animate(Motion.swap) { _ = browser.store.send(.setSpaceTheme(space.id, theme.id)) } } }))
+            }
+            Divider()
+            Button("Appearance…") { browser.openSettings("appearance") }
+        }
         Button("Space Settings…") { browser.openSettings("spaces") }
         if state.spaces.count > 1 {
             Divider()
@@ -490,12 +499,15 @@ private struct BottomBar: View {
     @Environment(Browser.self) private var browser
     @Environment(\.colorScheme) private var scheme
     @State private var newName = ""
+    @State private var themes = false
 
     var body: some View {
         @Bindable var browser = browser
         let state = browser.store.state
         HStack(spacing: 2) {
             IconButton(symbol: "gearshape", help: "Settings (⌘,)") { browser.openSettings() }
+            IconButton(symbol: "paintbrush", help: "Theme") { themes.toggle() }
+                .popover(isPresented: $themes, arrowEdge: .top) { QuickThemePanel() }
             Spacer(minLength: 4)
             ForEach(state.spaces) { space in
                 let active = space.id == state.activeSpaceID

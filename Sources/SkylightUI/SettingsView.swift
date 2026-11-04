@@ -38,6 +38,8 @@ struct SettingsPage: View {
                 Group {
                     switch section {
                     case .general: GeneralSettings()
+                    case .appearance: AppearanceSettings()
+                    case .passwords: PasswordSettings()
                     case .spaces: SpacesSettings()
                     case .profiles: ProfilesSettings()
                     case .importing: ImportSettings()
@@ -59,7 +61,7 @@ struct SettingsPage: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, spaces, profiles, importing = "import", agents, packages
+    case general, appearance, spaces, profiles, passwords, importing = "import", agents, packages
 
     var id: String { rawValue }
 
@@ -68,6 +70,8 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: "General"
+        case .appearance: "Appearance"
+        case .passwords: "Passwords"
         case .spaces: "Spaces"
         case .profiles: "Profiles"
         case .importing: "Import"
@@ -79,6 +83,8 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape.fill"
+        case .appearance: "paintbrush.fill"
+        case .passwords: "key.fill"
         case .spaces: "square.stack.fill"
         case .profiles: "person.2.fill"
         case .importing: "square.and.arrow.down.fill"
@@ -90,6 +96,8 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var color: Color {
         switch self {
         case .general: .gray
+        case .appearance: .indigo
+        case .passwords: .teal
         case .spaces: .blue
         case .profiles: .purple
         case .importing: .green
@@ -139,8 +147,9 @@ private struct GeneralSettings: View {
                 ForEach(Preferences.Appearance.allCases) { Text($0.name).tag($0) }
             }
             .pickerStyle(.segmented)
-            Toggle("Light through the sky", isOn: $prefs.godRays)
-            Toggle("Hide the sidebar", isOn: $prefs.sidebarCollapsed)
+            LabeledContent("Themes, sidebar and layout") {
+                Button("Appearance…") { browser.openSettings("appearance") }
+            }
             Picker("Archive Today tabs after", selection: $prefs.archiveAfterHours) {
                 Text("6 hours").tag(6.0)
                 Text("12 hours").tag(12.0)
@@ -208,6 +217,11 @@ private struct SpaceSettingsRow: View {
             Picker("Profile", selection: Binding(get: { space.profileID }, set: { browser.store.send(.assignProfile(space.id, $0)) })) {
                 ForEach(profiles) { Text($0.name).tag($0.id) }
             }
+            Picker("Theme", selection: Binding(get: { space.themeID }, set: { browser.store.send(.setSpaceTheme(space.id, $0)) })) {
+                Text("Same as the app").tag(String?.none)
+                Divider()
+                ForEach(browser.preferences.themes) { Text($0.name).tag(Optional($0.id)) }
+            }
         }
         .onAppear { name = space.name; hue = space.hue }
         .onChange(of: space.name) { _, new in name = new }
@@ -216,55 +230,143 @@ private struct SpaceSettingsRow: View {
 
 private struct ProfilesSettings: View {
     @Environment(Browser.self) private var browser
-    @State private var newName = ""
 
     var body: some View {
         let state = browser.store.state
-        Form {
-            Section {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Each profile has its own cookies, logins and site data. Spaces on the same profile share them, so you sign in once. Click a Space to move it to a profile.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
                 ForEach(state.profiles) { profile in
-                    ProfileRow(profile: profile, spaces: state.spaces.filter { $0.profileID == profile.id }.map(\.name))
+                    ProfileCard(profile: profile, spaces: state.spaces)
                 }
-            } footer: {
-                Text("Each profile has its own cookies, logins and site data. Spaces on the same profile share them.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                Button {
+                    animate(Motion.swap) { _ = browser.store.send(.createProfile(name: "Profile \(state.profiles.count + 1)")) }
+                } label: {
+                    Label("New Profile", systemImage: "plus")
+                }
             }
-            HStack {
-                TextField("New profile", text: $newName).onSubmit(add)
-                Button("Add", action: add).disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
+            .padding(20)
         }
-        .formStyle(.grouped)
-    }
-
-    private func add() {
-        browser.store.send(.createProfile(name: newName))
-        newName = ""
     }
 }
 
-private struct ProfileRow: View {
+private struct ProfileCard: View {
     let profile: Profile
-    let spaces: [String]
+    let spaces: [Space]
     @Environment(Browser.self) private var browser
     @State private var name = ""
 
+    static let icons = ["person.fill", "briefcase.fill", "house.fill", "graduationcap.fill", "hammer.fill", "gamecontroller.fill",
+                        "heart.fill", "star.fill", "😎", "🧪", "🏝️", "🚀"]
+    static let hues: [Double?] = [nil, 0.0, 0.07, 0.13, 0.33, 0.5, 0.58, 0.7, 0.8, 0.9]
+
     var body: some View {
-        HStack {
-            Image(systemName: "person.crop.circle").foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                TextField("Name", text: $name).labelsHidden()
-                    .onSubmit { browser.store.send(.renameProfile(profile.id, name)) }
-                Text(spaces.isEmpty ? "No Spaces" : spaces.joined(separator: ", "))
-                    .font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Menu {
+                    ForEach(Self.icons, id: \.self) { icon in
+                        Button { browser.store.send(.setProfileIcon(profile.id, icon)) } label: {
+                            if NSImage(systemSymbolName: icon, accessibilityDescription: nil) != nil {
+                                Label(icon, systemImage: icon)
+                            } else {
+                                Text(icon)
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Initial") { browser.store.send(.setProfileIcon(profile.id, nil)) }
+                } label: {
+                    ProfileBadge(profile: profile, size: 34)
+                }
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .help("Choose an icon")
+
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField("Name", text: $name)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 14, weight: .semibold))
+                        .onSubmit { browser.store.send(.renameProfile(profile.id, name)) }
+                    HStack(spacing: 5) {
+                        ForEach(Array(Self.hues.enumerated()), id: \.offset) { _, hue in
+                            Button { browser.store.send(.setProfileHue(profile.id, hue)) } label: {
+                                Circle()
+                                    .fill(hue.map { AnyShapeStyle(Theme.accent($0).gradient) } ?? AnyShapeStyle(Color.gray.opacity(0.35)))
+                                    .frame(width: 14, height: 14)
+                                    .overlay(Circle().strokeBorder(.primary.opacity(profile.hue == hue ? 0.7 : 0), lineWidth: 1.5).padding(-2.5))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                Spacer()
+                if profile.id != .standard {
+                    Button(role: .destructive) {
+                        animate(Motion.swap) { _ = browser.store.send(.deleteProfile(profile.id)) }
+                    } label: { Image(systemName: "trash") }
+                        .buttonStyle(.borderless)
+                        .help("Delete profile. Its Spaces move to Default.")
+                }
             }
-            if profile.id != .standard {
-                Button(role: .destructive) { browser.store.send(.deleteProfile(profile.id)) } label: { Image(systemName: "trash") }
-                    .buttonStyle(.borderless)
-                    .help("Delete profile. Its Spaces move to Default.")
+
+            // Every Space as a chip: lit when it uses this profile; click to move it here.
+            FlowChips(spaces: spaces, profileID: profile.id)
+        }
+        .padding(14)
+        .settingsCard()
+        .onAppear { name = profile.name }
+        .onChange(of: profile.name) { _, new in name = new }
+    }
+}
+
+private struct FlowChips: View {
+    let spaces: [Space]
+    let profileID: ProfileID
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 6)], alignment: .leading, spacing: 6) {
+            ForEach(spaces) { space in
+                let here = space.profileID == profileID
+                Button {
+                    if !here { animate(Motion.swap) { _ = browser.store.send(.assignProfile(space.id, profileID)) } }
+                } label: {
+                    HStack(spacing: 6) {
+                        SpaceIcon(icon: space.icon, name: space.name, size: 10).foregroundStyle(Theme.accent(space.hue))
+                        Text(space.name).font(.system(size: 12)).lineLimit(1)
+                        Spacer(minLength: 0)
+                        if here { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary) }
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(height: 26)
+                    .background(.primary.opacity(here ? 0.09 : 0.03), in: .capsule)
+                    .opacity(here ? 1 : 0.7)
+                    .contentShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .help(here ? "\(space.name) uses this profile" : "Move \(space.name) to this profile")
             }
         }
-        .onAppear { name = profile.name }
+    }
+}
+
+/// A profile's badge: its icon or initial on its color.
+struct ProfileBadge: View {
+    let profile: Profile
+    var size: CGFloat = 17
+
+    var body: some View {
+        ZStack {
+            Circle().fill(profile.hue.map { AnyShapeStyle(Theme.accent($0).gradient) } ?? AnyShapeStyle(Color.gray.opacity(0.28)))
+            if let icon = profile.icon {
+                SpaceIcon(icon: icon, size: size * 0.5)
+            } else {
+                Text(profile.name.prefix(1).uppercased())
+                    .font(.system(size: size * 0.52, weight: .bold, design: .rounded))
+            }
+        }
+        .foregroundStyle(profile.hue == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
+        .frame(width: size, height: size)
     }
 }
 
@@ -279,7 +381,7 @@ private struct ImportSettings: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(source.rawValue)
-                            Text(results[source.rawValue] ?? (source.isAvailable ? detail(source) : "Not found on this Mac"))
+                            Text(results[source.rawValue] ?? (source.isAvailable ? source.summary : "Not found on this Mac"))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -295,12 +397,6 @@ private struct ImportSettings: View {
         .formStyle(.grouped)
     }
 
-    private func detail(_ source: Browser.ImportSource) -> String {
-        switch source {
-        case .arc: "Spaces, pinned tabs (folders flattened) and favorites"
-        case .chrome: "Bookmarks bar as favorites, other bookmarks as a Space"
-        }
-    }
 }
 
 private struct AgentSettings: View {

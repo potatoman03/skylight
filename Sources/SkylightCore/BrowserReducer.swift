@@ -194,6 +194,11 @@ public enum BrowserReducer {
             state.spaces[i].icon = icon.flatMap { $0.isEmpty ? nil : $0 }
             return ReduceResult()
 
+        case let .setSpaceTheme(id, theme):
+            guard let i = state.spaces.firstIndex(where: { $0.id == id }) else { return .ignored }
+            state.spaces[i].themeID = theme
+            return ReduceResult()
+
         case let .assignProfile(spaceID, profileID):
             guard let i = state.spaces.firstIndex(where: { $0.id == spaceID }), state.profile(profileID) != nil,
                   state.spaces[i].profileID != profileID else { return .ignored }
@@ -215,6 +220,16 @@ public enum BrowserReducer {
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let i = state.profiles.firstIndex(where: { $0.id == id }), !trimmed.isEmpty else { return .ignored }
             state.profiles[i].name = trimmed
+            return ReduceResult()
+
+        case let .setProfileIcon(id, icon):
+            guard let i = state.profiles.firstIndex(where: { $0.id == id }) else { return .ignored }
+            state.profiles[i].icon = icon.flatMap { $0.isEmpty ? nil : $0 }
+            return ReduceResult()
+
+        case let .setProfileHue(id, hue):
+            guard let i = state.profiles.firstIndex(where: { $0.id == id }) else { return .ignored }
+            state.profiles[i].hue = hue.map { $0 - floor($0) }
             return ReduceResult()
 
         case let .deleteProfile(id):

@@ -53,10 +53,16 @@ public struct ProfileID: Hashable, Codable, Sendable, CustomStringConvertible {
 public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public let id: ProfileID
     public var name: String
+    /// An emoji or SF Symbol name for the profile's badge; nil shows its initial.
+    public var icon: String?
+    /// 0...1, the badge's color; nil is neutral.
+    public var hue: Double?
 
-    public init(id: ProfileID = ProfileID(), name: String) {
+    public init(id: ProfileID = ProfileID(), name: String, icon: String? = nil, hue: Double? = nil) {
         self.id = id
         self.name = name
+        self.icon = icon
+        self.hue = hue
     }
 }
 
@@ -110,23 +116,26 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
     /// An emoji or SF Symbol name; nil shows the Space's color.
     public var icon: String?
     public var profileID: ProfileID
+    /// A theme just for this Space; nil uses the app's theme.
+    public var themeID: String?
     public var pinned: [TabID]
     public var today: [TabID]
     public var selectedTabID: TabID?
 
     public init(id: SpaceID = SpaceID(), name: String, hue: Double, icon: String? = nil, profileID: ProfileID = .standard,
-                pinned: [TabID] = [], today: [TabID] = [], selectedTabID: TabID? = nil) {
+                themeID: String? = nil, pinned: [TabID] = [], today: [TabID] = [], selectedTabID: TabID? = nil) {
         self.id = id
         self.name = name
         self.hue = hue
         self.icon = icon
         self.profileID = profileID
+        self.themeID = themeID
         self.pinned = pinned
         self.today = today
         self.selectedTabID = selectedTabID
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, hue, icon, profileID, pinned, today, selectedTabID }
+    enum CodingKeys: String, CodingKey { case id, name, hue, icon, profileID, themeID, pinned, today, selectedTabID }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -135,6 +144,7 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         hue = try c.decode(Double.self, forKey: .hue)
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         profileID = try c.decodeIfPresent(ProfileID.self, forKey: .profileID) ?? .standard
+        themeID = try c.decodeIfPresent(String.self, forKey: .themeID)
         pinned = try c.decodeIfPresent([TabID].self, forKey: .pinned) ?? []
         today = try c.decodeIfPresent([TabID].self, forKey: .today) ?? []
         selectedTabID = try c.decodeIfPresent(TabID.self, forKey: .selectedTabID)

@@ -313,11 +313,14 @@ private let c = URL(string: "https://c.example")!
         #expect(result.spaces[0].pinned.map(\.title) == ["Docs", "Renamed"])
     }
 
-    @Test func readsChromeBookmarks() throws {
-        let json = #"{"roots":{"bookmark_bar":{"children":[{"type":"url","name":"A","url":"https://a.example"},{"type":"folder","children":[{"type":"url","name":"B","url":"https://b.example"}]}]},"other":{"children":[]}}}"#
-        let result = try BrowserImporters.chrome(Data(json.utf8))
-        #expect(result.favorites.map(\.title) == ["A", "B"])
-        #expect(result.spaces[0].pinned.isEmpty)
+    @Test func readsChromiumBookmarks() throws {
+        let json = #"{"roots":{"bookmark_bar":{"children":[{"type":"url","name":"A","url":"https://a.example"},{"type":"folder","name":"Main","children":[{"type":"url","name":"B","url":"https://b.example"},{"type":"url","name":"","url":"https://c.example/x"}]},{"type":"folder","name":"Empty","children":[]}]},"other":{"children":[{"type":"url","name":"O","url":"https://o.example"},{"type":"url","name":"Local","url":"file:///etc/hosts"}]}}}"#
+        let result = try BrowserImporters.chromium(Data(json.utf8), browser: "Aside")
+        #expect(result.source == "Aside")
+        #expect(result.favorites.map(\.title) == ["A"])
+        #expect(result.spaces.map(\.name) == ["Main", "Aside"])
+        #expect(result.spaces[0].pinned.map(\.title) == ["B", "c.example"])
+        #expect(result.spaces[1].pinned.map(\.title) == ["O"])
     }
 
     @Test func pinnedTabsUnloadOnClose() {

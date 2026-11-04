@@ -1,4 +1,5 @@
 import AppKit
+import SkylightBrowser
 
 /// The menu bar. Browser commands go to the app delegate; editing commands (copy, paste, undo)
 /// go to the first responder, so they reach the page or a text field.
@@ -29,8 +30,11 @@ enum MainMenu {
             .separator(),
             item("New Space", #selector(AppDelegate.newSpace(_:)), "n", [.command, .shift], target: target),
             .separator(),
-            item("Import from Arc", #selector(AppDelegate.importFromArc(_:)), "", target: target),
-            item("Import from Chrome", #selector(AppDelegate.importFromChrome(_:)), "", target: target),
+            submenu("Import From", Browser.ImportSource.allCases.filter(\.isAvailable).map { source in
+                let item = item(source.rawValue, #selector(AppDelegate.importFrom(_:)), "", target: target)
+                item.representedObject = source.rawValue
+                return item
+            } + [.separator(), item("Passwords from CSV…", #selector(AppDelegate.importPasswordsCSV(_:)), "", target: target)]),
             .separator(),
             item("Close Tab", #selector(AppDelegate.closeTab(_:)), "w", target: target),
             item("Close Window", #selector(AppDelegate.close(_:)), "w", [.command, .shift], target: target),

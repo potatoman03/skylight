@@ -19,12 +19,13 @@ public struct RootView: View {
     public init() {}
 
     public var body: some View {
-        let hue = browser.store.state.activeSpace.hue
+        let space = browser.store.state.activeSpace
+        let palette = browser.preferences.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue)
         let collapsed = browser.preferences.sidebarCollapsed
         let row = lights.rowHeight
 
         ZStack(alignment: .topLeading) {
-            SkyBackdrop(hue: hue, rays: browser.preferences.godRays)
+            SkyBackdrop(palette: palette, rays: browser.preferences.godRays)
 
             HStack(spacing: 0) {
                 if !collapsed {
@@ -53,12 +54,12 @@ public struct RootView: View {
                         .background {
                             let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
                             ZStack {
-                                SkyBackdrop(hue: hue, rays: false)
+                                SkyBackdrop(palette: palette, rays: false)
                                 Rectangle().fill(.white.opacity(scheme == .dark ? 0.02 : 0.2))
                             }
                             .clipShape(shape)
                             .overlay(shape.strokeBorder(Surface.selected.edge(scheme), lineWidth: 0.75))
-                            .shadow(color: Theme.shadow(hue, scheme), radius: 30, x: 8)
+                            .shadow(color: Theme.shadow(palette, scheme), radius: 30, x: 8)
                         }
                         .padding([.leading, .bottom], 6)
                         .padding(.top, 6)
@@ -77,6 +78,8 @@ public struct RootView: View {
             }
         }
         .overlay(alignment: .bottom) { ToastView() }
+        .environment(\.palette, palette)
+        .tint(Color(palette.accent))
         .background(TrafficLightReader(lights: $lights))
         .ignoresSafeArea()
         .frame(minWidth: 760, minHeight: 480)

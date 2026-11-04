@@ -50,15 +50,31 @@ hours are archived (⌘⇧T brings them back; the time is in Settings). Pages yo
 20 minutes go to sleep and reload when you return.
 
 Each Space has a color, an icon and a **profile**. A profile is a cookie jar: Spaces on different
-profiles can be signed in to different accounts. Manage them in Settings → Profiles, or from a
-Space's ⋯ menu.
+profiles can be signed in to different accounts. In Settings → Profiles each profile is a card with
+its own icon and color; click a Space's chip to move it onto that profile.
 
-**Import** (File menu or Settings → Import) brings over Arc's Spaces, pinned tabs and favorites, or
-Chrome's bookmarks.
+**Themes.** The paintbrush at the bottom of the sidebar switches theme and light/dark in one click,
+for every Space or just the one you're in. Settings → Appearance has the gallery (Sky, Pastel and
+Vivid follow each Space's color; Paper, Graphite, Dusk, Forest, Ocean, Rosé and Aurora keep their
+own) and an editor for your own themes: sky, horizon and accent for light and dark, plus glow,
+sunlight, light strength and glass under More Colors. Edits apply live. The same page sets tab row
+density, page corner radius, and which parts of the sidebar show. `Theme: …` in the command bar
+switches too.
 
-The sky behind everything is a small Metal shader: light falls through it, slowly, in the active
-Space's color. It runs at 30 fps only while the window is in front, and stops with Reduce Motion or
-when "Light through the sky" is off.
+**Passwords** live in your login Keychain. After you sign in somewhere new, Skylight offers to save
+the login; a key in the address bar fills a saved one when you pick it. Filling only happens from
+Skylight's own UI, and only into a page on the login's site. Settings → Passwords imports from
+Aside, Arc, Chrome, Dia, Brave, Edge and other Chromium browsers on this Mac (macOS asks before
+Skylight can read that browser's key), or from a CSV export (Chrome, Safari, 1Password, Bitwarden).
+Copying and exporting ask for Touch ID or your password.
+
+**Import** (File → Import From, or Settings → Import) brings over Arc's Spaces, pinned tabs and
+favorites, or a Chromium browser's bookmarks: the bookmarks bar becomes favorites and each folder a
+Space, which is how Aside's sidebar folders come across.
+
+The sky behind everything is a small Metal shader: light falls through it, slowly, in the theme's
+colors. It runs at 30 fps only while the window is in front, and stops with Reduce Motion or when
+"Light through the sky" is off.
 
 ## Packages
 
@@ -171,8 +187,10 @@ SkylightHelper: Chromium's sub-process executable.
 
 1. **Now:** stock CEF 156 in Alloy style (embedded in our window).
 2. **Self-built CEF** with ungoogled-chromium's privacy patches and proprietary codecs.
-3. **Small patches toward full Chrome:** Chrome-style browsers inside a native parent view (for the
-   Chrome extension system), the password manager and autofill, passkeys.
+3. **Small patches toward full Chrome:** Chrome-style browsers inside a native parent view, for the
+   Chrome extension system. Stock CEF always uses Alloy style when a browser lives in our own view
+   on macOS, and Alloy style has no extension support, so extensions need this patch (or hosting
+   pages in CEF's own Chrome-style windows). Passkeys.
 4. Tab sync between machines, easels, notes and highlights as built-in packages, an in-app agent.
 
 Known limits: Google account sync is unavailable to third-party Chromium builds; Widevine (Netflix

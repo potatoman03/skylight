@@ -20,12 +20,30 @@ enum Theme {
     }
 
     /// Shadows take the sky's color, so nothing gets a grey halo.
-    static func shadow(_ hue: Double, _ scheme: ColorScheme) -> Color {
-        scheme == .dark ? .black.opacity(0.35) : Color(hue: hue - floor(hue), saturation: 0.6, brightness: 0.45).opacity(0.16)
+    static func shadow(_ palette: ThemePalette, _ scheme: ColorScheme) -> Color {
+        guard scheme == .light else { return .black.opacity(0.35) }
+        let sky = palette.sky.hsv
+        return Color(hue: sky.h, saturation: min(0.6, sky.s * 1.4), brightness: 0.45).opacity(0.16)
     }
 
     static let cardRadius: CGFloat = 12
     static let rowRadius: CGFloat = 10
+}
+
+extension Color {
+    init(_ rgb: RGB) { self.init(.sRGB, red: rgb.r, green: rgb.g, blue: rgb.b) }
+}
+
+extension RGB {
+    init(_ color: Color) {
+        let c = NSColor(color).usingColorSpace(.sRGB) ?? .white
+        self.init(Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent))
+    }
+}
+
+extension EnvironmentValues {
+    /// The colors of the theme on screen, for the active Space and appearance.
+    @Entry var palette: ThemePalette = SkyTheme.standard.light
 }
 
 /// Surfaces on the sky: frosted white in the day, faint light at night, with a hairline of light
@@ -56,12 +74,14 @@ struct SurfaceBackground: ViewModifier {
     var radius: CGFloat = Theme.rowRadius
     var lifted = false
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.palette) private var palette
 
     func body(content: Content) -> some View {
         content.background {
             if let surface {
                 let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-                shape.fill(surface.fill(scheme))
+                // The theme's glass makes surfaces clearer or more solid.
+                shape.fill(surface.fill(scheme).opacity(min(1.6, palette.glass)))
                     .overlay(shape.strokeBorder(surface.edge(scheme), lineWidth: 0.75))
                     .shadow(color: lifted ? .black.opacity(scheme == .dark ? 0.25 : 0.06) : .clear, radius: 3, y: 1)
             }

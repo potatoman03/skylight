@@ -39,12 +39,46 @@ public final class Preferences {
         public var name: String { rawValue.capitalized }
     }
 
+    /// Parts of the sidebar you can hide.
+    public enum SidebarItem: String, Codable, CaseIterable, Identifiable, Sendable {
+        case addressBar, favorites, newTab, agentActivity
+        public var id: String { rawValue }
+
+        public var name: String {
+            switch self {
+            case .addressBar: "Address bar"
+            case .favorites: "Favorites"
+            case .newTab: "New Tab button"
+            case .agentActivity: "Agent activity"
+            }
+        }
+    }
+
+    public enum Density: String, Codable, CaseIterable, Identifiable, Sendable {
+        case compact, comfortable, roomy
+        public var id: String { rawValue }
+        public var name: String { rawValue.capitalized }
+        /// Height of a tab row.
+        public var rowHeight: Double {
+            switch self {
+            case .compact: 30
+            case .comfortable: 36
+            case .roomy: 42
+            }
+        }
+    }
+
     private struct Stored: Codable {
         var searchEngine: SearchEngine?
         var appearance: Appearance?
         var godRays: Bool?
         var archiveAfterHours: Double?
         var sidebarCollapsed: Bool?
+        var themeID: String?
+        var customThemes: [SkyTheme]?
+        var hiddenSidebarItems: Set<SidebarItem>?
+        var density: Density?
+        var cornerRadius: Double?
     }
 
     public var searchEngine: SearchEngine = .google { didSet { save() } }
@@ -55,6 +89,50 @@ public final class Preferences {
     /// Today tabs untouched this long are archived.
     public var archiveAfterHours: Double = 12 { didSet { save() } }
     public var sidebarCollapsed = false { didSet { save() } }
+    /// The app's theme; Spaces can pick their own.
+    public var themeID = SkyTheme.standard.id { didSet { save() } }
+    public var customThemes: [SkyTheme] = [] { didSet { save() } }
+    public var hiddenSidebarItems: Set<SidebarItem> = [] { didSet { save() } }
+    public var density: Density = .comfortable { didSet { save() } }
+    /// Corner radius of the page card, in points.
+    public var cornerRadius: Double = 12 { didSet { save() } }
+
+    /// Every theme you can pick: the presets, then your own.
+    public var themes: [SkyTheme] { SkyTheme.presets + customThemes }
+
+    public func theme(_ id: String?) -> SkyTheme? {
+        guard let id else { return nil }
+        return themes.first { $0.id == id }
+    }
+
+    /// The theme a Space shows: its own if it has one, else the app's.
+    public func theme(for space: Space) -> SkyTheme {
+        theme(space.themeID) ?? theme(themeID) ?? .standard
+    }
+
+    public func shows(_ item: SidebarItem) -> Bool { !hiddenSidebarItems.contains(item) }
+
+    public func setShows(_ item: SidebarItem, _ shown: Bool) {
+        if shown { hiddenSidebarItems.remove(item) } else { hiddenSidebarItems.insert(item) }
+    }
+
+    /// Adds or replaces a theme of your own. Presets can't be changed; saving one makes a copy.
+    @discardableResult
+    public func saveTheme(_ theme: SkyTheme) -> SkyTheme {
+        var theme = theme
+        if theme.isPreset { theme.id = UUID().uuidString }
+        if let i = customThemes.firstIndex(where: { $0.id == theme.id }) {
+            customThemes[i] = theme
+        } else {
+            customThemes.append(theme)
+        }
+        return theme
+    }
+
+    public func deleteTheme(_ id: String) {
+        customThemes.removeAll { $0.id == id }
+        if themeID == id { themeID = SkyTheme.standard.id }
+    }
 
     public var omnibox: Omnibox { Omnibox(searchTemplate: searchEngine.template) }
 
@@ -72,6 +150,11 @@ public final class Preferences {
         godRays = stored.godRays ?? godRays
         archiveAfterHours = stored.archiveAfterHours ?? archiveAfterHours
         sidebarCollapsed = stored.sidebarCollapsed ?? sidebarCollapsed
+        themeID = stored.themeID ?? themeID
+        customThemes = stored.customThemes ?? []
+        hiddenSidebarItems = stored.hiddenSidebarItems ?? []
+        density = stored.density ?? density
+        cornerRadius = stored.cornerRadius ?? cornerRadius
     }
 
     public func applyAppearance() {
@@ -85,7 +168,9 @@ public final class Preferences {
     private func save() {
         guard !loading, let fileURL else { return }
         let stored = Stored(searchEngine: searchEngine, appearance: appearance, godRays: godRays,
-                            archiveAfterHours: archiveAfterHours, sidebarCollapsed: sidebarCollapsed)
+                            archiveAfterHours: archiveAfterHours, sidebarCollapsed: sidebarCollapsed, themeID: themeID,
+                            customThemes: customThemes, hiddenSidebarItems: hiddenSidebarItems, density: density,
+                            cornerRadius: cornerRadius)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
