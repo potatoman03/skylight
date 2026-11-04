@@ -1,0 +1,125 @@
+import SkylightBrowser
+import SwiftUI
+
+extension Browser {
+    /// Opens the command bar, growing it out of the URL pill.
+    @MainActor
+    public func presentCommandBar(_ mode: CommandBarModel.Mode) {
+        let query = mode == .editCurrent ? (store.state.selectedTab?.url.absoluteString ?? "") : ""
+        animate(Motion.grow) { commandBar.present(mode, query: query) }
+    }
+
+    @MainActor
+    public func dismissCommandBar() {
+        animate(Motion.exit) { commandBar.dismiss() }
+        pages.focusVisiblePage()
+    }
+}
+
+/// The scrim and the bar. The bar shares its geometry with the URL pill, so it travels from the
+/// pill to the middle of the window and back.
+struct CommandBarOverlay: View {
+    let omnibox: Namespace.ID
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.black.opacity(0.12)
+                .ignoresSafeArea()
+                .contentShape(.rect)
+                .onTapGesture { browser.dismissCommandBar() }
+                .transition(.opacity)
+
+            CommandBarPanel(omnibox: omnibox)
+                .frame(width: 640)
+                .padding(.top, 96)
+        }
+    }
+}
+
+private struct CommandBarPanel: View {
+    let omnibox: Namespace.ID
+    @Environment(Browser.self) private var browser
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        @Bindable var bar = browser.commandBar
+        let items = bar.items
+
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: bar.mode == .newTab ? "plus.magnifyingglass" : "magnifyingglass")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.secondary)
+                TextField("Search or enter address", text: $bar.query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 18))
+                    .focused($focused)
+                    .onSubmit { bar.submit() }
+                    .onKeyPress(.downArrow) { animate(Motion.feedback) { bar.moveSelection(1) }; return .handled }
+                    .onKeyPress(.upArrow) { animate(Motion.feedback) { bar.moveSelection(-1) }; return .handled }
+                    .onKeyPress(.escape) { browser.dismissCommandBar(); return .handled }
+            }
+            .padding(.horizontal, 18)
+            .frame(height: 56)
+
+            if !items.isEmpty {
+                Divider().opacity(0.6)
+                VStack(spacing: 2) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        CommandRow(item: item, highlighted: index == bar.selection)
+                            .onTapGesture { bar.submit(item) }
+                            .onHover { if $0 { bar.selection = index } }
+                    }
+                }
+                .padding(6)
+                .transition(Arrive(anchor: .top, scale: 0.98))
+            }
+        }
+        .motion(Motion.travel, value: items.map(\.id))
+        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
+        .shadow(color: .black.opacity(0.18), radius: 30, y: 14)
+        .matchedGeometryEffect(id: "omnibox", in: omnibox)
+        .transition(.opacity)
+        .onAppear {
+            focused = true
+            // ⌘L selects the current address so typing replaces it.
+            if bar.mode == .editCurrent {
+                DispatchQueue.main.async { NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil) }
+            }
+        }
+        .onExitCommand { browser.dismissCommandBar() }
+    }
+}
+
+private struct CommandRow: View {
+    let item: CommandItem
+    let highlighted: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Group {
+                if item.kind == .tab {
+                    Favicon(url: item.faviconURL, title: item.title)
+                } else {
+                    Image(systemName: item.symbol).font(.system(size: 13, weight: .medium))
+                }
+            }
+            .frame(width: 18)
+            .foregroundStyle(highlighted ? .primary : .secondary)
+
+            Text(item.title).font(.system(size: 14)).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 12)
+            if let subtitle = item.subtitle {
+                Text(subtitle).font(.system(size: 12)).foregroundStyle(.tertiary).lineLimit(1)
+            }
+            if highlighted {
+                Image(systemName: "return").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 38)
+        .background(.primary.opacity(highlighted ? 0.09 : 0), in: .rect(cornerRadius: 12, style: .continuous))
+        .contentShape(.rect)
+    }
+}

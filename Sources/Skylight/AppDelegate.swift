@@ -1,0 +1,122 @@
+import AppKit
+import SkylightBrowser
+import SkylightCEF
+import SkylightCore
+import SkylightUI
+import SwiftUI
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private let paths: AppPaths
+    private var browser: Browser?
+    private var window: NSWindow?
+    private var quitting = false
+
+    init(paths: AppPaths) {
+        self.paths = paths
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+    }
+
+    /// Chromium is ready: build the browser and show the window.
+    func engineDidStart() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+        let browser = Browser(engine: CEFEngine(), paths: paths, version: version)
+        self.browser = browser
+        NSApp.mainMenu = MainMenu.build(target: self)
+        CEFRuntime.onTerminate { [weak self] in self?.quit() }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.isMovableByWindowBackground = true
+        window.delegate = self
+        window.contentView = NSHostingView(rootView: RootView().environment(browser))
+        window.setFrameAutosaveName("SkylightMain")
+        if !window.setFrameUsingName("SkylightMain") { window.center() }
+        self.window = window
+
+        browser.start()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        if browser.store.state.selectedTab == nil { browser.presentCommandBar(.newTab) }
+    }
+
+    /// Close every page, then stop the message loop. Chromium must not shut down with pages open.
+    func quit() {
+        guard !quitting else { return }
+        quitting = true
+        window?.orderOut(nil)
+        guard let browser else { return CEFRuntime.quit() }
+        browser.shutdown { CEFRuntime.quit() }
+    }
+
+    func browserWillExit() {
+        browser?.store.flush()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        quit()
+        return .terminateCancel
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        window?.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        quit()
+        return false
+    }
+
+    // MARK: - Menu actions
+
+    private var store: BrowserStore? { browser?.store }
+    private var selected: TabID? { store?.state.selectedTabID }
+
+    @objc func newTab(_ sender: Any?) { browser?.presentCommandBar(.newTab) }
+    @objc func openLocation(_ sender: Any?) { browser?.presentCommandBar(.editCurrent) }
+
+    @objc func closeTab(_ sender: Any?) {
+        if browser?.commandBar.isPresented == true { return browser?.dismissCommandBar() ?? () }
+        guard let id = selected else { return }
+        withAnimation(.timingCurve(0.45, 0, 0.1, 1, duration: 0.34)) { _ = store?.send(.closeTab(id)) }
+    }
+
+    @objc func reopenTab(_ sender: Any?) { store?.send(.reopenClosedTab) }
+    @objc func reload(_ sender: Any?) { if let id = selected { store?.send(.reload(id)) } }
+    @objc func stopLoading(_ sender: Any?) { if let id = selected { store?.send(.stop(id)) } }
+    @objc func goBack(_ sender: Any?) { if let id = selected { store?.send(.goBack(id)) } }
+    @objc func goForward(_ sender: Any?) { if let id = selected { store?.send(.goForward(id)) } }
+    @objc func togglePin(_ sender: Any?) { if let id = selected { store?.send(.togglePin(id)) } }
+    @objc func nextTab(_ sender: Any?) { store?.send(.selectAdjacentTab(offset: 1)) }
+    @objc func previousTab(_ sender: Any?) { store?.send(.selectAdjacentTab(offset: -1)) }
+    @objc func nextSpace(_ sender: Any?) { store?.send(.switchSpaceByOffset(1)) }
+    @objc func previousSpace(_ sender: Any?) { store?.send(.switchSpaceByOffset(-1)) }
+    @objc func newSpace(_ sender: Any?) { store?.send(.createSpace(name: "Space \((store?.state.spaces.count ?? 0) + 1)")) }
+    @objc func developerTools(_ sender: Any?) { browser?.showDeveloperTools() }
+    @objc func copyURL(_ sender: Any?) {
+        guard let url = store?.state.selectedTab?.url else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        browser?.toasts.show("Copied link", symbol: "link")
+    }
+    @objc func boostSite(_ sender: Any?) { browser?.createBoostForCurrentSite() }
+    @objc func showPackages(_ sender: Any?) { browser?.packages.revealInFinder() }
+    @objc func copyAgentCommand(_ sender: Any?) { browser?.copyMCPCommand() }
+
+    @objc func switchToSpace(_ sender: NSMenuItem) {
+        guard let spaces = store?.state.spaces, spaces.indices.contains(sender.tag) else { return }
+        store?.send(.switchSpace(spaces[sender.tag].id))
+    }
+
+    @objc func close(_ sender: Any?) { quit() }
+}

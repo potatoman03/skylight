@@ -1,0 +1,224 @@
+import Foundation
+import Testing
+@testable import SkylightCore
+
+/// Deterministic ids and clock.
+private func environment() -> ReducerEnvironment {
+    let counter = Counter()
+    return ReducerEnvironment(
+        now: { Date(timeIntervalSince1970: 1_000_000) },
+        makeTabID: { TabID("t\(counter.next())") },
+        makeSpaceID: { SpaceID("s\(counter.next())") })
+}
+
+private final class Counter: @unchecked Sendable {
+    private var value = 0
+    private let lock = NSLock()
+    func next() -> Int { lock.withLock { value += 1; return value } }
+}
+
+private let a = URL(string: "https://a.example")!
+private let b = URL(string: "https://b.example")!
+private let c = URL(string: "https://c.example")!
+
+@Suite struct ReducerTests {
+    let env = environment()
+
+    func open(_ state: inout BrowserState, _ urls: URL...) -> [TabID] {
+        urls.map { BrowserReducer.reduce(&state, .openTab($0), env: env).openedTabID! }
+    }
+
+    @Test func openTabSelectsAndInsertsAfterSelected() {
+        var state = BrowserState.initial()
+        let ids = open(&state, a, b)
+        #expect(state.activeSpace.today == ids)
+        #expect(state.selectedTabID == ids[1])
+
+        BrowserReducer.reduce(&state, .selectTab(ids[0]), env: env)
+        let result = BrowserReducer.reduce(&state, .openTab(c), env: env)
+        #expect(state.activeSpace.today == [ids[0], result.openedTabID!, ids[1]])
+        #expect(result.effects == [.load(result.openedTabID!, c), .showTab(result.openedTabID!)])
+    }
+
+    @Test func backgroundTabDoesNotChangeSelection() {
+        var state = BrowserState.initial()
+        let first = open(&state, a)[0]
+        let result = BrowserReducer.reduce(&state, .openTab(b, select: false), env: env)
+        #expect(state.selectedTabID == first)
+        #expect(result.effects == [.load(result.openedTabID!, b)])
+    }
+
+    @Test func closingSelectsNeighborBelowThenAbove() {
+        var state = BrowserState.initial()
+        let ids = open(&state, a, b, c)
+        BrowserReducer.reduce(&state, .selectTab(ids[1]), env: env)
+
+        let result = BrowserReducer.reduce(&state, .closeTab(ids[1]), env: env)
+        #expect(state.selectedTabID == ids[2])
+        #expect(result.effects == [.discardPage(ids[1]), .showTab(ids[2])])
+
+        BrowserReducer.reduce(&state, .closeTab(ids[2]), env: env)
+        #expect(state.selectedTabID == ids[0])
+    }
+
+    @Test func reopenRestoresPosition() {
+        var state = BrowserState.initial()
+        let ids = open(&state, a, b, c)
+        BrowserReducer.reduce(&state, .closeTab(ids[1]), env: env)
+        let result = BrowserReducer.reduce(&state, .reopenClosedTab, env: env)
+        #expect(state.activeSpace.today.count == 3)
+        #expect(state.activeSpace.today[1] == result.openedTabID)
+        #expect(state.tabs[result.openedTabID!]?.url == b)
+        #expect(state.closedTabs.isEmpty)
+    }
+
+    @Test func pinMovesBetweenSections() {
+        var state = BrowserState.initial()
+        let id = open(&state, a)[0]
+        BrowserReducer.reduce(&state, .togglePin(id), env: env)
+        #expect(state.activeSpace.pinned == [id])
+        #expect(state.activeSpace.today.isEmpty)
+        BrowserReducer.reduce(&state, .togglePin(id), env: env)
+        #expect(state.activeSpace.today == [id])
+    }
+
+    @Test func unknownTabIsIgnored() {
+        var state = BrowserState.initial()
+        let before = state
+        let result = BrowserReducer.reduce(&state, .closeTab(TabID("nope")), env: env)
+        #expect(!result.applied)
+        #expect(state == before)
+    }
+
+    @Test func spacesKeepTheirOwnSelection() {
+        var state = BrowserState.initial()
+        let personalTab = open(&state, a)[0]
+        let work = state.spaces[1].id
+        BrowserReducer.reduce(&state, .switchSpace(work), env: env)
+        #expect(state.selectedTabID == nil)
+        let workTab = open(&state, b)[0]
+        let result = BrowserReducer.reduce(&state, .switchSpace(state.spaces[0].id), env: env)
+        #expect(state.selectedTabID == personalTab)
+        #expect(result.effects == [.showTab(personalTab)])
+        #expect(state.spaces[1].selectedTabID == workTab)
+    }
+
+    @Test func deletingSpaceDiscardsItsPagesAndProfile() {
+        var state = BrowserState.initial()
+        let work = state.spaces[1].id
+        BrowserReducer.reduce(&state, .switchSpace(work), env: env)
+        let id = open(&state, a)[0]
+        let result = BrowserReducer.reduce(&state, .deleteSpace(work), env: env)
+        #expect(state.spaces.count == 1)
+        #expect(state.tabs[id] == nil)
+        #expect(result.effects.contains(.discardPage(id)))
+        #expect(result.effects.contains(.releaseSpace(work)))
+    }
+
+    @Test func pageUpdatesChangeMetadataWithoutEffects() {
+        var state = BrowserState.initial()
+        let id = open(&state, a)[0]
+        let result = BrowserReducer.reduce(&state, .pageDidUpdate(id, PageMetadata(url: b, title: "B")), env: env)
+        #expect(state.tabs[id]?.url == b)
+        #expect(state.tabs[id]?.title == "B")
+        #expect(result.effects.isEmpty)
+    }
+
+    @Test func archiveClosesIdleTodayTabsButNotPinnedOrSelected() {
+        var state = BrowserState.initial()
+        let ids = open(&state, a, b, c)
+        BrowserReducer.reduce(&state, .togglePin(ids[0]), env: env)
+        // Everything was last active at env.now(); archive anything idle since a later cutoff.
+        BrowserReducer.reduce(&state, .archiveTabs(idleSince: Date(timeIntervalSince1970: 2_000_000)), env: env)
+        #expect(state.tabs[ids[0]] != nil) // pinned
+        #expect(state.tabs[ids[1]] == nil)
+        #expect(state.tabs[ids[2]] != nil) // selected
+    }
+}
+
+@Suite struct OmniboxTests {
+    let omnibox = Omnibox()
+
+    @Test(arguments: [
+        ("example.com", "https://example.com"),
+        ("localhost:3000/x", "http://localhost:3000/x"),
+        ("192.168.1.2", "http://192.168.1.2"),
+        ("https://a.b/c?d=1", "https://a.b/c?d=1"),
+        ("about:blank", "about:blank"),
+    ])
+    func addresses(input: String, expected: String) {
+        #expect(omnibox.interpret(input) == .address(URL(string: expected)!))
+    }
+
+    @Test func searches() {
+        guard case let .search(text, url) = omnibox.interpret("how do skylights work") else {
+            Issue.record("expected a search")
+            return
+        }
+        #expect(text == "how do skylights work")
+        #expect(url.absoluteString == "https://www.google.com/search?q=how%20do%20skylights%20work")
+        #expect(omnibox.interpret("   ") == nil)
+        if case .address = omnibox.interpret("swift") { Issue.record("a single word is a search") }
+    }
+
+    @Test func queryCharactersAreEscaped() {
+        #expect(omnibox.searchURL(for: "a&b=c")?.absoluteString == "https://www.google.com/search?q=a%26b%3Dc")
+    }
+}
+
+@Suite struct HibernationTests {
+    let now = Date(timeIntervalSince1970: 10_000)
+
+    @Test func sleepsIdlePagesButNotProtectedOnes() {
+        let policy = HibernationPolicy(idleInterval: 60, maxAwake: 10)
+        let awake = [TabID("old"): now.addingTimeInterval(-120), TabID("new"): now, TabID("sel"): now.addingTimeInterval(-500)]
+        let asleep = policy.pagesToSleep(awake: awake, protected: [TabID("sel")], now: now)
+        #expect(asleep == [TabID("old")])
+    }
+
+    @Test func evictsLeastRecentlyUsedBeyondLimit() {
+        let policy = HibernationPolicy(idleInterval: 3600, maxAwake: 2)
+        let awake = (0..<4).reduce(into: [TabID: Date]()) { $0[TabID("t\($1)")] = now.addingTimeInterval(Double(-$1)) }
+        let asleep = Set(policy.pagesToSleep(awake: awake, protected: [], now: now))
+        #expect(asleep == [TabID("t2"), TabID("t3")])
+    }
+}
+
+@Suite struct PersistenceTests {
+    @Test func roundTripsThroughDisk() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = JSONFileStateStore(fileURL: dir.appending(path: "state.json"))
+        var state = BrowserState.initial()
+        _ = BrowserReducer.reduce(&state, .openTab(a), env: environment())
+        try store.save(state)
+        #expect(try store.load() == state)
+    }
+
+    @Test func missingFileLoadsNil() throws {
+        let store = JSONFileStateStore(fileURL: URL(fileURLWithPath: "/nonexistent/\(UUID())/state.json"))
+        #expect(try store.load() == nil)
+    }
+
+    @Test @MainActor func storeSavesAfterChanges() async throws {
+        let persistence = InMemoryStateStore()
+        let store = BrowserStore(persistence: persistence, saveDelay: .milliseconds(10))
+        store.send(.openTab(a))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(try persistence.load()?.tabs.count == 1)
+    }
+}
+
+@Suite struct JSONValueTests {
+    @Test func parsesAndSerializes() throws {
+        let value = try JSONValue.parse(#"{"a":[1,true,null,"x"],"b":{"c":2.5}}"#)
+        #expect(value["a"]?.arrayValue?.count == 4)
+        #expect(value["b"]?["c"]?.doubleValue == 2.5)
+        #expect(try JSONValue.parse(value.serialized()) == value)
+    }
+
+    @Test func jsLiteralEscapes() {
+        #expect(JSONValue.jsLiteral("a\"b\n</script>") .contains("\\\""))
+        #expect(!JSONValue.jsLiteral("line\nbreak").contains("\n"))
+    }
+}

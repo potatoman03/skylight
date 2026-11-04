@@ -1,0 +1,176 @@
+import Foundation
+import Observation
+import SkylightAgent
+import SkylightCore
+import SkylightEngine
+
+/// Something waiting on the user: a site permission, a page dialog, or an agent action.
+public enum Prompt: Identifiable {
+    case permission(TabID, PermissionRequest)
+    case dialog(TabID, DialogRequest)
+    case approval(AgentApproval)
+
+    public var id: String {
+        switch self {
+        case let .permission(_, r): "permission-\(r.id)"
+        case let .dialog(_, r): "dialog-\(r.id)"
+        case let .approval(a): "approval-\(a.id)"
+        }
+    }
+
+    /// The tab the prompt belongs to; nil for agent approvals, which show over any tab.
+    public var tabID: TabID? {
+        switch self {
+        case let .permission(id, _), let .dialog(id, _): id
+        case .approval: nil
+        }
+    }
+}
+
+public struct AgentApproval: Identifiable, Sendable {
+    public let id = UUID()
+    public let client: String
+    public let tool: ToolDefinition
+    public let summary: String
+}
+
+/// Queues prompts and resolves them. The UI shows the first prompt for the visible tab, plus any
+/// agent approval.
+@MainActor
+@Observable
+public final class PromptCenter: ApprovalProvider {
+    public private(set) var prompts: [Prompt] = []
+
+    /// Origin + permission kind → the user's answer, for this run of the app.
+    @ObservationIgnored private var permissionAnswers: [String: Bool] = [:]
+    /// Agents the user allowed to act without asking, for this run of the app.
+    public private(set) var trustedClients: Set<String> = []
+    @ObservationIgnored private var approvalContinuations: [UUID: CheckedContinuation<Bool, Never>] = [:]
+
+    public init() {}
+
+    public func prompt(for tab: TabID?) -> Prompt? {
+        prompts.first { $0.tabID == nil } ?? prompts.first { $0.tabID != nil && $0.tabID == tab }
+    }
+
+    // MARK: Permissions
+
+    public func enqueue(_ request: PermissionRequest, tab: TabID) {
+        let keys = request.kinds.map { "\(request.origin)|\($0.rawValue)" }
+        let answers = keys.compactMap { permissionAnswers[$0] }
+        if answers.count == keys.count, !keys.isEmpty {
+            request.respond(answers.allSatisfy { $0 })
+            return
+        }
+        prompts.append(.permission(tab, request))
+    }
+
+    public func answer(permission request: PermissionRequest, allow: Bool, remember: Bool) {
+        if remember { for kind in request.kinds { permissionAnswers["\(request.origin)|\(kind.rawValue)"] = allow } }
+        request.respond(allow)
+        prompts.removeAll { $0.id == "permission-\(request.id)" }
+    }
+
+    // MARK: Dialogs
+
+    public func enqueue(_ request: DialogRequest, tab: TabID) {
+        prompts.append(.dialog(tab, request))
+    }
+
+    public func answer(dialog request: DialogRequest, ok: Bool, text: String = "") {
+        request.respond(ok, text)
+        prompts.removeAll { $0.id == "dialog-\(request.id)" }
+    }
+
+    // MARK: Agent approvals
+
+    public func approve(tool: ToolDefinition, arguments: JSONValue, client: AgentClient) async -> Bool {
+        if trustedClients.contains(client.name) { return true }
+        let approval = AgentApproval(client: client.name, tool: tool, summary: Self.describe(tool: tool, arguments: arguments))
+        // Agents give up on slow calls; don't leave a stale card behind.
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.approvalTimeout)
+            self?.answer(approval: approval, allow: false)
+        }
+        return await withCheckedContinuation { continuation in
+            approvalContinuations[approval.id] = continuation
+            prompts.append(.approval(approval))
+        }
+    }
+
+    static let approvalTimeout: Duration = .seconds(120)
+
+    public func answer(approval: AgentApproval, allow: Bool, trustClient: Bool = false) {
+        if allow && trustClient { trustedClients.insert(approval.client) }
+        prompts.removeAll { $0.id == "approval-\(approval.id)" }
+        approvalContinuations.removeValue(forKey: approval.id)?.resume(returning: allow)
+    }
+
+    public func revokeTrust() { trustedClients.removeAll() }
+
+    /// Drops prompts for a tab that closed, answering them negatively.
+    public func dismissAll(for tab: TabID) {
+        for prompt in prompts where prompt.tabID == tab {
+            switch prompt {
+            case let .permission(_, r): r.respond(false)
+            case let .dialog(_, r): r.respond(false, "")
+            case .approval: break
+            }
+        }
+        prompts.removeAll { $0.tabID == tab }
+    }
+
+    static func describe(tool: ToolDefinition, arguments: JSONValue) -> String {
+        let a = arguments
+        switch tool.name {
+        case "open_tab": return "Open \(a["url"]?.stringValue ?? a["query"]?.stringValue ?? "a new tab")"
+        case "navigate": return "Go to \(a["url"]?.stringValue ?? "a page")"
+        case "close_tab": return "Close a tab"
+        case "click": return "Click element \(a["ref"]?.stringValue ?? "?") on the page"
+        case "type_text": return "Type “\(String((a["text"]?.stringValue ?? "").prefix(80)))”"
+        default: return tool.description
+        }
+    }
+}
+
+/// Short-lived messages ("Downloaded report.pdf").
+@MainActor
+@Observable
+public final class ToastCenter {
+    public struct Toast: Identifiable, Equatable {
+        public let id = UUID()
+        public let symbol: String
+        public let message: String
+        public var action: String?
+        public static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
+    }
+
+    public private(set) var current: Toast?
+    @ObservationIgnored private var actions: [UUID: @MainActor () -> Void] = [:]
+    @ObservationIgnored private var dismissTask: Task<Void, Never>?
+
+    public init() {}
+
+    public func show(_ message: String, symbol: String = "checkmark.circle", action: (title: String, run: @MainActor () -> Void)? = nil) {
+        let toast = Toast(symbol: symbol, message: message, action: action?.title)
+        actions = action.map { [toast.id: $0.run] } ?? [:]
+        current = toast
+        dismissTask?.cancel()
+        dismissTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.dismiss()
+        }
+    }
+
+    public func runAction() {
+        guard let current, let run = actions[current.id] else { return }
+        run()
+        dismiss()
+    }
+
+    public func dismiss() {
+        current = nil
+        actions = [:]
+    }
+}
