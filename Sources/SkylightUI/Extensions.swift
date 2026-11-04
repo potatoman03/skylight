@@ -94,9 +94,13 @@ private struct ExtensionList: View {
             .scrollContentBackground(.hidden)
             .frame(height: min(CGFloat(max(service.enabled.count, 1)) * 32 + 40, 360))
             Divider()
-            Button("Manage Extensions…") { browser.openSettings("extensions") }
-                .buttonStyle(.borderless)
-                .padding(12)
+            HStack {
+                Button("Find Extensions…") { browser.store.send(.openTab(WebStore.homeURL)) }
+                Spacer()
+                Button("Manage…") { browser.openSettings("extensions") }
+            }
+            .buttonStyle(.borderless)
+            .padding(12)
         }
         .frame(width: 280)
     }
@@ -214,6 +218,7 @@ struct HostedPageView: NSViewRepresentable {
 struct ExtensionSettings: View {
     @Environment(Browser.self) private var browser
     @State private var storeLink = ""
+    @State private var search = ""
 
     var body: some View {
         @Bindable var prefs = browser.preferences
@@ -224,14 +229,36 @@ struct ExtensionSettings: View {
                     .foregroundStyle(.orange)
             }
             Section {
-                if service.installed.isEmpty {
-                    Text("No extensions yet.").foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search the Chrome Web Store", text: $search)
+                        .textFieldStyle(.plain)
+                        .onSubmit { openStore(WebStore.searchURL(for: search)) }
+                    Button(search.trimmingCharacters(in: .whitespaces).isEmpty ? "Browse" : "Search") {
+                        openStore(WebStore.searchURL(for: search))
+                    }
                 }
-                ForEach(service.installed) { ext in
-                    InstalledExtensionRow(ext: ext)
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ForEach(SuggestedExtension.picks) { pick in
+                        SuggestedExtensionCard(pick: pick, view: { openStore(WebStore.detailURL(for: pick.id)) })
+                    }
                 }
+                .padding(.vertical, 4)
             } header: {
-                Text("Installed")
+                Text("Find Extensions")
+            } footer: {
+                Text("On any extension's page in the Chrome Web Store, Add to Skylight shows in the toolbar.")
+            }
+            .disabled(!service.isAvailable)
+
+            if !service.installed.isEmpty {
+                Section {
+                    ForEach(service.installed) { ext in
+                        InstalledExtensionRow(ext: ext)
+                    }
+                } header: {
+                    Text("Installed")
+                }
             }
 
             Section {
@@ -248,11 +275,8 @@ struct ExtensionSettings: View {
                     Text("Unpacked folder")
                     Text("An extension you're building, or one you downloaded and unzipped")
                 }
-                LabeledContent("Chrome Web Store") {
-                    Button("Open") { browser.store.send(.openTab(URL(string: "https://chromewebstore.google.com/category/extensions")!)) }
-                }
             } header: {
-                Text("Add")
+                Text("Other Ways to Add")
             } footer: {
                 Text("Extensions run in your default profile, so Spaces on other profiles don't load them.")
             }
@@ -271,6 +295,12 @@ struct ExtensionSettings: View {
         .formStyle(.grouped)
     }
 
+    /// Opens the store in a tab and puts the browser in front of Settings.
+    private func openStore(_ url: URL) {
+        browser.store.send(.openTab(url))
+        NSApp.keyWindow?.performClose(nil)
+    }
+
     private func installFromStore() {
         let link = storeLink
         guard WebStore.extensionID(from: link) != nil else { return }
@@ -286,6 +316,95 @@ struct ExtensionSettings: View {
         panel.message = "Choose a folder with a manifest.json"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { await browser.extensions.install(folder: url) }
+    }
+}
+
+/// A few well-known extensions, to get going without searching.
+struct SuggestedExtension: Identifiable {
+    let id: String
+    let name: String
+    let blurb: String
+    let symbol: String
+    let tint: Color
+
+    static let picks: [SuggestedExtension] = [
+        .init(id: "ddkjiahejlhfcafbddmgiahcphecmpfh", name: "uBlock Origin Lite", blurb: "Blocks ads and trackers", symbol: "shield.lefthalf.filled", tint: .red),
+        .init(id: "nngceckbapebfimnlniiiahkandclblb", name: "Bitwarden", blurb: "Password manager", symbol: "lock.shield", tint: .blue),
+        .init(id: "aeblfdkhhhdcdjpifhhbdiojplfjncoa", name: "1Password", blurb: "Password manager", symbol: "key.horizontal", tint: .indigo),
+        .init(id: "eimadpbcbfnmbkopoojfekhnkhdbieeh", name: "Dark Reader", blurb: "Dark mode for every site", symbol: "moon.stars", tint: .gray),
+        .init(id: "dbepggeogbaibhgnhhndojpepiihcmeb", name: "Vimium", blurb: "Browse with the keyboard", symbol: "keyboard", tint: .green),
+        .init(id: "kbfnbcaeplbcioakkpcpgfkobkghlhen", name: "Grammarly", blurb: "Writing help as you type", symbol: "text.badge.checkmark", tint: .teal),
+        .init(id: "mnjggcdmjocbbbhaepdhchncahnbgone", name: "SponsorBlock", blurb: "Skips sponsor segments on YouTube", symbol: "forward.end", tint: .orange),
+        .init(id: "fmkadmapgofadopljbjfkapdkoienihi", name: "React Developer Tools", blurb: "Inspect React apps", symbol: "chevron.left.forwardslash.chevron.right", tint: .cyan),
+    ]
+}
+
+private struct SuggestedExtensionCard: View {
+    let pick: SuggestedExtension
+    let view: () -> Void
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        let service = browser.extensions
+        let installed = service.installed.contains { $0.id == pick.id }
+        HStack(spacing: 10) {
+            Group {
+                if installed {
+                    ExtensionIcon(id: pick.id, size: 30)
+                } else {
+                    Image(systemName: pick.symbol)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(pick.tint.gradient, in: .rect(cornerRadius: 8, style: .continuous))
+                }
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Button(action: view) { Text(pick.name).lineLimit(1) }
+                    .buttonStyle(.plain)
+                    .help("Open its page in the Chrome Web Store")
+                Text(pick.blurb).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            StoreAddButton(id: pick.id, compact: true)
+        }
+        .padding(10)
+        .background(.background.opacity(0.6), in: .rect(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.primary.opacity(0.06)))
+    }
+}
+
+/// Adds an extension from the store in one click, showing when it's on its way and when it's in.
+struct StoreAddButton: View {
+    let id: String
+    var compact = false
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        let service = browser.extensions
+        let installed = service.installed.contains { $0.id == id }
+        let busy = service.busy.contains(id)
+        Button {
+            Task { await service.install(fromStore: id) }
+        } label: {
+            HStack(spacing: 5) {
+                if busy {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: installed ? "checkmark" : "plus").font(.system(size: 10, weight: .bold))
+                }
+                Text(installed ? (compact ? "Added" : "Added to Skylight") : busy ? "Adding…" : (compact ? "Add" : "Add to Skylight"))
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .padding(.horizontal, compact ? 9 : 11)
+            .frame(height: compact ? 24 : 26)
+            .foregroundStyle(installed || busy ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
+            .background(installed || busy ? AnyShapeStyle(.quinary) : AnyShapeStyle(Color.accentColor), in: .capsule)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .disabled(installed || busy || !service.isAvailable)
+        .animation(Motion.resolved(Motion.feedback), value: installed || busy)
     }
 }
 

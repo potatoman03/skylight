@@ -1,6 +1,7 @@
 import AppKit
 import SkylightBrowser
 import SkylightCore
+import SkylightKit
 import SwiftUI
 
 /// The whole window, laid out like Safari's: a source-list sidebar, the page, and one unified
@@ -99,6 +100,14 @@ private struct BrowserToolbar: ToolbarContent {
 
         // Extension buttons and New Tab keep to the window's right edge, however wide it is.
         ToolbarSpacer(.flexible)
+
+        // On an extension's page in the Chrome Web Store, whose own button only works in Chrome.
+        if let id = browser.store.state.selectedTab.flatMap({ WebStore.extensionID(from: $0.url.absoluteString) }), browser.extensions.isAvailable {
+            ToolbarItem(placement: .primaryAction) {
+                StoreAddButton(id: id)
+            }
+            .sharedBackgroundVisibility(.hidden)
+        }
 
         if browser.preferences.extensionPlacement.showsButtons, !browser.extensions.toolbar.isEmpty {
             ToolbarItem(placement: .primaryAction) {

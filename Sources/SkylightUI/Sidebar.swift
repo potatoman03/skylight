@@ -545,7 +545,8 @@ private struct TabRow: View {
             }
             Spacer(minLength: 0)
             MediaBadge(tab: tab.id)
-            if hovering {
+            // Not while renaming, and not on a pinned tab that's already asleep: there'd be nothing to do.
+            if hovering, !editing, kind == .today || status.isAwake {
                 Button {
                     animate(Motion.travel) { _ = browser.store.send(.closeTab(tab.id)) }
                 } label: {

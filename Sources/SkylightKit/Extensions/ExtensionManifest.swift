@@ -186,6 +186,13 @@ public enum WebStore {
         URL(string: "https://chromewebstore.google.com/detail/\(id)")!
     }
 
+    public static let homeURL = URL(string: "https://chromewebstore.google.com/category/extensions")!
+
+    public static func searchURL(for query: String) -> URL {
+        let term = query.trimmingCharacters(in: .whitespaces).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+        return term.isEmpty ? homeURL : URL(string: "https://chromewebstore.google.com/search/\(term)")!
+    }
+
     /// The update service's direct download of the current CRX.
     public static func downloadURL(for id: String, chromeVersion: String) -> URL {
         var components = URLComponents(string: "https://clients2.google.com/service/update2/crx")!
