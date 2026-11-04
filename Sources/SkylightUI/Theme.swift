@@ -19,15 +19,6 @@ enum Theme {
         return scheme == .dark ? Color(hue: h, saturation: 0.45, brightness: 1) : Color(hue: h, saturation: 0.75, brightness: 0.62)
     }
 
-    /// Shadows take the sky's color, so nothing gets a grey halo.
-    static func shadow(_ palette: ThemePalette, _ scheme: ColorScheme) -> Color {
-        guard scheme == .light else { return .black.opacity(0.35) }
-        let sky = palette.sky.hsv
-        return Color(hue: sky.h, saturation: min(0.6, sky.s * 1.4), brightness: 0.45).opacity(0.16)
-    }
-
-    static let cardRadius: CGFloat = 12
-    static let rowRadius: CGFloat = 10
 }
 
 extension Color {
@@ -38,60 +29,6 @@ extension RGB {
     init(_ color: Color) {
         let c = NSColor(color).usingColorSpace(.sRGB) ?? .white
         self.init(Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent))
-    }
-}
-
-extension EnvironmentValues {
-    /// The colors of the theme on screen, for the active Space and appearance.
-    @Entry var palette: ThemePalette = SkyTheme.standard.light
-}
-
-/// Surfaces on the sky: frosted white in the day, faint light at night, with a hairline of light
-/// on the edge instead of a dark border.
-enum Surface {
-    case selected, hover, resting, field
-
-    func fill(_ scheme: ColorScheme) -> Color {
-        let dark = scheme == .dark
-        switch self {
-        case .selected: return .white.opacity(dark ? 0.15 : 0.78)
-        case .hover: return .white.opacity(dark ? 0.08 : 0.42)
-        case .resting: return .white.opacity(dark ? 0.06 : 0.4)
-        case .field: return .white.opacity(dark ? 0.09 : 0.6)
-        }
-    }
-
-    func edge(_ scheme: ColorScheme) -> Color {
-        switch self {
-        case .selected, .field: .white.opacity(scheme == .dark ? 0.14 : 0.9)
-        case .hover, .resting: .white.opacity(scheme == .dark ? 0.06 : 0.5)
-        }
-    }
-}
-
-struct SurfaceBackground: ViewModifier {
-    let surface: Surface?
-    var radius: CGFloat = Theme.rowRadius
-    var lifted = false
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.palette) private var palette
-
-    func body(content: Content) -> some View {
-        content.background {
-            if let surface {
-                let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-                // The theme's glass makes surfaces clearer or more solid.
-                shape.fill(surface.fill(scheme).opacity(min(1.6, palette.glass)))
-                    .overlay(shape.strokeBorder(surface.edge(scheme), lineWidth: 0.75))
-                    .shadow(color: lifted ? .black.opacity(scheme == .dark ? 0.25 : 0.06) : .clear, radius: 3, y: 1)
-            }
-        }
-    }
-}
-
-extension View {
-    func surface(_ surface: Surface?, radius: CGFloat = Theme.rowRadius, lifted: Bool = false) -> some View {
-        modifier(SurfaceBackground(surface: surface, radius: radius, lifted: lifted))
     }
 }
 

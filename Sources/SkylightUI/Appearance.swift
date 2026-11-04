@@ -136,91 +136,65 @@ struct AppearanceSettings: View {
         let hue = browser.store.state.activeSpace.hue
         let current = prefs.theme(prefs.themeID) ?? .standard
 
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                SettingsBlock("Mode") {
-                    HStack(spacing: 14) {
-                        ForEach(Preferences.Appearance.allCases) { mode in
-                            ModeCard(mode: mode, theme: current, hue: hue, selected: prefs.appearance == mode) {
-                                prefs.appearance = mode
-                            }
-                        }
-                    }
+        Form {
+            Section {
+                Picker("Appearance", selection: $prefs.appearance) {
+                    ForEach(Preferences.Appearance.allCases) { Text($0.name).tag($0) }
                 }
-
-                SettingsBlock("Theme", note: "Changes every Space. A Space can have its own theme from its menu or Spaces settings.") {
-                    ThemeGallery(themes: prefs.themes, selectedID: prefs.themeID, hue: hue, select: { theme in
-                        animate(Motion.swap) { prefs.themeID = theme.id }
-                    }, create: { newTheme(from: current) })
-                }
-
-                ThemeEditor(theme: current, hue: hue, duplicate: { newTheme(from: current) })
-
-                SettingsBlock("Interface") {
-                    VStack(spacing: 0) {
-                        SettingsRow("Light through the sky") { Toggle("", isOn: $prefs.godRays).toggleStyle(.switch).controlSize(.small).labelsHidden() }
-                        Divider()
-                        SettingsRow("Tab rows") {
-                            Picker("", selection: $prefs.density) {
-                                ForEach(Preferences.Density.allCases) { Text($0.name).tag($0) }
-                            }
-                            .pickerStyle(.segmented).labelsHidden().frame(width: 260)
-                        }
-                        Divider()
-                        SettingsRow("Page corners") {
-                            HStack {
-                                Slider(value: $prefs.cornerRadius, in: 0...22, step: 1).frame(width: 200)
-                                Text("\(Int(prefs.cornerRadius)) pt").monospacedDigit().foregroundStyle(.secondary).frame(width: 40)
-                            }
-                        }
-                    }
-                    .settingsCard()
-                }
-
-                SettingsBlock("Sidebar", note: "The Space's tabs and the Space switcher always show.") {
-                    VStack(spacing: 0) {
-                        ForEach(Array(Preferences.SidebarItem.allCases.enumerated()), id: \.element) { i, item in
-                            if i > 0 { Divider() }
-                            SettingsRow(item.name) {
-                                Toggle("", isOn: Binding(get: { prefs.shows(item) },
-                                                         set: { on in animate(Motion.swap) { prefs.setShows(item, on) } }))
-                                    .toggleStyle(.switch).controlSize(.small).labelsHidden()
-                            }
-                        }
-                        Divider()
-                        SettingsRow("Hide the whole sidebar") { Toggle("", isOn: $prefs.sidebarCollapsed).toggleStyle(.switch).controlSize(.small).labelsHidden() }
-                    }
-                    .settingsCard()
-                }
-
-                SettingsBlock("Split View", note: "Drag a tab onto the page to split it. Drag a pane's grip to move it, or a divider to resize.") {
-                    VStack(spacing: 0) {
-                        SettingsRow("Space between panes") {
-                            HStack {
-                                Slider(value: $prefs.splitGap, in: 0...16, step: 1).frame(width: 200)
-                                Text("\(Int(prefs.splitGap)) pt").monospacedDigit().foregroundStyle(.secondary).frame(width: 40)
-                            }
-                        }
-                        Divider()
-                        SettingsRow("Outline the focused pane") { Toggle("", isOn: $prefs.highlightFocusedPane).toggleStyle(.switch).controlSize(.small).labelsHidden() }
-                    }
-                    .settingsCard()
-                }
-
-                SettingsBlock("Media", note: "Picture in Picture: ⌥⌘P, or from a playing tab's menu.") {
-                    VStack(spacing: 0) {
-                        SettingsRow("Show sound controls on tabs") { Toggle("", isOn: $prefs.showMediaControls).toggleStyle(.switch).controlSize(.small).labelsHidden() }
-                        Divider()
-                        SettingsRow("Picture in Picture when you leave a playing video") {
-                            Toggle("", isOn: $prefs.autoPictureInPicture).toggleStyle(.switch).controlSize(.small).labelsHidden()
-                        }
-                    }
-                    .settingsCard()
-                }
+                .pickerStyle(.segmented)
             }
-            .padding(20)
-            .padding(.bottom, 20)
+
+            Section {
+                Picker("Tab rows", selection: $prefs.density) {
+                    ForEach(Preferences.Density.allCases) { Text($0.name).tag($0) }
+                }
+                ForEach(Preferences.SidebarItem.choices, id: \.self) { item in
+                    Toggle(item.name, isOn: Binding(get: { prefs.shows(item) }, set: { prefs.setShows(item, $0) }))
+                }
+                Toggle("Hide the sidebar", isOn: $prefs.sidebarCollapsed)
+            } header: {
+                Text("Sidebar")
+            } footer: {
+                Text("The Space's tabs and the Space switcher always show.")
+            }
+
+            Section {
+                Toggle("Outline the focused pane", isOn: $prefs.highlightFocusedPane)
+            } header: {
+                Text("Split View")
+            } footer: {
+                Text("Drag a tab onto the page to split it. Drag a pane's grip to move it, or a divider to resize.")
+            }
+
+            Section {
+                Toggle("Show sound controls on tabs", isOn: $prefs.showMediaControls)
+                Toggle("Picture in Picture when you leave a playing video", isOn: $prefs.autoPictureInPicture)
+            } header: {
+                Text("Media")
+            } footer: {
+                Text("Picture in Picture: ⌥⌘P.")
+            }
+
+            Section {
+                Toggle("Sky behind the sidebar", isOn: $prefs.skyBackdrop)
+                if prefs.skyBackdrop {
+                    Toggle("Light through the sky", isOn: $prefs.godRays)
+                    ThemeGallery(themes: prefs.themes, selectedID: prefs.themeID, hue: hue, compact: true, select: { theme in
+                        prefs.themeID = theme.id
+                    }, create: { newTheme(from: current) })
+                    .padding(.vertical, 4)
+                }
+            } header: {
+                Text("Sky")
+            } footer: {
+                Text("A Space can have its own sky from its settings in Spaces.")
+            }
+
+            if prefs.skyBackdrop {
+                ThemeEditor(theme: current, duplicate: { newTheme(from: current) })
+            }
         }
+        .formStyle(.grouped)
     }
 
     private func newTheme(from base: SkyTheme) {
@@ -228,92 +202,38 @@ struct AppearanceSettings: View {
         copy.id = UUID().uuidString
         copy.name = base.isPreset ? "My \(base.name)" : "\(base.name) copy"
         let saved = browser.preferences.saveTheme(copy)
-        animate(Motion.swap) { browser.preferences.themeID = saved.id }
+        browser.preferences.themeID = saved.id
     }
 }
 
-/// Light, Dark or System, each shown in the current theme.
-private struct ModeCard: View {
-    let mode: Preferences.Appearance
-    let theme: SkyTheme
-    let hue: Double
-    let selected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 6) {
-                let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-                Group {
-                    switch mode {
-                    case .light: ThemePreview(theme: theme, dark: false, hue: hue)
-                    case .dark: ThemePreview(theme: theme, dark: true, hue: hue)
-                    case .system:
-                        ZStack {
-                            ThemePreview(theme: theme, dark: false, hue: hue)
-                            ThemePreview(theme: theme, dark: true, hue: hue).mask(HStack(spacing: 0) { Color.clear; Color.black })
-                        }
-                    }
-                }
-                .frame(width: 132, height: 76)
-                .clipShape(shape)
-                .overlay(shape.strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
-                .overlay(shape.inset(by: -3).strokeBorder(.tint, lineWidth: 2).opacity(selected ? 1 : 0))
-                Text(mode.name).font(.system(size: 12, weight: selected ? .semibold : .regular)).padding(.leading, 2)
-            }
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-/// Edits a theme of your own in place, live. Presets offer to make an editable copy.
+/// Edits a sky of your own in place, live. Built-in ones offer to make an editable copy.
 private struct ThemeEditor: View {
     let theme: SkyTheme
-    let hue: Double
     let duplicate: () -> Void
     @Environment(Browser.self) private var browser
     @State private var showAdvanced = false
 
     var body: some View {
-        SettingsBlock("Customize \(theme.name)") {
-            if theme.isPreset {
-                HStack {
-                    Text("Built-in themes can't be changed. Make a copy to choose your own colors.")
-                        .foregroundStyle(.secondary)
-                    Spacer()
+        if theme.isPreset {
+            Section("Customize \(theme.name)") {
+                LabeledContent("Built-in skies can't be changed.") {
                     Button("Customize…", action: duplicate)
                 }
-                .padding(14)
-                .settingsCard()
-            } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    SettingsRow("Name") {
-                        TextField("", text: binding(\.name)).textFieldStyle(.roundedBorder).frame(width: 220)
-                    }
-                    Divider()
-                    SettingsRow("Follow each Space's color", note: "Colors turn to match whichever Space is showing.") {
-                        Toggle("", isOn: binding(\.followsSpace)).toggleStyle(.switch).controlSize(.small).labelsHidden()
-                    }
-                    Divider()
-                    HStack(alignment: .top, spacing: 0) {
-                        PaletteEditor(title: "Light", palette: binding(\.light), advanced: showAdvanced)
-                        Divider()
-                        PaletteEditor(title: "Dark", palette: binding(\.dark), advanced: showAdvanced)
-                    }
-                    Divider()
-                    HStack {
-                        Button(showAdvanced ? "Fewer Colors" : "More Colors") { animate(Motion.swap) { showAdvanced.toggle() } }
-                            .buttonStyle(.link)
-                        Spacer()
-                        Button("Duplicate", action: duplicate)
-                        Button("Delete", role: .destructive) {
-                            animate(Motion.swap) { browser.preferences.deleteTheme(theme.id) }
-                        }
-                    }
-                    .padding(12)
+            }
+        } else {
+            Section("Customize \(theme.name)") {
+                TextField("Name", text: binding(\.name))
+                Toggle("Follow each Space's color", isOn: binding(\.followsSpace))
+                Toggle("More colors", isOn: $showAdvanced)
+            }
+            PaletteEditor(title: "Light", palette: binding(\.light), advanced: showAdvanced)
+            PaletteEditor(title: "Dark", palette: binding(\.dark), advanced: showAdvanced)
+            Section {
+                HStack {
+                    Spacer()
+                    Button("Duplicate", action: duplicate)
+                    Button("Delete Sky", role: .destructive) { browser.preferences.deleteTheme(theme.id) }
                 }
-                .settingsCard()
             }
         }
     }
@@ -334,143 +254,23 @@ private struct PaletteEditor: View {
     let advanced: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+        Section(title) {
             color("Sky", \.sky)
             color("Horizon", \.horizon)
             color("Accent", \.accent)
             if advanced {
                 color("Glow", \.glow)
                 color("Sunlight", \.sunlight)
-                slider("Light", \.rays, 0...1)
-                slider("Glass", \.glass, 0.4...1.4)
+                Slider(value: $palette.rays, in: 0...1) { Text("Light") }
+                Slider(value: $palette.glass, in: 0.4...1.4) { Text("Glass") }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func color(_ name: String, _ path: WritableKeyPath<ThemePalette, RGB>) -> some View {
-        HStack {
-            Text(name)
-            Spacer()
-            Text(palette[keyPath: path].hex).font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary)
-            ColorPicker("", selection: Binding(get: { Color(palette[keyPath: path]) },
-                                               set: { palette[keyPath: path] = RGB($0) }), supportsOpacity: false)
-                .labelsHidden()
+        ColorPicker(selection: Binding(get: { Color(palette[keyPath: path]) }, set: { palette[keyPath: path] = RGB($0) }),
+                    supportsOpacity: false) {
+            LabeledContent(name, value: palette[keyPath: path].hex)
         }
-    }
-
-    private func slider(_ name: String, _ path: WritableKeyPath<ThemePalette, Double>, _ range: ClosedRange<Double>) -> some View {
-        HStack {
-            Text(name)
-            Spacer()
-            Slider(value: Binding(get: { palette[keyPath: path] }, set: { palette[keyPath: path] = $0 }), in: range)
-                .frame(width: 120)
-        }
-    }
-}
-
-// MARK: - Quick theme popover
-
-/// The paintbrush in the sidebar: pick a theme and mode without leaving the page.
-struct QuickThemePanel: View {
-    @Environment(Browser.self) private var browser
-
-    var body: some View {
-        @Bindable var prefs = browser.preferences
-        let space = browser.store.state.activeSpace
-        let own = space.themeID != nil
-        VStack(alignment: .leading, spacing: 14) {
-            Picker("", selection: $prefs.appearance) {
-                ForEach(Preferences.Appearance.allCases) { Text($0.name).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            Picker("", selection: Binding(get: { own }, set: { onlyHere in
-                animate(Motion.swap) {
-                    _ = browser.store.send(.setSpaceTheme(space.id, onlyHere ? (space.themeID ?? prefs.themeID) : nil))
-                }
-            })) {
-                Text("All Spaces").tag(false)
-                Text("Only \(space.name)").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            ThemeGallery(themes: prefs.themes, selectedID: own ? space.themeID : prefs.themeID, hue: space.hue,
-                         compact: true) { theme in
-                animate(Motion.swap) {
-                    if own { _ = browser.store.send(.setSpaceTheme(space.id, theme.id)) } else { prefs.themeID = theme.id }
-                }
-            }
-
-            HStack {
-                Toggle("Light through the sky", isOn: $prefs.godRays).toggleStyle(.switch).controlSize(.mini)
-                Spacer()
-                Button("More…") { browser.openSettings("appearance") }.buttonStyle(.link)
-            }
-            .font(.system(size: 12))
-        }
-        .padding(14)
-        .frame(width: 330)
-    }
-}
-
-// MARK: - Layout helpers
-
-/// A titled group on a settings page.
-struct SettingsBlock<Content: View>: View {
-    let title: String
-    var note: String?
-    @ViewBuilder let content: Content
-
-    init(_ title: String, note: String? = nil, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.note = note
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .semibold))
-                if let note { Text(note).font(.system(size: 12)).foregroundStyle(.secondary) }
-            }
-            content
-        }
-    }
-}
-
-struct SettingsRow<Accessory: View>: View {
-    let title: String
-    var note: String?
-    @ViewBuilder let accessory: Accessory
-
-    init(_ title: String, note: String? = nil, @ViewBuilder accessory: () -> Accessory) {
-        self.title = title
-        self.note = note
-        self.accessory = accessory()
-    }
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                if let note { Text(note).font(.system(size: 11)).foregroundStyle(.secondary) }
-            }
-            Spacer()
-            accessory
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-}
-
-extension View {
-    func settingsCard() -> some View {
-        background(.primary.opacity(0.035), in: .rect(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.primary.opacity(0.07), lineWidth: 0.5))
     }
 }

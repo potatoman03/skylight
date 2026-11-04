@@ -2,8 +2,9 @@
 
 ![Skylight](docs/screenshot.png)
 
-An open-source browser for macOS in the spirit of Arc: a native SwiftUI shell with Liquid Glass,
-Spaces and a vertical sidebar, around Chromium (via CEF). Built to be light, easy to extend, and
+An open-source browser for macOS with Spaces and a vertical sidebar, around Chromium (via CEF). The
+shell is stock macOS: a source-list sidebar, one unified toolbar, a Settings window and system
+alerts, so it looks and behaves like Safari or Finder. Built to be light, easy to extend, and
 usable by AI agents as a first-class citizen.
 
 ## Build and run
@@ -20,7 +21,8 @@ The first run downloads CEF (~300 MB) into `Vendor/cef` and builds its C++ wrapp
 open build/Skylight.app
 ```
 
-`scripts/bundle.sh release` makes an optimized build. Tests: `swift test`.
+`scripts/bundle.sh release` makes an optimized build. Tests: `swift test`. The app icon is drawn in
+code: edit `scripts/make-icon.swift` and run it to regenerate `Resources/AppIcon.icns`.
 
 Data lives in `~/Library/Application Support/Skylight` (`state.json`, `preferences.json`, `Packages/`,
 `Engine/`, `mcp.json`). Set `SKYLIGHT_DATA_DIR` to run against another folder, and
@@ -30,13 +32,13 @@ Data lives in `~/Library/Application Support/Skylight` (`state.json`, `preferenc
 
 | | |
 |---|---|
-| ⌘T | Command bar: search, open a URL, switch to any tab, run commands |
+| ⌘T | New tab: the address field opens for a search, a URL, any open tab or a command |
 | ⌘L | Edit the current address |
 | ⌘W / ⌘⇧T | Close tab / reopen it |
 | ⌘D / ⌘⇧D | Pin the tab / add it to favorites |
 | ⌘⇧K | Clear Today |
-| ⌘S | Hide the sidebar (it slides back when the pointer touches the left edge) |
-| ⌘, | Settings (a page in the browser, `skylight://settings`) |
+| ⌘S | Show or hide the sidebar |
+| ⌘, | Settings |
 | ⌃Tab | Next tab |
 | ⌃1–9, ⌥⌘←/→ | Switch Space |
 | ⌘⇧N | New Space |
@@ -48,27 +50,27 @@ Data lives in `~/Library/Application Support/Skylight` (`state.json`, `preferenc
 | ⌥⌘I | Developer tools |
 
 The sidebar works like Arc's. **Favorites** at the top belong to every Space. Each Space has
-**pinned** tabs, then a line with **Clear**, then **Today**. Drag tabs between them: the rows part
-to show where a tab will land, favorites make room in their grid, holding a tab over a Space's
-button at the bottom switches to that Space so you can drop it there, and Escape cancels. Closing a
+**pinned** tabs, then **Today** (with **Clear**). Drag tabs between sections; the list shows an
+insertion line where a tab will land, and holding a tab over a Space's button at the bottom
+switches to that Space so you can drop it there. Links dragged in from a page or another app open
+where you drop them. Closing a
 pinned tab or favorite only unloads it; Delete in its menu removes it. Today tabs untouched for 12
 hours are archived (⌘⇧T brings them back; the time is in Settings). Pages you haven't looked at in
 20 minutes go to sleep and reload when you return.
 
 Each Space has a color, an icon and a **profile**. A profile is a cookie jar: Spaces on different
-profiles can be signed in to different accounts. In Settings → Profiles each profile is a card with
-its own icon and color; click a Space's chip to move it onto that profile.
+profiles can be signed in to different accounts. Settings → Profiles names them and gives each an
+icon and color; Settings → Spaces picks each Space's profile.
 
-**Themes.** The paintbrush at the bottom of the sidebar switches theme and light/dark in one click,
-for every Space or just the one you're in. Settings → Appearance has the gallery (Sky, Pastel and
-Vivid follow each Space's color; Paper, Graphite, Dusk, Forest, Ocean, Rosé and Aurora keep their
-own) and an editor for your own themes: sky, horizon and accent for light and dark, plus glow,
-sunlight, light strength and glass under More Colors. Edits apply live. The same page sets tab row
-density, page corner radius, and which parts of the sidebar show. `Theme: …` in the command bar
-switches too.
+**Appearance.** Skylight follows the system's light or dark mode (Settings → Appearance can fix
+it to one). The same page sets tab row size and which parts of the sidebar show. For something less
+plain, **Sky behind the sidebar** puts a painted sky behind the source list: Sky, Pastel and Vivid
+follow each Space's color; Paper, Graphite, Dusk, Forest, Ocean, Rosé and Aurora keep their own;
+and you can make your own (sky, horizon and accent for light and dark, plus glow, sunlight, light
+strength and glass under More colors). A Space can have its own sky in Settings → Spaces.
 
 **Passwords** live in your login Keychain. After you sign in somewhere new, Skylight offers to save
-the login; a key in the address bar fills a saved one when you pick it. Filling only happens from
+the login; a key in the address field fills a saved one when you pick it. Filling only happens from
 Skylight's own UI, and only into a page on the login's site. Settings → Passwords imports from
 Aside, Arc, Chrome, Dia, Brave, Edge and other Chromium browsers on this Mac (macOS asks before
 Skylight can read that browser's key), or from a CSV export (Chrome, Safari, 1Password, Bitwarden).
@@ -78,26 +80,26 @@ Copying and exporting ask for Touch ID or your password.
 favorites, or a Chromium browser's bookmarks: the bookmarks bar becomes favorites and each folder a
 Space, which is how Aside's sidebar folders come across.
 
-The sky behind everything is a small Metal shader: light falls through it, slowly, in the theme's
-colors. It runs at 30 fps only while the window is in front, and stops with Reduce Motion or when
+The sky is a small Metal shader: light falls through it, slowly, in the theme's colors. It runs at
+30 fps only while it's showing and the window is in front, and stops with Reduce Motion or when
 "Light through the sky" is off.
 
 **Split view.** Drag a tab onto the page and drop it on a side (the drop zone shows where it will
 go), or pick Open in Split View from a tab's menu, or press ⌃⌘N. Up to four panes go side by side or
-stacked; each is its own card on the sky. Drag a divider to resize (double-click it to make the panes
+stacked, with a hairline between them. Drag a divider to resize (double-click it to make the panes
 equal), drag a pane's grip to move it or pull it out of the split, and click a pane to focus it. The
-sidebar shows a split as one row; selecting any of its tabs shows them all. The gap between panes
-and the outline on the focused pane are in Settings → Appearance.
+sidebar shows a split as one row; selecting any of its tabs shows them all. The outline on the
+focused pane can be turned off in Settings → Appearance.
 
-**Picture in Picture.** ⌥⌘P (or a tab's menu, or the command bar) puts the page's main video in a
+**Picture in Picture.** ⌥⌘P (or a tab's menu, or the address field) puts the page's main video in a
 floating window. Leave a tab with a video playing and it follows you in Picture in Picture; come
 back and it returns to the page (Settings → Appearance → Media turns this off). Tabs playing sound
 show a speaker you can click to mute.
 
 **Chrome extensions.** Settings → Extensions installs from a Chrome Web Store link (or the Web
-Store button) or from an unpacked folder. Toolbar buttons sit in the address bar, in their own row
-under it, or behind the puzzle-piece menu (your choice in the same settings); right-click one to
-pin, unpin, open its options or remove it, and drag to reorder. Popups open as bubbles sized to
+Store button) or from an unpacked folder. Pinned extensions get a button in the toolbar; the rest
+are in the Extensions menu (puzzle piece) next to them, where you pin and unpin. Settings can put
+them all in the menu. Right-click a button to open its options or remove it. Popups open as bubbles sized to
 their content. Extensions get Chrome's tabs and windows API (`tabs.query`, `tabs.update`,
 `tabs.create`, `windows.getCurrent` and the rest), backed by Skylight's own tabs. They run in the
 default profile only, and badges and tab events (`tabs.onActivated`) aren't supported yet.
@@ -125,13 +127,13 @@ skylight.command('focus', () => document.body.classList.toggle('focus'));
 ```
 
 Saving a file reloads the package. CSS changes apply to open pages immediately; script changes
-apply on the next load. Commands show up in the command bar on matching sites. View → Boost This
+apply on the next load. Commands show up in the address field on matching sites. View → Boost This
 Site (⌘⇧B) creates a package for the current site and opens its stylesheet.
 
 ## Agents (MCP and WebMCP)
 
 Skylight runs a Model Context Protocol server on `127.0.0.1` (Streamable HTTP). Copy the connection
-command from the Skylight menu (or the command bar: "Copy Claude Code connection command"):
+command from the Skylight menu (or the address field: "Copy Claude Code connection command"):
 
 ```bash
 claude mcp add --transport http skylight http://127.0.0.1:47831/mcp --header "Authorization: Bearer <token>"
@@ -140,7 +142,7 @@ claude mcp add --transport http skylight http://127.0.0.1:47831/mcp --header "Au
 Tools: `list_tabs`, `open_tab`, `navigate`, `go_back`, `go_forward`, `reload`, `select_tab`,
 `close_tab`, `switch_space`, `read_page`, `click`, `type_text`, `scroll`, `call_site_tool`,
 `run_package_command`, `list_packages`. Reading is free; anything that changes something shows an
-approval card first ("Allow for This Session" skips the card for that agent until you quit).
+approval alert first ("Allow for This Session" skips it for that agent until you quit).
 
 Sites can offer their own tools through **WebMCP** (`navigator.modelContext`, the W3C community
 group draft). Skylight provides the API in every page and forwards registered tools to agents: the
@@ -205,9 +207,10 @@ SkylightHelper: Chromium's sub-process executable.
 - **Tabs are not pages.** A tab is a saved place; a page is a live engine object that exists only
   while the tab is awake. Pages are created lazily and put to sleep by `HibernationPolicy`.
 - **The engine is swappable.** Only `SkylightCEF` and `CEFBridge` know about Chromium.
-- **Motion follows a few rules** (`SkylightUI/Motion.swift`): nothing pops, one object makes one
-  trip (the command bar is the URL pill, grown), neighbors make room, feedback is fast, and Reduce
-  Motion turns movement into fades.
+- **System components first.** The window is a `NavigationSplitView` whose SwiftUI toolbar is
+  bridged into the window's `NSToolbar`; the sidebar is a `List` with system drag and drop;
+  Settings is an `NSTabViewController` of grouped `Form`s; prompts are alerts. Custom drawing is
+  limited to what the system has no control for: split dividers, pane grips and the sky.
 
 ## Roadmap
 

@@ -1,25 +1,22 @@
 import AppKit
 import SwiftUI
 
-/// Motion tokens. The rules they encode:
-/// - Nothing pops. Things arrive from where they came from, fading and un-blurring as they move.
-/// - One object, one trip. The command bar is the URL pill, grown; the selection is one highlight
-///   that travels between rows.
-/// - Neighbors make room continuously while a newcomer arrives.
-/// - Feedback is fast. Only motion that tells a story (a morph, an arrival) takes longer.
+/// Motion tokens. System springs throughout: they start from the current velocity, so a change
+/// that interrupts another one carries on smoothly instead of jumping.
+/// - Only SwiftUI's own views animate. The pages are AppKit views that resize at once, so anything
+///   drawn over them (dividers, grips) follows them without animating.
+/// - Feedback is fast; arrivals are a touch slower than exits.
 enum Motion {
     /// Hover and press feedback.
-    static let feedback = Animation.timingCurve(0.3, 0.75, 0.1, 1, duration: 0.16)
+    static let feedback = Animation.easeOut(duration: 0.12)
     /// Something already on screen moving to a new place: rows making room, the selection.
-    static let travel = Animation.timingCurve(0.45, 0, 0.1, 1, duration: 0.34)
-    /// Something arriving: cards, toasts, results.
-    static let arrive = Animation.timingCurve(0.25, 0.8, 0.25, 1, duration: 0.42)
-    /// Something that grows as it travels: the pill becoming the command bar.
-    static let grow = Animation.timingCurve(0.25, 0.8, 0.25, 1, duration: 0.5)
+    static let travel = Animation.smooth(duration: 0.28)
+    /// Something arriving: palettes, toasts, results.
+    static let arrive = Animation.snappy(duration: 0.26)
     /// Leaving is quicker than arriving.
-    static let exit = Animation.timingCurve(0.3, 0.75, 0.1, 1, duration: 0.2)
-    /// Body swaps inside the window (switching Space): crossfade with a small rise.
-    static let swap = Animation.timingCurve(0.3, 0.75, 0.1, 1, duration: 0.22)
+    static let exit = Animation.easeOut(duration: 0.16)
+    /// Body swaps inside the window (switching Space): a quick crossfade.
+    static let swap = Animation.easeInOut(duration: 0.18)
     /// Distant hues pass through mud; keep it short.
     static let hue = Animation.easeInOut(duration: 0.2)
 

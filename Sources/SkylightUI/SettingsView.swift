@@ -1,63 +1,44 @@
+import AppKit
 import SkylightBrowser
 import SkylightCore
 import SkylightKit
 import SwiftUI
 
-/// The settings page, `skylight://settings[/section]`, drawn in the page card like any tab.
-struct SettingsPage: View {
-    let url: URL
-    @State private var section: SettingsSection = .general
+/// Settings, in their own window with a tab for each section in the toolbar, like Safari's.
+@MainActor
+public final class SettingsWindowController: NSWindowController {
+    private let tabs = NSTabViewController()
 
-    var body: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Settings")
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
-                    .padding(.leading, 10)
-                    .padding(.bottom, 16)
-                ForEach(SettingsSection.allCases) { item in
-                    SettingsNavRow(section: item, selected: item == section) {
-                        animate(Motion.feedback) { section = item }
-                    }
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 36)
-            .frame(width: 220)
-            .background(.primary.opacity(0.025))
-
-            Rectangle().fill(.primary.opacity(0.06)).frame(width: 1)
-
-            VStack(alignment: .leading, spacing: 0) {
-                Text(section.title)
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
-                    .padding(.horizontal, 20)
-                    .padding(.top, 36)
-                    .padding(.bottom, 4)
-                Group {
-                    switch section {
-                    case .general: GeneralSettings()
-                    case .appearance: AppearanceSettings()
-                    case .passwords: PasswordSettings()
-                    case .spaces: SpacesSettings()
-                    case .profiles: ProfilesSettings()
-                    case .importing: ImportSettings()
-                    case .agents: AgentSettings()
-                    case .extensions: ExtensionSettings()
-                    case .packages: PackageSettings()
-                    }
-                }
-                .scrollContentBackground(.hidden)
-                .id(section)
-                .transition(Arrive(scale: 1, rise: 6))
-            }
-            .frame(maxWidth: 680, alignment: .leading)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    public init(browser: Browser) {
+        tabs.tabStyle = .toolbar
+        for section in SettingsSection.allCases {
+            let host = NSHostingController(rootView: section.view.environment(browser).frame(width: 680, height: 560))
+            host.sizingOptions = [.preferredContentSize]
+            let item = NSTabViewItem(viewController: host)
+            item.label = section.title
+            item.image = NSImage(systemSymbolName: section.symbol, accessibilityDescription: section.title)
+            item.identifier = section.rawValue
+            tabs.addTabViewItem(item)
         }
-        .background(.background)
-        .onAppear { section = SettingsSection(path: url.lastPathComponent) ?? .general }
-        .onChange(of: url) { _, new in section = SettingsSection(path: new.lastPathComponent) ?? section }
+        let window = NSWindow(contentViewController: tabs)
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.toolbarStyle = .preference
+        window.setFrameAutosaveName("SkylightSettings")
+        super.init(window: window)
+        window.center()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Shows the window, at `section` if one is named.
+    public func show(_ section: String?) {
+        if let section, let index = tabs.tabViewItems.firstIndex(where: { $0.identifier as? String == section }) {
+            tabs.selectedTabViewItemIndex = index
+        }
+        window?.title = tabs.tabViewItems[tabs.selectedTabViewItemIndex].label
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
     }
 }
 
@@ -65,8 +46,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case general, appearance, spaces, profiles, passwords, extensions, importing = "import", agents, packages
 
     var id: String { rawValue }
-
-    init?(path: String) { self.init(rawValue: path) }
 
     var title: String {
         switch self {
@@ -84,57 +63,31 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .general: "gearshape.fill"
-        case .appearance: "paintbrush.fill"
-        case .passwords: "key.fill"
-        case .spaces: "square.stack.fill"
-        case .profiles: "person.2.fill"
-        case .importing: "square.and.arrow.down.fill"
+        case .general: "gearshape"
+        case .appearance: "paintbrush"
+        case .passwords: "key"
+        case .spaces: "square.stack"
+        case .profiles: "person.2"
+        case .importing: "square.and.arrow.down"
         case .agents: "sparkles"
-        case .extensions: "puzzlepiece.extension.fill"
-        case .packages: "shippingbox.fill"
+        case .extensions: "puzzlepiece.extension"
+        case .packages: "shippingbox"
         }
     }
 
-    var color: Color {
+    @ViewBuilder
+    var view: some View {
         switch self {
-        case .general: .gray
-        case .appearance: .indigo
-        case .passwords: .teal
-        case .spaces: .blue
-        case .profiles: .purple
-        case .importing: .green
-        case .agents: .orange
-        case .extensions: .cyan
-        case .packages: .pink
+        case .general: GeneralSettings()
+        case .appearance: AppearanceSettings()
+        case .passwords: PasswordSettings()
+        case .spaces: SpacesSettings()
+        case .profiles: ProfilesSettings()
+        case .importing: ImportSettings()
+        case .agents: AgentSettings()
+        case .extensions: ExtensionSettings()
+        case .packages: PackageSettings()
         }
-    }
-}
-
-private struct SettingsNavRow: View {
-    let section: SettingsSection
-    let selected: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: section.symbol)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 22, height: 22)
-                    .background(section.color.gradient, in: .rect(cornerRadius: 6, style: .continuous))
-                Text(section.title).font(.system(size: 13, weight: selected ? .semibold : .regular))
-                Spacer()
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 34)
-            .background(.primary.opacity(selected ? 0.08 : hovering ? 0.04 : 0), in: .rect(cornerRadius: 9, style: .continuous))
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .onHover { h in animate(Motion.feedback) { hovering = h } }
     }
 }
 
@@ -146,13 +99,6 @@ private struct GeneralSettings: View {
         Form {
             Picker("Search with", selection: $prefs.searchEngine) {
                 ForEach(Preferences.SearchEngine.allCases) { Text($0.name).tag($0) }
-            }
-            Picker("Appearance", selection: $prefs.appearance) {
-                ForEach(Preferences.Appearance.allCases) { Text($0.name).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            LabeledContent("Themes, sidebar and layout") {
-                Button("Appearance…") { browser.openSettings("appearance") }
             }
             Picker("Archive Today tabs after", selection: $prefs.archiveAfterHours) {
                 Text("6 hours").tag(6.0)
@@ -193,8 +139,8 @@ private struct SpaceSettingsRow: View {
         Section {
             HStack(spacing: 10) {
                 Menu {
-                    ForEach(SpaceMenu.icons, id: \.self) { icon in
-                        Button { browser.store.send(.setSpaceIcon(space.id, icon)) } label: { Label(icon, systemImage: icon) }
+                    ForEach(SpaceMenu.icons, id: \.symbol) { icon in
+                        Button { browser.store.send(.setSpaceIcon(space.id, icon.symbol)) } label: { Label(icon.name, systemImage: icon.symbol) }
                     }
                 } label: {
                     SpaceIcon(icon: space.icon, name: space.name, size: 14).foregroundStyle(Theme.accent(space.hue))
@@ -221,7 +167,7 @@ private struct SpaceSettingsRow: View {
             Picker("Profile", selection: Binding(get: { space.profileID }, set: { browser.store.send(.assignProfile(space.id, $0)) })) {
                 ForEach(profiles) { Text($0.name).tag($0.id) }
             }
-            Picker("Theme", selection: Binding(get: { space.themeID }, set: { browser.store.send(.setSpaceTheme(space.id, $0)) })) {
+            Picker("Sky", selection: Binding(get: { space.themeID }, set: { browser.store.send(.setSpaceTheme(space.id, $0)) })) {
                 Text("Same as the app").tag(String?.none)
                 Divider()
                 ForEach(browser.preferences.themes) { Text($0.name).tag(Optional($0.id)) }
@@ -237,25 +183,21 @@ private struct ProfilesSettings: View {
 
     var body: some View {
         let state = browser.store.state
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Each profile has its own cookies, logins and site data. Spaces on the same profile share them, so you sign in once. Click a Space to move it to a profile.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-                ForEach(state.profiles) { profile in
-                    ProfileCard(profile: profile, spaces: state.spaces)
-                }
-                Button {
-                    animate(Motion.swap) { _ = browser.store.send(.createProfile(name: "Profile \(state.profiles.count + 1)")) }
-                } label: {
-                    Label("New Profile", systemImage: "plus")
-                }
+        Form {
+            Section {
+            } footer: {
+                Text("Each profile has its own cookies, logins and site data. Spaces on the same profile share them, so you sign in once. Choose a Space's profile in Spaces.")
             }
-            .padding(20)
+            ForEach(state.profiles) { profile in
+                ProfileSection(profile: profile, spaces: state.spaces.filter { $0.profileID == profile.id })
+            }
+            Button("New Profile") { browser.store.send(.createProfile(name: "Profile \(state.profiles.count + 1)")) }
         }
+        .formStyle(.grouped)
     }
 }
 
-private struct ProfileCard: View {
+private struct ProfileSection: View {
     let profile: Profile
     let spaces: [Space]
     @Environment(Browser.self) private var browser
@@ -266,8 +208,8 @@ private struct ProfileCard: View {
     static let hues: [Double?] = [nil, 0.0, 0.07, 0.13, 0.33, 0.5, 0.58, 0.7, 0.8, 0.9]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
+        Section {
+            HStack(spacing: 10) {
                 Menu {
                     ForEach(Self.icons, id: \.self) { icon in
                         Button { browser.store.send(.setProfileIcon(profile.id, icon)) } label: {
@@ -281,76 +223,36 @@ private struct ProfileCard: View {
                     Divider()
                     Button("Initial") { browser.store.send(.setProfileIcon(profile.id, nil)) }
                 } label: {
-                    ProfileBadge(profile: profile, size: 34)
+                    ProfileBadge(profile: profile, size: 24)
                 }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Choose an icon")
-
-                VStack(alignment: .leading, spacing: 6) {
-                    TextField("Name", text: $name)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 14, weight: .semibold))
-                        .onSubmit { browser.store.send(.renameProfile(profile.id, name)) }
-                    HStack(spacing: 5) {
-                        ForEach(Array(Self.hues.enumerated()), id: \.offset) { _, hue in
-                            Button { browser.store.send(.setProfileHue(profile.id, hue)) } label: {
-                                Circle()
-                                    .fill(hue.map { AnyShapeStyle(Theme.accent($0).gradient) } ?? AnyShapeStyle(Color.gray.opacity(0.35)))
-                                    .frame(width: 14, height: 14)
-                                    .overlay(Circle().strokeBorder(.primary.opacity(profile.hue == hue ? 0.7 : 0), lineWidth: 1.5).padding(-2.5))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                Spacer()
+                TextField("Name", text: $name)
+                    .onSubmit { browser.store.send(.renameProfile(profile.id, name)) }
                 if profile.id != .standard {
-                    Button(role: .destructive) {
-                        animate(Motion.swap) { _ = browser.store.send(.deleteProfile(profile.id)) }
-                    } label: { Image(systemName: "trash") }
+                    Button(role: .destructive) { browser.store.send(.deleteProfile(profile.id)) } label: { Image(systemName: "trash") }
                         .buttonStyle(.borderless)
                         .help("Delete profile. Its Spaces move to Default.")
                 }
             }
-
-            // Every Space as a chip: lit when it uses this profile; click to move it here.
-            FlowChips(spaces: spaces, profileID: profile.id)
+            LabeledContent("Color") {
+                HStack(spacing: 6) {
+                    ForEach(Array(Self.hues.enumerated()), id: \.offset) { _, hue in
+                        Button { browser.store.send(.setProfileHue(profile.id, hue)) } label: {
+                            Circle()
+                                .fill(hue.map { AnyShapeStyle(Theme.accent($0).gradient) } ?? AnyShapeStyle(Color.gray.opacity(0.35)))
+                                .frame(width: 16, height: 16)
+                                .overlay(Circle().strokeBorder(.primary.opacity(profile.hue == hue ? 0.7 : 0), lineWidth: 1.5).padding(-3))
+                        }
+                        .buttonStyle(.plain)
+                        .help(hue == nil ? "No color" : "")
+                    }
+                }
+            }
+            LabeledContent("Used by", value: spaces.isEmpty ? "No Spaces" : spaces.map(\.name).joined(separator: ", "))
         }
-        .padding(14)
-        .settingsCard()
         .onAppear { name = profile.name }
         .onChange(of: profile.name) { _, new in name = new }
-    }
-}
-
-private struct FlowChips: View {
-    let spaces: [Space]
-    let profileID: ProfileID
-    @Environment(Browser.self) private var browser
-
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 6)], alignment: .leading, spacing: 6) {
-            ForEach(spaces) { space in
-                let here = space.profileID == profileID
-                Button {
-                    if !here { animate(Motion.swap) { _ = browser.store.send(.assignProfile(space.id, profileID)) } }
-                } label: {
-                    HStack(spacing: 6) {
-                        SpaceIcon(icon: space.icon, name: space.name, size: 10).foregroundStyle(Theme.accent(space.hue))
-                        Text(space.name).font(.system(size: 12)).lineLimit(1)
-                        Spacer(minLength: 0)
-                        if here { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary) }
-                    }
-                    .padding(.horizontal, 9)
-                    .frame(height: 26)
-                    .background(.primary.opacity(here ? 0.09 : 0.03), in: .capsule)
-                    .opacity(here ? 1 : 0.7)
-                    .contentShape(.capsule)
-                }
-                .buttonStyle(.plain)
-                .help(here ? "\(space.name) uses this profile" : "Move \(space.name) to this profile")
-            }
-        }
     }
 }
 

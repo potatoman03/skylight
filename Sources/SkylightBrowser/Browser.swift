@@ -24,6 +24,8 @@ public final class Browser {
     public private(set) var mcpConnection: MCPConnection?
     /// The Space being renamed, if the rename alert is up.
     public var renameSpace: SpaceID?
+    /// Opens the Settings window; the app provides it.
+    @ObservationIgnored public var showSettings: @MainActor (String?) -> Void = { _ in }
 
     public var omnibox: Omnibox { preferences.omnibox }
     @ObservationIgnored private let engine: WebEngine
@@ -87,6 +89,8 @@ public final class Browser {
     }
 
     public func start() {
+        // Settings used to open as a tab; it has its own window now.
+        for tab in store.state.tabs.values where tab.url.isSkylightPage { store.send(.removeTab(tab.id)) }
         preferences.applyAppearance()
         packages.start()
         updatePageScripts()
@@ -258,19 +262,9 @@ public final class Browser {
         }
     }
 
-    public static let settingsURL = URL(string: "skylight://settings")!
 
-    /// Shows the settings page: the open one if there is one, else a new tab.
-    public func openSettings(_ section: String? = nil) {
-        let url = section.map { Self.settingsURL.appending(path: $0) } ?? Self.settingsURL
-        let state = store.state
-        if let id = (state.favorites + state.activeSpace.allTabIDs).first(where: { state.tabs[$0]?.url.isSkylightPage == true }) {
-            store.send(.selectTab(id))
-            if section != nil { store.send(.pageDidUpdate(id, PageMetadata(url: url))) }
-        } else if let id = store.send(.openTab(url)).openedTabID {
-            store.send(.pageDidUpdate(id, PageMetadata(title: "Settings")))
-        }
-    }
+    /// Shows the Settings window, at `section` (`"passwords"`, `"extensions"`…) if given.
+    public func openSettings(_ section: String? = nil) { showSettings(section) }
 
     public func toggleSidebar() {
         preferences.sidebarCollapsed.toggle()

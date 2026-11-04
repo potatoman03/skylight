@@ -5,27 +5,15 @@ import SwiftUI
 
 // MARK: - Toolbar
 
-/// Extension buttons, laid out for wherever the preferences put them.
-struct ExtensionStrip: View {
-    /// Icons inside the address bar are smaller than a toolbar row's.
-    var compact = true
+/// Pinned extensions' buttons, for the toolbar.
+struct PinnedExtensionButtons: View {
     @Environment(Browser.self) private var browser
 
     var body: some View {
-        let service = browser.extensions
-        let placement = browser.preferences.extensionPlacement
-        let pinned = placement == .menu ? [] : service.toolbar
-        if !service.enabled.isEmpty {
-            HStack(spacing: compact ? 1 : 4) {
-                ForEach(pinned) { ext in
-                    ExtensionButton(ext: ext, compact: compact)
-                        .transition(Arrive(scale: 0.8))
-                }
-                if placement == .menu || !service.overflow.isEmpty {
-                    ExtensionsMenuButton(compact: compact)
-                }
+        HStack(spacing: 2) {
+            ForEach(browser.extensions.toolbar) { ext in
+                ExtensionButton(ext: ext)
             }
-            .motion(Motion.travel, value: pinned.map(\.id))
         }
     }
 }
@@ -33,61 +21,39 @@ struct ExtensionStrip: View {
 /// One extension's button. A click opens its popup under it.
 private struct ExtensionButton: View {
     let ext: ExtensionService.Installed
-    let compact: Bool
     @Environment(Browser.self) private var browser
-    @State private var hovering = false
 
     var body: some View {
         let service = browser.extensions
         let manifest = service.manifest(ext.id)
         let open = service.popup?.id == ext.id
         Button { service.click(ext.id) } label: {
-            ExtensionIcon(id: ext.id, size: compact ? 15 : 18)
-                .frame(width: compact ? 22 : 30, height: compact ? 22 : 30)
-                .surface(open ? .selected : hovering ? .hover : nil, radius: compact ? 6 : 8)
+            ExtensionIcon(id: ext.id, size: 16)
+                .frame(width: 24, height: 24)
                 .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
         .help(manifest?.title ?? "Extension")
-        .onHover { h in animate(Motion.feedback) { hovering = h } }
-        .popover(isPresented: popupBinding(open), arrowEdge: .bottom) { ExtensionPopupView() }
+        .popover(isPresented: Binding(get: { open }, set: { if !$0, service.popup?.id == ext.id { service.closePopup() } }),
+                 arrowEdge: .bottom) { ExtensionPopupView() }
         .contextMenu { ExtensionMenu(ext: ext) }
-        .draggable(ext.id)
-        .dropDestination(for: String.self) { ids, _ in
-            guard let id = ids.first, id != ext.id else { return false }
-            animate(Motion.travel) { service.move(id, before: ext.id) }
-            return true
-        }
-    }
-
-    private func popupBinding(_ open: Bool) -> Binding<Bool> {
-        Binding(get: { open }, set: { if !$0, browser.extensions.popup?.id == ext.id { browser.extensions.closePopup() } })
     }
 }
 
 /// The puzzle piece: every extension, with pins. Unpinned extensions open their popups here.
-private struct ExtensionsMenuButton: View {
-    let compact: Bool
+struct ExtensionsMenuButton: View {
     @Environment(Browser.self) private var browser
     @State private var listing = false
-    @State private var hovering = false
 
     var body: some View {
         let service = browser.extensions
-        let placement = browser.preferences.extensionPlacement
+        let showsButtons = browser.preferences.extensionPlacement.showsButtons
         // A popup of an extension without its own button opens here.
-        let hosted = service.popup.map { popup in placement == .menu || !service.toolbar.contains { $0.id == popup.id } } ?? false
+        let hosted = service.popup.map { popup in !showsButtons || !service.toolbar.contains { $0.id == popup.id } } ?? false
         Button { listing.toggle() } label: {
-            Image(systemName: "puzzlepiece.extension")
-                .font(.system(size: compact ? 11 : 13, weight: .medium))
-                .frame(width: compact ? 22 : 30, height: compact ? 22 : 30)
-                .surface(listing || hosted ? .selected : hovering ? .hover : nil, radius: compact ? 6 : 8)
-                .contentShape(.rect)
+            Label("Extensions", systemImage: "puzzlepiece.extension")
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
         .help("Extensions")
-        .onHover { h in animate(Motion.feedback) { hovering = h } }
         .popover(isPresented: Binding(get: { listing || hosted }, set: { shown in
             if !shown {
                 listing = false
@@ -113,24 +79,26 @@ private struct ExtensionList: View {
 
     var body: some View {
         let service = browser.extensions
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Extensions").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-                .padding(.horizontal, 8).padding(.bottom, 4)
-            ForEach(service.enabled) { ext in
-                ExtensionListRow(ext: ext, open: open)
+        VStack(alignment: .leading, spacing: 0) {
+            List {
+                Section("Extensions") {
+                    if service.enabled.isEmpty {
+                        Text("No extensions turned on").foregroundStyle(.secondary)
+                    }
+                    ForEach(service.enabled) { ext in
+                        ExtensionListRow(ext: ext, open: open)
+                    }
+                }
             }
-            Divider().padding(.vertical, 4)
-            Button {
-                browser.openSettings("extensions")
-            } label: {
-                Label("Manage Extensions…", systemImage: "gearshape").frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 8)
-            .frame(height: 26)
+            .listStyle(.inset)
+            .scrollContentBackground(.hidden)
+            .frame(height: min(CGFloat(max(service.enabled.count, 1)) * 32 + 40, 360))
+            Divider()
+            Button("Manage Extensions…") { browser.openSettings("extensions") }
+                .buttonStyle(.borderless)
+                .padding(12)
         }
-        .padding(10)
-        .frame(width: 260)
+        .frame(width: 280)
     }
 }
 
@@ -138,33 +106,32 @@ private struct ExtensionListRow: View {
     let ext: ExtensionService.Installed
     let open: (String) -> Void
     @Environment(Browser.self) private var browser
-    @State private var hovering = false
 
     var body: some View {
         let service = browser.extensions
-        HStack(spacing: 9) {
-            ExtensionIcon(id: ext.id, size: 16)
-            Text(service.manifest(ext.id)?.name ?? ext.id).lineLimit(1)
-            Spacer(minLength: 4)
-            if browser.preferences.extensionPlacement != .menu {
+        HStack {
+            Button { open(ext.id) } label: {
+                Label {
+                    Text(service.manifest(ext.id)?.name ?? ext.id).lineLimit(1)
+                } icon: {
+                    ExtensionIcon(id: ext.id, size: 16)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            if browser.preferences.extensionPlacement.showsButtons {
                 Button {
-                    animate(Motion.travel) { service.setPinned(ext.id, !ext.pinned) }
+                    service.setPinned(ext.id, !ext.pinned)
                 } label: {
                     Image(systemName: ext.pinned ? "pin.fill" : "pin")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(ext.pinned ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
-                        .frame(width: 22, height: 22)
+                        .foregroundStyle(ext.pinned ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 .help(ext.pinned ? "Unpin from the toolbar" : "Pin to the toolbar")
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 30)
-        .surface(hovering ? .hover : nil, radius: 7)
-        .contentShape(.rect)
-        .onTapGesture { open(ext.id) }
-        .onHover { h in animate(Motion.feedback) { hovering = h } }
+        .contextMenu { ExtensionMenu(ext: ext) }
     }
 }
 
@@ -179,7 +146,7 @@ struct ExtensionMenu: View {
         if manifest?.optionsPage != nil {
             Button("Options") { service.openOptions(ext.id) }
         }
-        Button(ext.pinned ? "Unpin" : "Pin to Toolbar") { animate(Motion.travel) { service.setPinned(ext.id, !ext.pinned) } }
+        Button(ext.pinned ? "Unpin" : "Pin to Toolbar") { service.setPinned(ext.id, !ext.pinned) }
         Button("Manage Extensions…") { browser.openSettings("extensions") }
         Divider()
         Button("Turn Off") { service.setEnabled(ext.id, false) }
@@ -251,67 +218,57 @@ struct ExtensionSettings: View {
     var body: some View {
         @Bindable var prefs = browser.preferences
         let service = browser.extensions
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if !service.isAvailable {
-                    Label("Extensions need the full Skylight app. This build can't run them.", systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
-                SettingsBlock("Add", note: "Paste a Chrome Web Store link. Extensions run in your default profile, so Spaces on other profiles don't load them.") {
-                    VStack(spacing: 0) {
-                        HStack(spacing: 8) {
-                            TextField("chromewebstore.google.com/detail/…", text: $storeLink)
-                                .textFieldStyle(.roundedBorder)
-                                .onSubmit(installFromStore)
-                            if !service.busy.isEmpty {
-                                ProgressView().controlSize(.small)
-                            }
-                            Button("Add", action: installFromStore)
-                                .disabled(WebStore.extensionID(from: storeLink) == nil || !service.busy.isEmpty)
-                        }
-                        .padding(12)
-                        Divider()
-                        SettingsRow("Unpacked folder", note: "An extension you're building, or one you downloaded and unzipped") {
-                            Button("Choose…", action: chooseFolder)
-                        }
-                        Divider()
-                        SettingsRow("Chrome Web Store") {
-                            Button("Open") { browser.store.send(.openTab(URL(string: "https://chromewebstore.google.com/category/extensions")!)) }
-                        }
-                    }
-                    .settingsCard()
-                    .disabled(!service.isAvailable)
-                }
-
-                SettingsBlock("Installed") {
-                    if service.installed.isEmpty {
-                        Text("No extensions yet.").foregroundStyle(.secondary).padding(14)
-                            .frame(maxWidth: .infinity, alignment: .leading).settingsCard()
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(Array(service.installed.enumerated()), id: \.element.id) { i, ext in
-                                if i > 0 { Divider() }
-                                InstalledExtensionRow(ext: ext)
-                            }
-                        }
-                        .settingsCard()
-                    }
-                }
-
-                SettingsBlock("Toolbar", note: "Right-click a button for its options; drag buttons to reorder them.") {
-                    VStack(spacing: 0) {
-                        SettingsRow("Buttons") {
-                            Picker("", selection: $prefs.extensionPlacement) {
-                                ForEach(Preferences.ExtensionPlacement.allCases) { Text($0.name).tag($0) }
-                            }
-                            .labelsHidden().fixedSize()
-                        }
-                    }
-                    .settingsCard()
-                }
+        Form {
+            if !service.isAvailable {
+                Label("Extensions need the full Skylight app. This build can't run them.", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
             }
-            .padding(20)
+            Section {
+                if service.installed.isEmpty {
+                    Text("No extensions yet.").foregroundStyle(.secondary)
+                }
+                ForEach(service.installed) { ext in
+                    InstalledExtensionRow(ext: ext)
+                }
+            } header: {
+                Text("Installed")
+            }
+
+            Section {
+                HStack {
+                    TextField("Chrome Web Store link", text: $storeLink, prompt: Text("chromewebstore.google.com/detail/…"))
+                        .onSubmit(installFromStore)
+                    if !service.busy.isEmpty { ProgressView().controlSize(.small) }
+                    Button("Add", action: installFromStore)
+                        .disabled(WebStore.extensionID(from: storeLink) == nil || !service.busy.isEmpty)
+                }
+                LabeledContent {
+                    Button("Choose…", action: chooseFolder)
+                } label: {
+                    Text("Unpacked folder")
+                    Text("An extension you're building, or one you downloaded and unzipped")
+                }
+                LabeledContent("Chrome Web Store") {
+                    Button("Open") { browser.store.send(.openTab(URL(string: "https://chromewebstore.google.com/category/extensions")!)) }
+                }
+            } header: {
+                Text("Add")
+            } footer: {
+                Text("Extensions run in your default profile, so Spaces on other profiles don't load them.")
+            }
+            .disabled(!service.isAvailable)
+
+            Section {
+                Picker("Show", selection: $prefs.extensionPlacement) {
+                    ForEach(Preferences.ExtensionPlacement.choices) { Text($0.name).tag($0) }
+                }
+            } header: {
+                Text("Toolbar")
+            } footer: {
+                Text("Pin extensions from the Extensions menu in the toolbar. Right-click a button for its options.")
+            }
         }
+        .formStyle(.grouped)
     }
 
     private func installFromStore() {
@@ -340,23 +297,21 @@ private struct InstalledExtensionRow: View {
     var body: some View {
         let service = browser.extensions
         let manifest = service.manifest(ext.id)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
                 ExtensionIcon(id: ext.id, size: 28).opacity(ext.enabled ? 1 : 0.5)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(manifest?.name ?? ext.id).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        Text(manifest?.name ?? ext.id).lineLimit(1)
                         if let version = manifest?.version, !version.isEmpty {
-                            Text(version).font(.system(size: 11)).foregroundStyle(.tertiary)
+                            Text(version).font(.caption).foregroundStyle(.tertiary)
                         }
                         if ext.source == .folder {
-                            Text("Unpacked").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(.primary.opacity(0.06), in: .capsule)
+                            Text("Unpacked").font(.caption2).foregroundStyle(.secondary)
                         }
                     }
                     if let text = manifest?.description, !text.isEmpty {
-                        Text(text).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2)
+                        Text(text).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
                 Spacer(minLength: 8)
@@ -367,25 +322,23 @@ private struct InstalledExtensionRow: View {
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
-                .menuStyle(.button).buttonStyle(.borderless).menuIndicator(.hidden).fixedSize()
-                Toggle("", isOn: Binding(get: { ext.enabled }, set: { service.setEnabled(ext.id, $0) }))
-                    .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                Toggle("Enabled", isOn: Binding(get: { ext.enabled }, set: { service.setEnabled(ext.id, $0) }))
+                    .toggleStyle(.switch).labelsHidden()
             }
             if let warnings = manifest?.warnings, !warnings.isEmpty {
                 DisclosureGroup(isExpanded: $details) {
                     VStack(alignment: .leading, spacing: 3) {
-                        ForEach(warnings, id: \.self) { Label($0, systemImage: "checkmark.shield").font(.system(size: 11.5)) }
+                        ForEach(warnings, id: \.self) { Label($0, systemImage: "checkmark.shield").font(.caption) }
                     }
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
                 } label: {
                     Text("Can \(warnings[0].prefix(1).lowercased() + warnings[0].dropFirst())\(warnings.count > 1 ? " and more" : "")")
-                        .font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
-                .padding(.leading, 40)
+                .padding(.leading, 38)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
     }
 }

@@ -27,8 +27,8 @@ public final class PageCoordinator: BrowserEffectHandler {
     public private(set) var visibleTabID: TabID?
     /// Every tab on screen: the focused tab's split, or just the focused tab.
     public private(set) var visibleTabIDs: [TabID] = []
-    /// Space between split panes and their corner radius.
-    @ObservationIgnored public var paneStyle: @MainActor () -> (gap: CGFloat, radius: CGFloat) = { (6, 12) }
+    /// Space between split panes (a hairline, like a split view's divider) and their corner radius.
+    @ObservationIgnored public var paneStyle: @MainActor () -> (gap: CGFloat, radius: CGFloat) = { (1, 0) }
 
     @ObservationIgnored public var policy = HibernationPolicy()
     /// Today tabs idle this long are archived.

@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let paths: AppPaths
     private var browser: Browser?
     private var window: NSWindow?
+    private var settings: SettingsWindowController?
     private var quitting = false
 
     init(paths: AppPaths) {
@@ -36,13 +37,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
-        window.titlebarAppearsTransparent = true
+        // SwiftUI's toolbar and title become the window's own: one unified NSToolbar, like Safari's.
+        let root = NSHostingController(rootView: RootView().environment(browser))
+        root.sceneBridgingOptions = [.toolbars, .title]
+        window.contentViewController = root
+        window.toolbarStyle = .unified
         window.titleVisibility = .hidden
-        window.isOpaque = true
-        window.backgroundColor = .windowBackgroundColor
-        window.isMovableByWindowBackground = true
+        window.tabbingMode = .disallowed
         window.delegate = self
-        window.contentView = NSHostingView(rootView: RootView().environment(browser))
+        browser.showSettings = { [weak self, weak browser] section in
+            guard let self, let browser else { return }
+            if settings == nil { settings = SettingsWindowController(browser: browser) }
+            settings?.show(section)
+        }
+        window.setContentSize(NSSize(width: 1280, height: 820))
         window.setFrameAutosaveName("SkylightMain")
         if !window.setFrameUsingName("SkylightMain") { window.center() }
         self.window = window
@@ -92,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func closeTab(_ sender: Any?) {
         if browser?.commandBar.isPresented == true { return browser?.dismissCommandBar() ?? () }
         guard let id = selected else { return }
-        withAnimation(.timingCurve(0.45, 0, 0.1, 1, duration: 0.34)) { _ = store?.send(.closeTab(id)) }
+        withAnimation(.smooth(duration: 0.28)) { _ = store?.send(.closeTab(id)) }
     }
 
     @objc func reopenTab(_ sender: Any?) { store?.send(.reopenClosedTab) }
@@ -133,11 +141,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func showSettings(_ sender: Any?) { browser?.openSettings() }
 
     @objc func toggleSidebar(_ sender: Any?) {
-        withAnimation(.timingCurve(0.45, 0, 0.1, 1, duration: 0.34)) { browser?.toggleSidebar() }
+        withAnimation { browser?.toggleSidebar() }
     }
     @objc func toggleFavorite(_ sender: Any?) { if let id = selected { store?.send(.toggleFavorite(id)) } }
     @objc func clearToday(_ sender: Any?) {
-        withAnimation(.timingCurve(0.45, 0, 0.1, 1, duration: 0.34)) { _ = store?.send(.clearToday) }
+        withAnimation(.smooth(duration: 0.28)) { _ = store?.send(.clearToday) }
     }
     @objc func importFrom(_ sender: NSMenuItem) {
         if let source = (sender.representedObject as? String).flatMap(Browser.ImportSource.init(rawValue:)) {

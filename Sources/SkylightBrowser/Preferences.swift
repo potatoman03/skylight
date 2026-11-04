@@ -41,8 +41,13 @@ public final class Preferences {
 
     /// Parts of the sidebar you can hide.
     public enum SidebarItem: String, Codable, CaseIterable, Identifiable, Sendable {
-        case addressBar, favorites, newTab, agentActivity
+        /// Kept so older preferences still load; the address field lives in the toolbar now.
+        case addressBar
+        case favorites, newTab, agentActivity
         public var id: String { rawValue }
+
+        /// The choices to offer.
+        public static let choices: [SidebarItem] = [.favorites, .newTab, .agentActivity]
 
         public var name: String {
             switch self {
@@ -70,19 +75,23 @@ public final class Preferences {
 
     /// Where extension buttons go.
     public enum ExtensionPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
-        /// Small icons at the end of the address bar.
+        /// Pinned extensions get their own toolbar buttons.
         case addressBar
-        /// A row of buttons under the address bar.
+        /// The same as `addressBar`; older builds had a separate row.
         case toolbar
-        /// One button that opens them all.
+        /// Only the Extensions button, which lists them all.
         case menu
         public var id: String { rawValue }
 
+        /// The choices to offer.
+        public static let choices: [ExtensionPlacement] = [.addressBar, .menu]
+
+        public var showsButtons: Bool { self != .menu }
+
         public var name: String {
             switch self {
-            case .addressBar: "In the address bar"
-            case .toolbar: "Row below the address bar"
-            case .menu: "Behind one button"
+            case .addressBar, .toolbar: "Pinned extensions in the toolbar"
+            case .menu: "Only in the Extensions menu"
             }
         }
     }
@@ -97,17 +106,17 @@ public final class Preferences {
         var customThemes: [SkyTheme]?
         var hiddenSidebarItems: Set<SidebarItem>?
         var density: Density?
-        var cornerRadius: Double?
         var extensionPlacement: ExtensionPlacement?
-        var splitGap: Double?
+        var skyBackdrop: Bool?
         var highlightFocusedPane: Bool?
         var autoPictureInPicture: Bool?
         var showMediaControls: Bool?
     }
 
     public var searchEngine: SearchEngine = .google { didSet { save() } }
-    /// Morning by default: Skylight is meant to feel bright. System follows macOS.
-    public var appearance: Appearance = .light { didSet { save(); applyAppearance() } }
+    public var appearance: Appearance = .system { didSet { save(); applyAppearance() } }
+    /// The theme's sky behind the sidebar, instead of the system's sidebar material.
+    public var skyBackdrop = false { didSet { save() } }
     /// The animated light in the sky. Off, the sky is a still gradient.
     public var godRays = true { didSet { save() } }
     /// Today tabs untouched this long are archived.
@@ -118,11 +127,7 @@ public final class Preferences {
     public var customThemes: [SkyTheme] = [] { didSet { save() } }
     public var hiddenSidebarItems: Set<SidebarItem> = [] { didSet { save() } }
     public var density: Density = .comfortable { didSet { save() } }
-    /// Corner radius of the page card, in points.
-    public var cornerRadius: Double = 12 { didSet { save() } }
     public var extensionPlacement: ExtensionPlacement = .addressBar { didSet { save() } }
-    /// Space between split panes, in points.
-    public var splitGap: Double = 6 { didSet { save() } }
     /// Ring the pane that has focus in a split.
     public var highlightFocusedPane = true { didSet { save() } }
     /// A playing video floats in picture in picture when you switch away from its tab.
@@ -187,9 +192,8 @@ public final class Preferences {
         customThemes = stored.customThemes ?? []
         hiddenSidebarItems = stored.hiddenSidebarItems ?? []
         density = stored.density ?? density
-        cornerRadius = stored.cornerRadius ?? cornerRadius
         extensionPlacement = stored.extensionPlacement ?? extensionPlacement
-        splitGap = stored.splitGap ?? splitGap
+        skyBackdrop = stored.skyBackdrop ?? skyBackdrop
         highlightFocusedPane = stored.highlightFocusedPane ?? highlightFocusedPane
         autoPictureInPicture = stored.autoPictureInPicture ?? autoPictureInPicture
         showMediaControls = stored.showMediaControls ?? showMediaControls
@@ -208,7 +212,7 @@ public final class Preferences {
         let stored = Stored(searchEngine: searchEngine, appearance: appearance, godRays: godRays,
                             archiveAfterHours: archiveAfterHours, sidebarCollapsed: sidebarCollapsed, themeID: themeID,
                             customThemes: customThemes, hiddenSidebarItems: hiddenSidebarItems, density: density,
-                            cornerRadius: cornerRadius, extensionPlacement: extensionPlacement, splitGap: splitGap,
+                            extensionPlacement: extensionPlacement, skyBackdrop: skyBackdrop,
                             highlightFocusedPane: highlightFocusedPane, autoPictureInPicture: autoPictureInPicture,
                             showMediaControls: showMediaControls)
         let encoder = JSONEncoder()

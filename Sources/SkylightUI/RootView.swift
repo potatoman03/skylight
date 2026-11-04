@@ -1,195 +1,96 @@
 import AppKit
 import SkylightBrowser
+import SkylightCore
 import SwiftUI
 
-/// The whole window: the sky, the sidebar, the page card, and the command bar above them.
-///
-/// The window controls (traffic lights, sidebar toggle, back, forward, reload) sit in one fixed row
-/// at the top left, centered on the traffic lights. They don't move when the sidebar hides, peeks
-/// or comes back.
+/// The whole window, laid out like Safari's: a source-list sidebar, the page, and one unified
+/// toolbar with back and forward, the address field and extension buttons.
 public struct RootView: View {
     @Environment(Browser.self) private var browser
-    @Environment(\.colorScheme) private var scheme
-    @Namespace private var omnibox
-    @State private var peeking = false
-    @State private var lights = TrafficLights()
-    @State private var drag = TabDrag()
-
-    static let sidebarWidth: CGFloat = 252
+    @State private var drag = TabDragSession()
+    @State private var newName = ""
 
     public init() {}
 
     public var body: some View {
-        let space = browser.store.state.activeSpace
-        let palette = browser.preferences.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue)
-        let collapsed = browser.preferences.sidebarCollapsed
-        let row = lights.rowHeight
+        let prefs = browser.preferences
+        let state = browser.store.state
 
-        ZStack(alignment: .topLeading) {
-            SkyBackdrop(palette: palette, rays: browser.preferences.godRays)
-
-            HStack(spacing: 0) {
-                if !collapsed {
-                    Sidebar(omnibox: omnibox, topInset: row + 6)
-                        .frame(width: Self.sidebarWidth)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
-                }
-                // With the sidebar hidden, the controls keep a thin strip of sky above the page.
-                ContentArea()
-                    .padding(.top, collapsed ? row : 8)
-                    .padding([.bottom, .trailing], 8)
-                    .padding(.leading, collapsed ? 8 : 0)
-            }
-
-            // With the sidebar hidden, it slides back over the page while the pointer is at the edge.
-            if collapsed {
-                Color.clear
-                    .frame(width: 10)
-                    .frame(maxHeight: .infinity)
-                    .padding(.top, row)
-                    .contentShape(.rect)
-                    .onHover { if $0 { animate(Motion.arrive) { peeking = true } } }
-                if peeking {
-                    Sidebar(omnibox: omnibox, topInset: row)
-                        .frame(width: Self.sidebarWidth)
-                        .background {
-                            let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            ZStack {
-                                SkyBackdrop(palette: palette, rays: false)
-                                Rectangle().fill(.white.opacity(scheme == .dark ? 0.02 : 0.2))
-                            }
-                            .clipShape(shape)
-                            .overlay(shape.strokeBorder(Surface.selected.edge(scheme), lineWidth: 0.75))
-                            .shadow(color: Theme.shadow(palette, scheme), radius: 30, x: 8)
-                        }
-                        .padding([.leading, .bottom], 6)
-                        .padding(.top, 6)
-                        .onHover { if !$0 { animate(Motion.exit) { peeking = false } } }
-                        .transition(.move(edge: .leading).combined(with: .opacity))
-                        .zIndex(1)
-                }
-            }
-
-            WindowControls(lights: lights, collapsed: collapsed)
-                .zIndex(2)
-
-            if browser.commandBar.isPresented {
-                CommandBarOverlay(omnibox: omnibox, leading: collapsed ? 0 : Self.sidebarWidth, top: collapsed ? row : 8)
-                    .zIndex(3)
-            }
+        NavigationSplitView(columnVisibility: Binding(
+            get: { prefs.sidebarCollapsed ? .detailOnly : .all },
+            set: { prefs.sidebarCollapsed = $0 == .detailOnly }
+        )) {
+            Sidebar()
+                .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)
+        } detail: {
+            ContentArea()
+                .toolbar { BrowserToolbar() }
+                .toolbar(removing: .title)
         }
-        .overlay(alignment: .bottom) { ToastView() }
-        .overlay(alignment: .topLeading) { DragGhost() }
-        .coordinateSpace(.named(TabDrag.space))
+        .navigationTitle(state.selectedTab?.displayTitle ?? "Skylight")
         .environment(drag)
-        .environment(\.palette, palette)
-        .tint(Color(palette.accent))
-        .background(TrafficLightReader(lights: $lights))
-        .ignoresSafeArea()
         .frame(minWidth: 760, minHeight: 480)
-        .onChange(of: collapsed) { _, now in if !now { peeking = false } }
-    }
-}
-
-/// The tab being dragged, following the pointer.
-private struct DragGhost: View {
-    @Environment(Browser.self) private var browser
-    @Environment(TabDrag.self) private var drag
-
-    var body: some View {
-        if let item = drag.item, let tab = browser.store.state.tabs[item.id] {
-            let onPage: Bool = if case .split? = drag.target { true } else { false }
-            HStack(spacing: 7) {
-                Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 14)
-                Text(tab.displayTitle).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                if item.group.count > 1 {
-                    Text("+\(item.group.count - 1)")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .padding(.horizontal, 5).frame(height: 16)
-                        .background(.primary.opacity(0.08), in: .capsule)
-                }
+        // The Space on screen renames in place in its header; others (from the Space bar) here.
+        .alert("Rename Space", isPresented: Binding(get: { browser.renameSpace.map { $0 != state.activeSpaceID } ?? false },
+                                                     set: { if !$0 { browser.renameSpace = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Rename") {
+                if let id = browser.renameSpace { browser.store.send(.renameSpace(id, newName)) }
+                browser.renameSpace = nil
             }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: 200, alignment: .leading)
-            .frame(height: 30)
-            .surface(.selected, radius: 9, lifted: true)
-            .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
-            .scaleEffect(onPage ? 0.9 : 1, anchor: .topLeading)
-            .offset(x: drag.location.x + 10, y: drag.location.y + 8)
-            .allowsHitTesting(false)
-            .transition(.opacity)
-            .animation(Motion.feedback, value: onPage)
+            Button("Cancel", role: .cancel) { browser.renameSpace = nil }
+        }
+        .onChange(of: browser.renameSpace) { _, id in
+            newName = state.spaces.first { $0.id == id }?.name ?? ""
         }
     }
 }
 
-/// Where macOS put the traffic lights, so our controls line up with them exactly.
-struct TrafficLights: Equatable {
-    var centerY: CGFloat = 16
-    var trailingX: CGFloat = 78
-
-    /// A row centered on the lights.
-    var rowHeight: CGFloat { centerY * 2 }
-}
-
-private struct WindowControls: View {
-    let lights: TrafficLights
-    let collapsed: Bool
+private struct BrowserToolbar: ToolbarContent {
     @Environment(Browser.self) private var browser
 
-    var body: some View {
-        HStack(spacing: 1) {
-            Spacer().frame(width: max(0, lights.trailingX - 10))
-            IconButton(symbol: "sidebar.left", help: collapsed ? "Show sidebar (⌘S)" : "Hide sidebar (⌘S)") {
-                animate(Motion.travel) { browser.toggleSidebar() }
+    var body: some ToolbarContent {
+        let status = browser.selectedStatus
+        let id = browser.store.state.selectedTabID
+
+        ToolbarItemGroup(placement: .navigation) {
+            Button {
+                if let id { browser.store.send(.goBack(id)) }
+            } label: {
+                Label("Back", systemImage: "chevron.backward")
             }
-            Spacer(minLength: 0)
-            NavigationButtons()
+            .help("Back")
+            .disabled(!status.canGoBack)
+            Button {
+                if let id { browser.store.send(.goForward(id)) }
+            } label: {
+                Label("Forward", systemImage: "chevron.forward")
+            }
+            .help("Forward")
+            .disabled(!status.canGoForward)
         }
-        .padding(.horizontal, 10)
-        .frame(width: RootView.sidebarWidth, height: lights.rowHeight)
-    }
-}
 
-private struct TrafficLightReader: NSViewRepresentable {
-    @Binding var lights: TrafficLights
+        ToolbarItem(placement: .principal) {
+            AddressField()
+        }
 
-    func makeNSView(context: Context) -> LightsProbe {
-        let probe = LightsProbe()
-        probe.onChange = { new in if lights != new { lights = new } }
-        return probe
-    }
+        if browser.preferences.extensionPlacement.showsButtons, !browser.extensions.toolbar.isEmpty {
+            ToolbarItem(placement: .primaryAction) {
+                PinnedExtensionButtons()
+            }
+        }
 
-    func updateNSView(_ probe: LightsProbe, context: Context) {
-        probe.onChange = { new in if lights != new { lights = new } }
-    }
-}
+        ToolbarItem(placement: .primaryAction) {
+            ExtensionsMenuButton()
+        }
 
-final class LightsProbe: NSView {
-    var onChange: ((TrafficLights) -> Void)?
-    private var last: TrafficLights?
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        DispatchQueue.main.async { [weak self] in self?.report() }
-    }
-
-    override func layout() {
-        super.layout()
-        DispatchQueue.main.async { [weak self] in self?.report() }
-    }
-
-    private func report() {
-        guard let window, let close = window.standardWindowButton(.closeButton),
-              let zoom = window.standardWindowButton(.zoomButton),
-              let closeFrame = close.superview?.convert(close.frame, to: nil),
-              let zoomFrame = zoom.superview?.convert(zoom.frame, to: nil) else { return }
-        let height = window.contentView?.bounds.height ?? window.frame.height
-        let lights = TrafficLights(centerY: (height - closeFrame.midY).rounded(), trailingX: (zoomFrame.maxX + 10).rounded())
-        guard lights != last, lights.centerY > 4 else { return }
-        last = lights
-        onChange?(lights)
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                browser.presentCommandBar(.newTab)
+            } label: {
+                Label("New Tab", systemImage: "plus")
+            }
+            .help("New Tab (⌘T)")
+        }
     }
 }
