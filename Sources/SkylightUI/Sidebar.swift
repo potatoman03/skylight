@@ -8,13 +8,14 @@ import SwiftUI
 typealias BrowserTab = SkylightCore.Tab
 
 /// A source list, like Finder's or Mail's: favorites shared by every Space, then the Space's pinned
-/// tabs and today's tabs. Spaces switch from the bar at the bottom.
+/// tabs and today's tabs. Spaces switch from the bar at the bottom, or with a two-finger swipe.
 struct Sidebar: View {
     @Environment(Browser.self) private var browser
     @Environment(TabDragSession.self) private var drag
     @Environment(\.colorScheme) private var scheme
     @State private var drop = SidebarDropState()
     @State private var viewport: CGFloat = 0
+    @State private var swipe = SpaceSwipe()
 
     private static let coordinates = "sidebar.list"
 
@@ -46,6 +47,7 @@ struct Sidebar: View {
             .environment(\.sidebarDensity, prefs.density)
             .font(prefs.density.rowFont)
         }
+        .offset(x: swipeShift)
         .background {
             if prefs.skyBackdrop {
                 let palette = prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue)
@@ -66,6 +68,30 @@ struct Sidebar: View {
         // A different Space is a different list: crossfade rather than morph one into the other.
         .id(space.id)
         .transition(.opacity)
+        // However the Space changed: the bar, the keyboard, a swipe, an agent.
+        .motion(Motion.swap, value: space.id)
+        // Outside the `id`, which would end a swipe the moment it changes the Space.
+        .background { SpaceSwipeArea(handle: handleSwipe) }
+    }
+
+    /// With Reduce Motion the list stays put, and the Space only fades.
+    private var swipeShift: CGFloat {
+        guard !Motion.reduceMotion else { return 0 }
+        let state = browser.store.state
+        return swipe.shift(canMove: state.spaces.indices.contains(state.activeSpaceIndex + swipe.direction))
+    }
+
+    private func handleSwipe(_ event: SpaceSwipe.Event) -> SpaceSwipe.Response {
+        var next = swipe
+        let response = next.handle(event)
+        guard case let .finished(step) = response else {
+            // Every scroll in the window comes through here, and most change nothing.
+            if next != swipe { swipe = next }
+            return response
+        }
+        if let step { browser.store.send(.switchSpaceByOffset(step)) }
+        animate(Motion.travel) { swipe = next }
+        return response
     }
 
     /// Every line, each moved aside as a drag needs. Frames are measured before the move, so the

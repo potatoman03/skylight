@@ -159,8 +159,9 @@ working. [CONTRIBUTING.md](CONTRIBUTING.md) covers branches, commits and pull re
 The sidebar works like Arc's. **Favorites** at the top belong to every Space. Each Space has
 **pinned** tabs, then **Today** (with **Clear**). Drag tabs between sections; the list shows an
 insertion line where a tab will land, and holding a tab over a Space's button at the bottom
-switches to that Space so you can drop it there. Links dragged in from a page or another app open
-where you drop them. Closing a
+switches to that Space so you can drop it there. Swipe two fingers sideways over the sidebar to go
+to the next or previous Space; it stops at the first and last. Links dragged in from a page or
+another app open where you drop them. Closing a
 pinned tab or favorite only unloads it; Delete in its menu removes it. Today tabs untouched for 12
 hours are archived (⌘⇧T brings them back; the time is in Settings). Pages you haven't looked at in
 20 minutes go to sleep and reload when you return.

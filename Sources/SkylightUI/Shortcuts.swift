@@ -109,6 +109,7 @@ enum Shortcuts {
             Shortcut(title: "More for a tab", keys: ["Right-click"]),
             Shortcut(title: "Split View", keys: ["Drag a tab onto the page"]),
             Shortcut(title: "Resize the sidebar", keys: ["Drag its edge"]),
+            Shortcut(title: "Switch Space", keys: ["Swipe two fingers on the sidebar"]),
         ]))
         return groups
     }
