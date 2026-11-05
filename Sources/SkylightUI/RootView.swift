@@ -55,6 +55,8 @@ public struct RootView: View {
             }
         }
         .overlay { SkylightMenu() }
+        // The menu opens from the sidebar, so a peeking sidebar stays until it closes.
+        .onChange(of: browser.showsMainMenu) { _, open in if !open, browser.sidebarPeeking { peek(false) } }
         // Showing or hiding it for good ends the peek.
         .onChange(of: prefs.sidebarCollapsed) { leaving?.cancel() }
         // One translucent backdrop behind the toolbar and sidebar; only the page is opaque.
@@ -95,7 +97,7 @@ public struct RootView: View {
         guard !inside || opening else { return }
         leaving = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(opening ? 1500 : 300))
-            if !Task.isCancelled { withAnimation { browser.sidebarPeeking = false } }
+            if !Task.isCancelled, !browser.showsMainMenu { withAnimation { browser.sidebarPeeking = false } }
         }
     }
 }
@@ -165,11 +167,6 @@ private struct BrowserToolbar: ToolbarContent {
 
         ToolbarItem(placement: .primaryAction) {
             ExtensionsMenuButton()
-        }
-        .sharedBackgroundVisibility(.hidden)
-
-        ToolbarItem(placement: .primaryAction) {
-            SkylightMenuButton()
         }
         .sharedBackgroundVisibility(.hidden)
     }

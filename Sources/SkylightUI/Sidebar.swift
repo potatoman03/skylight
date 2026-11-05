@@ -799,6 +799,8 @@ private struct SpaceBar: View {
     var body: some View {
         let state = browser.store.state
         HStack(spacing: 2) {
+            SkylightMenuButton()
+                .padding(.trailing, 4)
             ForEach(state.spaces) { space in
                 let active = space.id == state.activeSpaceID
                 Button { animate(Motion.swap) { _ = browser.store.send(.switchSpace(space.id)) } } label: {

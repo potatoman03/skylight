@@ -67,7 +67,7 @@ Rules the map implies:
 | A prompt (permission, dialog, approval) | A `Prompt` case in `PromptCenter`, shown by the alert host in `ContentArea.swift`. |
 | A view, Settings page, sidebar row, toolbar item | `SkylightUI`. Motion tokens are in `Motion.swift`, colors in `Theme.swift`. |
 | A menu item or keyboard shortcut | `Sources/Skylight/MainMenu.swift` (the action is an `@objc` method on `AppDelegate`). The shortcuts sheet reads the menu bar, so it picks the item up. |
-| A row in Skylight's menu (the toolbar's ··· button) | `MenuContent` in `Sources/SkylightUI/SkylightMenu.swift`. Give it a menu bar command where one exists, so its action and shortcut can't drift. |
+| A row in Skylight's menu (the Space button at the left of the Space bar) | `MenuContent` in `Sources/SkylightUI/SkylightMenu.swift`. Give it a menu bar command where one exists, so its action and shortcut can't drift. |
 | Build, bundle, signing | `scripts/bundle.sh`. Releases that installed copies update to: `scripts/publish.sh`. Notarized DMGs: `scripts/release.sh`. CEF version: `scripts/fetch-cef.sh`. |
 | Updates | `Sources/Skylight/Updater.swift` (Sparkle, app target only). The feed URL and public key are in `bundle.sh`. |
 

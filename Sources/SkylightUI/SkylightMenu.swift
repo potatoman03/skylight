@@ -60,10 +60,10 @@ enum MenuContent {
         let state = browser.store.state
         let status = browser.selectedStatus
         let hasTab = state.selectedTabID != nil
+        // It opens upward, so the commonest rows are nearest the button.
         return [
             [
-                MenuRow("New Tab", "plus", "newTab:"),
-                MenuRow("New Space", "square.stack", "newSpace:"),
+                MenuRow("Profiles", "person.crop.circle") { browser.openSettings("profiles") },
             ],
             [
                 MenuRow("Favorites", "star", submenu: favorites(browser)),
@@ -84,11 +84,12 @@ enum MenuContent {
                         MenuRow("Copy Claude Code Command", "doc.on.doc", "copyAgentCommand:"),
                     ],
                 ]),
+                MenuRow("Keyboard Shortcuts", "command", "showShortcuts:"),
+                MenuRow("Settings", "gearshape", "showSettings:"),
             ],
             [
-                MenuRow("Profiles", "person.crop.circle") { browser.openSettings("profiles") },
-                MenuRow("Settings", "gearshape", "showSettings:"),
-                MenuRow("Keyboard Shortcuts", "command", "showShortcuts:"),
+                MenuRow("New Tab", "plus", "newTab:"),
+                MenuRow("New Space", "square.stack", "newSpace:"),
             ],
         ]
     }
@@ -241,7 +242,7 @@ final class MenuSession {
             row = index
             apex = point
         } else if open != nil, let apex, panels[1].width > 0,
-                  MenuNavigation.isInFunnel(point, from: apex, toEdgeAtX: panels[1].maxX, top: panels[1].minY, bottom: panels[1].maxY) {
+                  MenuNavigation.isInFunnel(point, from: apex, toEdgeAtX: panels[1].minX, top: panels[1].minY, bottom: panels[1].maxY) {
             // On the way to the submenu. It only gives way if the pointer stops here.
             settle(on: index, after: Self.funnelDelay, restart: true)
         } else {
@@ -312,8 +313,8 @@ final class MenuSession {
         switch event.keyCode {
         case 125: move(1)  // down
         case 126: move(-1)  // up
-        case 123: enterSubmenu()  // left
-        case 124: if subrow != nil { leaveSubmenu() } else { enterSubmenu() }  // right
+        case 123: if subrow != nil { leaveSubmenu() }  // left
+        case 124: enterSubmenu()  // right
         case 36, 49, 76:  // return, space, enter
             if let subrow, subrows.indices.contains(subrow) {
                 run(subrows[subrow])
@@ -337,8 +338,6 @@ final class MenuSession {
         }
     }
 
-    /// The submenu sits to the left, so left goes into it and right comes back. Right also goes
-    /// in, as on a Mac's menus.
     private func enterSubmenu() {
         cancelHover()
         guard subrow == nil, let row, rows[row].opensSubmenu else { return }
@@ -354,18 +353,28 @@ final class MenuSession {
     }
 }
 
-/// The ··· button. It opens on press, like a Mac's menus, so you can drag straight down into the
-/// menu and let go on a row. The action is for VoiceOver and Full Keyboard Access, which don't press.
+/// The button at the left of the Space bar: the Space you're in, and a chevron. It opens on press,
+/// like a Mac's menus, so you can drag straight into the menu and let go on a row. The action is
+/// for VoiceOver and Full Keyboard Access, which don't press.
 struct SkylightMenuButton: View {
     @Environment(Browser.self) private var browser
     @State private var openedByPress = false
 
     var body: some View {
+        let space = browser.store.state.activeSpace
         Button {
             if !openedByPress { browser.toggleMainMenu() }
             openedByPress = false
         } label: {
-            Label("Menu", systemImage: "ellipsis").labelStyle(.iconOnly)
+            HStack(spacing: 4) {
+                SpaceIcon(icon: space.icon, name: space.name, size: 10)
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(Theme.accent(space.hue), in: .circle)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
         }
         .buttonStyle(MenuButtonStyle { pressed in
             guard pressed, !browser.showsMainMenu else { return }
@@ -373,36 +382,50 @@ struct SkylightMenuButton: View {
             browser.toggleMainMenu()
         })
         .help("Menu")
+        .accessibilityLabel("Menu")
     }
 }
 
+/// A box that shows on hover and dips when pressed, like the toolbar's buttons.
 private struct MenuButtonStyle: ButtonStyle {
     let onPress: (Bool) -> Void
 
     func makeBody(configuration: Configuration) -> some View {
-        ToolbarIconStyle().makeBody(configuration: configuration)
-            .onChange(of: configuration.isPressed) { _, pressed in onPress(pressed) }
+        Look(configuration: configuration).onChange(of: configuration.isPressed) { _, pressed in onPress(pressed) }
+    }
+
+    private struct Look: View {
+        let configuration: Configuration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .padding(.vertical, 2)
+                .padding(.horizontal, 4)
+                .background(.primary.opacity(configuration.isPressed ? 0.14 : hovering ? 0.08 : 0), in: .rect(cornerRadius: 8, style: .continuous))
+                .contentShape(.rect)
+                .animation(Motion.resolved(Motion.feedback), value: hovering)
+                .onHover { hovering = $0 }
+        }
     }
 }
 
-/// Skylight's menu, under the ··· button at the end of the toolbar: a pane of glass over the page,
-/// with a second one for a submenu.
+/// Skylight's menu, above the Space button: a pane of glass in the window's
+/// top left corner, with a second one to its right for a submenu.
 struct SkylightMenu: View {
     @Environment(Browser.self) private var browser
-    @State private var height: CGFloat = 0
 
     var body: some View {
         let showing = browser.showsMainMenu && browser.pages.fullscreenTabID == nil
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .bottomLeading) {
             Color.clear.allowsHitTesting(false)
             if showing {
-                MenuPanels(browser: browser, height: height)
-                    .padding(.top, MenuMetrics.margin)
-                    .padding(.trailing, MenuMetrics.margin + 2)
+                MenuPanels(browser: browser)
+                    .padding(.bottom, MenuMetrics.bottom)
+                    .padding(.leading, MenuMetrics.margin + 2)
                     .transition(.opacity)
             }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         .motion(Motion.feedback, value: showing)
     }
 }
@@ -410,12 +433,13 @@ struct SkylightMenu: View {
 enum MenuMetrics {
     static let margin: CGFloat = 6
     static let gap: CGFloat = 6
-    static let gutter: CGFloat = 17
     static let inset: CGFloat = 5
     static let rowHeight: CGFloat = 28
     static let divider: CGFloat = 9
     static let radius: CGFloat = 14
     static let width: CGFloat = 244
+    /// From the window's bottom edge: clear of the Space bar and its button.
+    static let bottom: CGFloat = 38
 
     /// How far down its panel the row `index` starts.
     static func top(of index: Int, in sections: [[MenuRow]]) -> CGFloat {
@@ -429,32 +453,30 @@ enum MenuMetrics {
 }
 
 private struct MenuPanels: View {
-    let height: CGFloat
     private let browser: Browser
     @State private var session: MenuSession
     @State private var submenuHeight: CGFloat = 0
 
-    init(browser: Browser, height: CGFloat) {
+    init(browser: Browser) {
         self.browser = browser
-        self.height = height
         _session = State(initialValue: MenuSession(browser: browser))
     }
 
     var body: some View {
         let sections = MenuContent.sections(browser)
         let rows = sections.flatMap(\.self)
-        MenuPanel(sections: sections, highlight: session.row, gutter: true, choose: { session.choose($0) })
+        MenuPanel(sections: sections, highlight: session.row, choose: { session.choose($0) })
             .frame(width: MenuMetrics.width)
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.panels[0] = $0 }
-            // Hung off the menu's left edge, outside its layout, so the menu stays put. It appears at
+            // Hung off the menu's right edge, outside its layout, so the menu stays put. It appears at
             // once, like a Mac's.
-            .overlay(alignment: .topLeading) {
+            .overlay(alignment: .topTrailing) {
                 Color.clear
                     .frame(width: 0, height: 0)
-                    .overlay(alignment: .topTrailing) {
+                    .overlay(alignment: .topLeading) {
                         if let open = session.open, rows.indices.contains(open) {
-                            MenuPanel(sections: rows[open].submenu, highlight: session.subrow, gutter: false,
+                            MenuPanel(sections: rows[open].submenu, highlight: session.subrow,
                                       choose: { session.run(session.subrows[$0]) })
                                 .frame(minWidth: 200, maxWidth: 300)
                                 .fixedSize()
@@ -463,9 +485,9 @@ private struct MenuPanels: View {
                                     submenuHeight = $0.height
                                 }
                                 // Level with its row, as far as the window allows.
-                                .offset(x: -MenuMetrics.gap,
-                                        y: max(0, min(MenuMetrics.top(of: open, in: sections) - MenuMetrics.inset,
-                                                      height - submenuHeight - 2 * MenuMetrics.margin)))
+                                .offset(x: MenuMetrics.gap,
+                                        y: min(MenuMetrics.top(of: open, in: sections) - MenuMetrics.inset,
+                                               session.panels[0].height + MenuMetrics.bottom - MenuMetrics.margin - submenuHeight))
                         }
                     }
             }
@@ -483,8 +505,6 @@ private struct MenuPanels: View {
 private struct MenuPanel: View {
     let sections: [[MenuRow]]
     let highlight: Int?
-    /// Room at the rows' leading edge for the chevrons.
-    let gutter: Bool
     let choose: (Int) -> Void
 
     var body: some View {
@@ -497,13 +517,18 @@ private struct MenuPanel: View {
                 }
                 let first = sections[..<section].joined().count
                 ForEach(Array(sections[section].enumerated()), id: \.element.id) { offset, row in
-                    MenuRowView(row: row, highlighted: highlight == first + offset, gutter: gutter,
+                    MenuRowView(row: row, highlighted: highlight == first + offset,
                                 choose: { choose(first + offset) })
                 }
             }
         }
         .padding(MenuMetrics.inset)
         .glassEffect(.regular, in: .rect(cornerRadius: MenuMetrics.radius, style: .continuous))
+        // A hairline, so the pane keeps its edge against a dark sidebar.
+        .overlay {
+            RoundedRectangle(cornerRadius: MenuMetrics.radius, style: .continuous)
+                .strokeBorder(.primary.opacity(0.1), lineWidth: 0.5)
+        }
         .shadow(color: .black.opacity(0.16), radius: 18, y: 8)
     }
 }
@@ -511,7 +536,6 @@ private struct MenuPanel: View {
 private struct MenuRowView: View {
     let row: MenuRow
     let highlighted: Bool
-    let gutter: Bool
     let choose: () -> Void
     @Environment(Browser.self) private var browser
 
@@ -524,20 +548,15 @@ private struct MenuRowView: View {
                 if let keys = row.keys {
                     Text(keys).foregroundStyle(.secondary)
                 }
-            }
-            .font(browser.preferences.density.rowFont)
-            .padding(.leading, gutter ? MenuMetrics.gutter : 9)
-            .padding(.trailing, 9)
-            .frame(height: MenuMetrics.rowHeight)
-            // Submenus open to the left, so the chevron sits on that side and points there.
-            .overlay(alignment: .leading) {
                 if row.opensSubmenu {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 9, weight: .semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .frame(width: MenuMetrics.gutter)
                 }
             }
+            .font(browser.preferences.density.rowFont)
+            .padding(.horizontal, 9)
+            .frame(height: MenuMetrics.rowHeight)
             .contentShape(.rect)
         }
         .buttonStyle(MenuRowStyle(highlighted: highlighted))
