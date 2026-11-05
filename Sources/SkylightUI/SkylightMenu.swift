@@ -422,7 +422,7 @@ struct SkylightMenu: View {
             if showing {
                 MenuPanels(browser: browser)
                     .padding(.bottom, MenuMetrics.bottom)
-                    .padding(.leading, MenuMetrics.margin + 2)
+                    .padding(.leading, MenuMetrics.margin)
                     .transition(.opacity)
             }
         }
@@ -431,8 +431,8 @@ struct SkylightMenu: View {
 }
 
 enum MenuMetrics {
-    static let margin: CGFloat = 6
-    static let gap: CGFloat = 6
+    /// Around the menu in the sidebar, and between the menu and a submenu.
+    static let margin: CGFloat = 8
     static let inset: CGFloat = 5
     static let rowHeight: CGFloat = 28
     static let divider: CGFloat = 9
@@ -466,7 +466,8 @@ private struct MenuPanels: View {
         let sections = MenuContent.sections(browser)
         let rows = sections.flatMap(\.self)
         MenuPanel(sections: sections, highlight: session.row, choose: { session.choose($0) })
-            .frame(width: MenuMetrics.width)
+            // Inside the sidebar, so its edge doesn't run through the glass.
+            .frame(width: min(MenuMetrics.width, max(browser.preferences.sidebarWidth, SidebarEdge.widths.lowerBound) - 2 * MenuMetrics.margin))
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.panels[0] = $0 }
             // Hung off the menu's right edge, outside its layout, so the menu stays put. It appears at
@@ -484,10 +485,10 @@ private struct MenuPanels: View {
                                     session.panels[1] = $0
                                     submenuHeight = $0.height
                                 }
-                                // Level with its row, as far as the window allows.
-                                .offset(x: MenuMetrics.gap,
+                                // Level with its row, without passing the menu's foot.
+                                .offset(x: MenuMetrics.margin,
                                         y: min(MenuMetrics.top(of: open, in: sections) - MenuMetrics.inset,
-                                               session.panels[0].height + MenuMetrics.bottom - MenuMetrics.margin - submenuHeight))
+                                               session.panels[0].height - submenuHeight))
                         }
                     }
             }
