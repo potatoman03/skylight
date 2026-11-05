@@ -32,7 +32,7 @@ public final class Browser {
     public var renameTab: TabID?
     /// Whether the keyboard shortcuts sheet is up.
     public var showShortcuts = false
-    /// Whether Skylight's menu, from the toolbar's ··· button, is open.
+    /// Whether Skylight's menu, from the Space button in the sidebar, is open.
     public var showsMainMenu = false
     /// A new version, downloaded and waiting for a restart. The app's updater sets it.
     public var readyUpdate: ReadyUpdate?
