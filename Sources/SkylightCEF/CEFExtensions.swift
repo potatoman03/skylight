@@ -61,14 +61,22 @@ final class CEFExtensionHost: ExtensionHost {
     var openTab: (@MainActor (URL) -> Void)?
 
     private let channel = DevToolsChannel()
-    private let helperFolder: URL?
     private var started = false
-    /// Running extension service workers, by target id.
-    private var workers: Set<String> = []
-    private var tabs = TabsSnapshot(active: nil, all: [])
+    /// Running extension service workers: target id to browser context, which is Chromium's name
+    /// for a profile.
+    private var workers: [String: String] = [:]
+    /// What each profile's extensions may see. Tab ids never cross from one profile to another.
+    private var tabs: [String: TabsSnapshot] = [:]
+    private var groups: [ExtensionTabs] = []
+    /// Browser contexts, by profile.
+    private var contexts: [ObjectIdentifier: String] = [:]
     private var pushTask: Task<Void, Never>?
+    /// One marker search at a time: a second one would overwrite the first one's marker.
+    private var search: Task<(id: String, context: String)?, Never>?
 
     struct TabsSnapshot: Equatable {
+        static let none = TabsSnapshot(active: nil, all: [])
+
         var active: Int?
         var all: [Int]
 
@@ -77,15 +85,14 @@ final class CEFExtensionHost: ExtensionHost {
         }
     }
 
-    init(helperFolder: URL?) {
-        self.helperFolder = helperFolder
+    init() {
         channel.onEvent = { [weak self] method, params, session in self?.handle(method, params, session: session) }
         SKEngine.setForeignBrowserHandler { [weak self] browser, url in
             MainActor.assumeIsolated { self?.adopt(browser, url: url) }
         }
     }
 
-    private func startIfNeeded() async {
+    func start() async {
         guard !started else { return }
         started = true
         // Every extension service worker that starts gets the shim before its own code runs.
@@ -96,14 +103,12 @@ final class CEFExtensionHost: ExtensionHost {
         _ = try? await channel.send("Target.setDiscoverTargets", [
             "discover": true, "filter": [["type": "service_worker"], ["exclude": true]],
         ])
-        await loadHelper()
     }
 
     /// Chrome's tab ids for Alloy pages aren't CEF's browser ids, and nothing native reports
     /// them. A built-in extension asks: its content script learns the tab's id from its
     /// service worker and marks the page, and the page tells Skylight (see `CEFEngine`).
-    private func loadHelper() async {
-        guard let folder = helperFolder else { return }
+    static func writeHelper(to folder: URL) {
         let files = [
             "manifest.json": #"{"manifest_version":3,"name":"Skylight Tabs","version":"1.0","description":"Tells Skylight each page's tab id.","background":{"service_worker":"sw.js"},"content_scripts":[{"matches":["<all_urls>"],"js":["cs.js"],"run_at":"document_start"}]}"#,
             "sw.js": "chrome.runtime.onMessage.addListener((m, sender, reply) => { if (m === 'skylight.tab') reply(sender.tab ? sender.tab.id : null); });",
@@ -111,12 +116,11 @@ final class CEFExtensionHost: ExtensionHost {
         ]
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for (name, text) in files { try? Data(text.utf8).write(to: folder.appending(path: name), options: .atomic) }
-        _ = try? await channel.send("Extensions.loadUnpacked", ["path": .string(folder.path)])
     }
 
     func load(_ directory: URL) async throws -> String {
         guard SKEngine.hasDevToolsPipe() else { throw DevToolsChannel.Failure(message: "Extensions aren't available in this build.") }
-        await startIfNeeded()
+        await start()
         let result = try await channel.send("Extensions.loadUnpacked", ["path": .string(directory.path)])
         guard let id = result["id"]?.stringValue else { throw DevToolsChannel.Failure(message: "Chromium didn't load the extension.") }
         return id
@@ -126,29 +130,41 @@ final class CEFExtensionHost: ExtensionHost {
         try await channel.send("Extensions.uninstall", ["id": .string(id)])
     }
 
-    func setTabs(_ pages: [WebPage], active: WebPage?) {
-        let snapshot = TabsSnapshot(active: active.map(\.extensionTabID).flatMap { $0 == 0 ? nil : $0 },
-                                    all: pages.map(\.extensionTabID).filter { $0 != 0 })
-        guard snapshot != tabs else { return }
-        tabs = snapshot
+    func setTabs(_ groups: [ExtensionTabs]) {
+        self.groups = groups
         // Coalesce quick tab switches into one update per worker.
         pushTask?.cancel()
         pushTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled, let self else { return }
-            for target in self.workers { await self.update(worker: target) }
+            await self.pushTabs()
         }
     }
 
-    /// The tabs as extension pages ask for them (see `Self.shim`).
-    var tabsJSON: JSONValue { tabs.json }
+    private func pushTabs() async {
+        guard !workers.isEmpty else { return }
+        for group in groups where contexts[ObjectIdentifier(group.profile)] == nil {
+            if let page = group.pages.first, let target = await target(for: page) {
+                contexts[ObjectIdentifier(group.profile)] = target.context
+            }
+        }
+        var next: [String: TabsSnapshot] = [:]
+        for group in groups {
+            guard let context = contexts[ObjectIdentifier(group.profile)] else { continue }
+            next[context] = TabsSnapshot(active: group.active.map(\.extensionTabID).flatMap { $0 == 0 ? nil : $0 },
+                                         all: group.pages.map(\.extensionTabID).filter { $0 != 0 })
+        }
+        let old = tabs
+        tabs = next
+        for (target, context) in workers where old[context] != next[context] { await update(worker: target) }
+    }
 
     func triggerAction(_ id: String, page: WebPage?) async throws {
-        await startIfNeeded()
-        guard let target = await targetID(for: page) else {
+        await start()
+        guard let target = await target(for: page) else {
             throw DevToolsChannel.Failure(message: "Open a page first.")
         }
-        try await channel.send("Extensions.triggerAction", ["id": .string(id), "targetId": .string(target)])
+        try await channel.send("Extensions.triggerAction", ["id": .string(id), "targetId": .string(target.id)])
     }
 
     // MARK: - Service workers
@@ -157,55 +173,78 @@ final class CEFExtensionHost: ExtensionHost {
         let info = params["targetInfo"]
         switch method {
         case "Target.attachedToTarget":
-            guard let sessionID = params["sessionId"]?.stringValue else { return }
+            // Sessions Skylight opened itself aren't waiting, and are still in use.
+            guard let sessionID = params["sessionId"]?.stringValue, params["waitingForDebugger"]?.boolValue == true else { return }
             let isExtension = info?["url"]?.stringValue?.hasPrefix("chrome-extension://") == true
-            Task { await self.prepare(session: sessionID, inject: isExtension) }
+            let context = info?["browserContextId"]?.stringValue
+            Task { await self.prepare(session: sessionID, inject: isExtension, context: context) }
         case "Target.targetCreated", "Target.targetInfoChanged":
-            if let id = info?["targetId"]?.stringValue, info?["url"]?.stringValue?.hasPrefix("chrome-extension://") == true {
-                workers.insert(id)
+            if let id = info?["targetId"]?.stringValue, let context = info?["browserContextId"]?.stringValue,
+               info?["url"]?.stringValue?.hasPrefix("chrome-extension://") == true, workers[id] == nil {
+                workers[id] = context
+                // Extensions Chromium loaded at launch start before the shim can get in first.
+                Task {
+                    await self.pushTabs()
+                    await self.update(worker: id)
+                }
             }
         case "Target.targetDestroyed":
-            if let id = params["targetId"]?.stringValue { workers.remove(id) }
+            if let id = params["targetId"]?.stringValue { workers[id] = nil }
         default:
             break
         }
     }
 
     /// A worker paused at start: add the shim, let it run, and let go of it so it can sleep.
-    private func prepare(session: String, inject: Bool) async {
+    private func prepare(session: String, inject: Bool, context: String?) async {
+        // Read the tabs at each step: they can change while this waits.
+        let script = { Self.workerScript(context.flatMap { self.tabs[$0] } ?? .none) }
         if inject {
-            _ = try? await channel.send("Runtime.evaluate", ["expression": .string(Self.workerScript(tabs))], session: session)
+            _ = try? await channel.send("Runtime.evaluate", ["expression": .string(script())], session: session)
         }
         _ = try? await channel.send("Runtime.runIfWaitingForDebugger", session: session)
         if inject {
             // Code that waited for the shim's first run sees it now.
-            _ = try? await channel.send("Runtime.evaluate", ["expression": .string(Self.workerScript(tabs))], session: session)
+            _ = try? await channel.send("Runtime.evaluate", ["expression": .string(script())], session: session)
         }
         _ = try? await channel.send("Target.detachFromTarget", ["sessionId": .string(session)])
     }
 
     private func update(worker target: String) async {
         guard let attached = try? await channel.send("Target.attachToTarget", ["targetId": .string(target), "flatten": true]),
-              let session = attached["sessionId"]?.stringValue else { workers.remove(target); return }
-        _ = try? await channel.send("Runtime.evaluate", ["expression": .string(Self.workerScript(tabs))], session: session)
+              let session = attached["sessionId"]?.stringValue else { workers[target] = nil; return }
+        let snapshot = workers[target].flatMap { tabs[$0] } ?? .none
+        _ = try? await channel.send("Runtime.evaluate", ["expression": .string(Self.workerScript(snapshot))], session: session)
         _ = try? await channel.send("Target.detachFromTarget", ["sessionId": .string(session)])
     }
 
-    /// The page's DevTools target. Pages with the same address are told apart by a marker.
-    private func targetID(for page: WebPage?) async -> String? {
+    /// The page's DevTools target and its browser context. Pages with the same address are told
+    /// apart by a marker.
+    private func target(for page: WebPage?) async -> (id: String, context: String)? {
         guard let page else { return nil }
-        guard let targets = try? await channel.send("Target.getTargets")["targetInfos"]?.arrayValue else { return nil }
-        let pagesOnly = targets.filter { $0["type"]?.stringValue == "page" }
+        let previous = search
+        let next = Task { () -> (id: String, context: String)? in
+            await previous?.value
+            return await self.find(page)
+        }
+        search = next
+        return await next.value
+    }
+
+    private func find(_ page: WebPage) async -> (id: String, context: String)? {
+        // Without its own filter, this reuses the one for service workers.
+        let pagesOnly: JSONValue = ["filter": [["type": "page"], ["exclude": true]]]
+        guard let targets = try? await channel.send("Target.getTargets", pagesOnly)["targetInfos"]?.arrayValue else { return nil }
         let marker = UUID().uuidString
         _ = try? await page.evaluate("window.__skylightTarget = \(JSONValue.jsLiteral(marker))")
-        for info in pagesOnly {
-            guard let id = info["targetId"]?.stringValue,
+        for info in targets {
+            guard let id = info["targetId"]?.stringValue, let context = info["browserContextId"]?.stringValue,
                   let attached = try? await channel.send("Target.attachToTarget", ["targetId": .string(id), "flatten": true]),
                   let session = attached["sessionId"]?.stringValue else { continue }
             let found = try? await channel.send("Runtime.evaluate", ["expression": "window.__skylightTarget", "returnByValue": true],
                                                 session: session)
             _ = try? await channel.send("Target.detachFromTarget", ["sessionId": .string(session)])
-            if found?["result"]?["value"]?.stringValue == marker { return id }
+            if found?["result"]?["value"]?.stringValue == marker { return (id, context) }
         }
         return nil
     }

@@ -822,6 +822,12 @@ private struct SpaceBar: View {
             }
             .buttonStyle(.borderless)
             .help("New Space (⌘⇧N)")
+            .contextMenu {
+                Button("New Space") { animate(Motion.swap) { _ = browser.store.send(.createSpace(name: "Space \(state.spaces.count + 1)")) } }
+                Button("New Space with the Same Logins") {
+                    animate(Motion.swap) { _ = browser.store.send(.createSpace(name: "Space \(state.spaces.count + 1)", sharing: state.activeSpaceID)) }
+                }
+            }
         }
     }
 }
@@ -961,8 +967,10 @@ struct SpaceMenu: View {
                                                    set: { if $0 { browser.store.send(.assignProfile(space.id, profile.id)) } }))
             }
             Divider()
+            Button("New Profile for This Space") { browser.store.send(.giveSpaceOwnProfile(space.id)) }
             Button("Manage Profiles…") { browser.openSettings("profiles") }
         }
+        Button("Duplicate Space") { animate(Motion.swap) { _ = browser.store.send(.duplicateSpace(space.id)) } }
         Button("Space Settings…") { browser.openSettings("spaces") }
         if state.spaces.count > 1 {
             Divider()

@@ -1,6 +1,7 @@
 import Foundation
+import SkylightCore
 
-/// A saved sign-in for one site.
+/// A saved sign-in for one site, in one profile.
 public struct Credential: Codable, Equatable, Hashable, Sendable, Identifiable {
     /// Normalized `https://host[:port]`. See `CredentialOrigin`.
     public var origin: String
@@ -10,17 +11,20 @@ public struct Credential: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var createdAt: Date?
     /// Where it came from, like "Chrome" or "CSV". Nil for passwords saved in Skylight.
     public var source: String?
+    public var profile: ProfileID
 
-    public var id: String { "\(origin)|\(username)" }
+    public var id: String { profile == .standard ? "\(origin)|\(username)" : "\(profile)|\(origin)|\(username)" }
 
     public var displayHost: String { CredentialOrigin.host(of: origin) ?? origin }
 
-    public init(origin: String, username: String, password: String = "", createdAt: Date? = nil, source: String? = nil) {
+    public init(origin: String, username: String, password: String = "", createdAt: Date? = nil, source: String? = nil,
+                profile: ProfileID = .standard) {
         self.origin = origin
         self.username = username
         self.password = password
         self.createdAt = createdAt
         self.source = source
+        self.profile = profile
     }
 
     /// The same credential without its password.

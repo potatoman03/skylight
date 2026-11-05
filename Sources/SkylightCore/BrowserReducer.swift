@@ -270,11 +270,28 @@ public enum BrowserReducer {
             state.spaces[si].folders[k].tabs.insert(id, at: max(0, min(index, tabs.count)))
             return ReduceResult()
 
-        case let .createSpace(name, hue):
+        case let .createSpace(name, hue, sharing):
+            let profile: ProfileID
+            if let sharing {
+                guard let shared = state.spaces.first(where: { $0.id == sharing }) else { return .ignored }
+                profile = shared.profileID
+            } else {
+                profile = env.makeProfileID()
+                state.profiles.append(Profile(id: profile, name: name))
+            }
             let hues = state.spaces.map(\.hue)
-            let space = Space(id: env.makeSpaceID(), name: name, hue: hue ?? nextHue(after: hues), profileID: state.activeSpace.profileID)
+            let space = Space(id: env.makeSpaceID(), name: name, hue: hue ?? nextHue(after: hues), profileID: profile)
             state.spaces.append(space)
             state.activeSpaceID = space.id
+            return ReduceResult(effects: [.showTab(nil)])
+
+        case let .duplicateSpace(id):
+            guard let i = state.spaces.firstIndex(where: { $0.id == id }) else { return .ignored }
+            let source = state.spaces[i]
+            let copy = Space(id: env.makeSpaceID(), name: "\(source.name) Copy", hue: source.hue, icon: source.icon,
+                             profileID: source.profileID, themeID: source.themeID)
+            state.spaces.insert(copy, at: i + 1)
+            state.activeSpaceID = copy.id
             return ReduceResult(effects: [.showTab(nil)])
 
         case let .renameSpace(id, name):
@@ -332,6 +349,12 @@ public enum BrowserReducer {
                 effects.append(.showTab(state.selectedTabID))
             }
             return ReduceResult(effects: effects)
+
+        case let .giveSpaceOwnProfile(id):
+            guard let space = state.spaces.first(where: { $0.id == id }) else { return .ignored }
+            let profile = Profile(id: env.makeProfileID(), name: space.name)
+            state.profiles.append(profile)
+            return reduce(&state, .assignProfile(id, profile.id), env: env)
 
         case let .createProfile(name):
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)

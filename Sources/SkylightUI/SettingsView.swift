@@ -246,7 +246,7 @@ private struct ProfilesSettings: View {
         Form {
             Section {
             } footer: {
-                Text("Each profile has its own cookies, logins and site data. Spaces on the same profile share them, so you sign in once. Choose a Space's profile in Spaces.")
+                Text("Each profile has its own cookies, site logins, saved passwords and extension data. A new Space gets its own profile. Spaces on the same profile share all of that, so duplicate a Space to keep its logins. Choose a Space's profile in Spaces.")
             }
             ForEach(state.profiles) { profile in
                 ProfileSection(profile: profile, spaces: state.spaces.filter { $0.profileID == profile.id })
@@ -290,9 +290,9 @@ private struct ProfileSection: View {
                 TextField("Name", text: $name)
                     .onSubmit { browser.store.send(.renameProfile(profile.id, name)) }
                 if profile.id != .standard {
-                    Button(role: .destructive) { browser.store.send(.deleteProfile(profile.id)) } label: { Image(systemName: "trash") }
+                    Button(role: .destructive) { browser.deleteProfile(profile.id) } label: { Image(systemName: "trash") }
                         .buttonStyle(.borderless)
-                        .help("Delete profile. Its Spaces move to Default.")
+                        .help("Delete profile. Its Spaces and saved passwords move to Default.")
                 }
             }
             LabeledContent("Color") {
