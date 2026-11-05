@@ -245,6 +245,16 @@ final class CEFProfile: WebProfile {
             native.copyCookies(forDomains: domains, to: target) { done.resume(returning: $0) }
         }
     }
+
+    func addCookies(_ cookies: [WebCookie]) async -> Int {
+        let native = cookies.map {
+            SKCookie(name: $0.name, value: $0.value, domain: $0.domain, path: $0.path, secure: $0.isSecure,
+                     httpOnly: $0.isHTTPOnly, expires: $0.expires, sameSite: $0.sameSite.rawValue)
+        }
+        return await withCheckedContinuation { done in
+            self.native.add(native) { done.resume(returning: $0) }
+        }
+    }
 }
 
 /// Lets main-thread-only Objective-C objects ride along in `@Sendable` closures.

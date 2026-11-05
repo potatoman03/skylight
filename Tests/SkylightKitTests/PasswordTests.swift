@@ -216,3 +216,122 @@ import Testing
         #expect(KeychainCredentialStore.credential(from: item, profile: work)?.profile == work)
     }
 }
+
+@Suite struct ChromiumCookieImporterTests {
+    static let key = "test-key"
+    static let now = Date(timeIntervalSince1970: 1_800_000_000)
+    /// Chromium's time for a date, in microseconds since 1601.
+    static func stamp(_ date: Date) -> Int64 { Int64((date.timeIntervalSince1970 + 11_644_473_600) * 1_000_000) }
+
+    func encrypt(_ plain: String, hash: Bool = false) -> [UInt8] {
+        let derived = ChromiumPasswordImporter.derivedKey(Self.key)
+        let body = (hash ? [UInt8](repeating: 7, count: 32) : []) + Array(plain.utf8)
+        return Array("v10".utf8) + ChromiumPasswordImporter.crypt(CCOperation(kCCEncrypt), body, key: derived)!
+    }
+
+    struct Row {
+        var host = ".example.com", name = "sid", value = "", path = "/"
+        var blob: [UInt8] = []
+        var expires: Int64 = 0
+        var secure: Int32 = 1, httpOnly: Int32 = 1, sameSite: Int32 = 1
+        var partition = ""
+    }
+
+    func makeCookies(version: Int, partitioned: Bool = true, rows: [Row]) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "skylight-cookies-\(UUID())")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appending(path: "Cookies")
+        var db: OpaquePointer?
+        #expect(sqlite3_open(file.path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+        let schema = """
+        CREATE TABLE meta(key TEXT, value TEXT);
+        INSERT INTO meta VALUES('version', '\(version)');
+        CREATE TABLE cookies(host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER,
+                             is_secure INTEGER, is_httponly INTEGER, samesite INTEGER\(partitioned ? ", top_frame_site_key TEXT" : ""));
+        """
+        #expect(sqlite3_exec(db, schema, nil, nil, nil) == SQLITE_OK)
+        for row in rows {
+            var statement: OpaquePointer?
+            sqlite3_prepare_v2(db, "INSERT INTO cookies VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?\(partitioned ? ", ?" : ""))", -1, &statement, nil)
+            let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+            sqlite3_bind_text(statement, 1, row.host, -1, transient)
+            sqlite3_bind_text(statement, 2, row.name, -1, transient)
+            sqlite3_bind_text(statement, 3, row.value, -1, transient)
+            _ = row.blob.withUnsafeBytes { sqlite3_bind_blob(statement, 4, $0.baseAddress, Int32(row.blob.count), transient) }
+            sqlite3_bind_text(statement, 5, row.path, -1, transient)
+            sqlite3_bind_int64(statement, 6, row.expires)
+            sqlite3_bind_int(statement, 7, row.secure)
+            sqlite3_bind_int(statement, 8, row.httpOnly)
+            sqlite3_bind_int(statement, 9, row.sameSite)
+            if partitioned { sqlite3_bind_text(statement, 10, row.partition, -1, transient) }
+            #expect(sqlite3_step(statement) == SQLITE_DONE)
+            sqlite3_finalize(statement)
+        }
+        return file
+    }
+
+    @Test func readsAndDecryptsCookies() throws {
+        let expires = Self.now.addingTimeInterval(3600)
+        let file = try makeCookies(version: 24, rows: [
+            Row(host: ".example.com", name: "sid", path: "/app", blob: encrypt("sécret", hash: true), expires: Self.stamp(expires)),
+            Row(host: "only.example.com", name: "session", blob: encrypt("x", hash: true), secure: 0, httpOnly: 0, sameSite: -1),
+        ])
+        let cookies = try ChromiumCookieImporter.read(cookies: file, safeStorageKey: Self.key, now: Self.now)
+        #expect(cookies.count == 2)
+        let sid = try #require(cookies.first { $0.name == "sid" })
+        #expect(sid.value == "sécret")
+        #expect(sid.domain == ".example.com")
+        #expect(sid.host == "example.com")
+        #expect(sid.path == "/app")
+        #expect(sid.isSecure && sid.isHTTPOnly)
+        #expect(sid.sameSite == .lax)
+        #expect(abs(sid.expires!.timeIntervalSince(expires)) < 1)
+        let session = try #require(cookies.first { $0.name == "session" })
+        #expect(session.expires == nil)
+        #expect(session.sameSite == .unspecified)
+        #expect(!session.isSecure && !session.isHTTPOnly)
+    }
+
+    @Test func olderDatabasesHaveNoHostHash() throws {
+        let file = try makeCookies(version: 23, partitioned: false, rows: [Row(blob: encrypt("value"))])
+        let cookies = try ChromiumCookieImporter.read(cookies: file, safeStorageKey: Self.key, now: Self.now)
+        #expect(cookies.map(\.value) == ["value"])
+    }
+
+    @Test func plainValuesComeAcross() throws {
+        let file = try makeCookies(version: 24, rows: [Row(value: "plain")])
+        let cookies = try ChromiumCookieImporter.read(cookies: file, safeStorageKey: Self.key, now: Self.now)
+        #expect(cookies.map(\.value) == ["plain"])
+    }
+
+    @Test func expiredAndPartitionedCookiesAreLeft() throws {
+        let file = try makeCookies(version: 24, rows: [
+            Row(name: "old", blob: encrypt("a", hash: true), expires: Self.stamp(Self.now.addingTimeInterval(-1))),
+            Row(name: "embedded", blob: encrypt("b", hash: true), partition: "https://other.example"),
+            Row(name: "kept", blob: encrypt("c", hash: true)),
+        ])
+        let cookies = try ChromiumCookieImporter.read(cookies: file, safeStorageKey: Self.key, now: Self.now)
+        #expect(cookies.map(\.name) == ["kept"])
+    }
+
+    @Test func aWrongKeyDropsRowsQuietly() throws {
+        let file = try makeCookies(version: 24, rows: [Row(blob: encrypt("value", hash: true))])
+        #expect(try ChromiumCookieImporter.read(cookies: file, safeStorageKey: "wrong", now: Self.now).isEmpty)
+    }
+
+    @Test func aMissingFileIsAnError() {
+        #expect(throws: ChromiumImportError.self) {
+            try ChromiumCookieImporter.read(cookies: URL(fileURLWithPath: "/nonexistent/Cookies"), safeStorageKey: "k")
+        }
+    }
+
+    @Test func newerProfilesKeepCookiesInNetwork() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "skylight-profile-\(UUID())")
+        try FileManager.default.createDirectory(at: dir.appending(path: "Network"), withIntermediateDirectories: true)
+        let browser = ChromiumBrowser(id: "t", name: "T", profileDirectory: dir, safeStorageServices: [], bundleIDs: [])
+        #expect(browser.cookies.lastPathComponent == "Cookies" && !browser.cookies.path.contains("/Network/"))
+        FileManager.default.createFile(atPath: dir.appending(path: "Network/Cookies").path, contents: Data())
+        #expect(browser.cookies.path.hasSuffix("Network/Cookies"))
+    }
+}

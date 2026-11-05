@@ -124,8 +124,9 @@ Rules the map implies:
 - **Fill a new profile before anything opens it.** Extension data is copied as files, so it has to
   land before `PageCoordinator.profile(for:)` makes the profile; cookies go through Chromium's
   cookie manager, because the files are encrypted and httpOnly cookies are out of a page's reach.
-  Read cookie names to see who's signed in, never their values. A profile with `passwordsFrom`
-  stores no passwords of its own, so anything reading or saving them goes through
+  Read cookie names to see who's signed in, never their values; only an import handles a value,
+  passing it straight to the profile, and never logs it. A profile with `passwordsFrom` stores no
+  passwords of its own, so anything reading or saving them goes through
   `BrowserState.passwordProfile(for:)`.
 - **Run against a throwaway data folder.** `SKYLIGHT_DATA_DIR` resolves symlinks because Chromium
   compares cache paths literally (`/var` vs `/private/var`). If Skylight is installed and running,

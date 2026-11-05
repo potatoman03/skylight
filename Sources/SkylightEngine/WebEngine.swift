@@ -73,6 +73,8 @@ public protocol WebProfile: AnyObject {
     func cookieNames(domains: [String]) async -> Set<String>
     /// Copies the cookies for these domains and their subdomains. Returns how many were copied.
     func copyCookies(domains: [String], to profile: WebProfile) async -> Int
+    /// Adds cookies from elsewhere, keeping any this profile already has. Returns how many were added.
+    func addCookies(_ cookies: [WebCookie]) async -> Int
 }
 
 @MainActor

@@ -355,37 +355,69 @@ public final class Browser {
             }
         }
 
-        public var isAvailable: Bool { FileManager.default.fileExists(atPath: file.path) }
+        /// Where the same browser keeps its logins and cookies.
+        public var chromium: ChromiumBrowser? { ChromiumBrowser.all.first { $0.id == rawValue.lowercased() } }
+
+        public var isAvailable: Bool { FileManager.default.fileExists(atPath: file.path) || chromium?.isInstalled == true }
 
         /// What comes over, for the import screen.
         public var summary: String {
             switch self {
-            case .arc: "Spaces, pinned tabs and favorites"
-            case .aside: "Sidebar folders as Spaces, plus bookmarks"
-            default: "Bookmarks bar as favorites, folders as Spaces"
+            case .arc: "Spaces, pinned tabs, favorites, passwords and sign-ins"
+            case .aside: "Sidebar folders as Spaces, bookmarks, passwords and sign-ins"
+            default: "Bookmarks bar as favorites, folders as Spaces, passwords and sign-ins"
             }
         }
     }
 
-    /// Brings Spaces, pinned tabs and favorites over from another browser. Returns a summary.
+    /// Brings Spaces, tabs, passwords and sign-ins over from another browser, into the Space on
+    /// screen. macOS asks before Skylight can read that browser's key. Returns a summary.
     @discardableResult
-    public func importBrowser(_ source: ImportSource) -> String {
+    public func importBrowser(_ source: ImportSource) async -> String {
+        var problem: String?
+        var tabs = 0
         do {
-            let data = try Data(contentsOf: source.file)
-            let imported = source == .arc ? try BrowserImporters.arc(data)
-                : try BrowserImporters.chromium(data, browser: source.rawValue)
-            let before = store.state.tabs.count
-            store.send(.importBrowserData(imported))
-            let added = store.state.tabs.count - before
-            let message = added == 0 ? "Everything from \(source.rawValue) is already here"
-                : "Imported \(added) tab\(added == 1 ? "" : "s") from \(source.rawValue)"
-            toasts.show(message, symbol: "square.and.arrow.down")
-            return message
+            if FileManager.default.fileExists(atPath: source.file.path) {
+                let data = try Data(contentsOf: source.file)
+                let imported = source == .arc ? try BrowserImporters.arc(data)
+                    : try BrowserImporters.chromium(data, browser: source.rawValue)
+                let before = store.state.tabs.count
+                store.send(.importBrowserData(imported))
+                tabs = store.state.tabs.count - before
+            }
         } catch {
-            let message = (error as? LocalizedError)?.errorDescription ?? "Couldn't import from \(source.rawValue)."
-            toasts.show(message, symbol: "exclamationmark.triangle")
-            return message
+            problem = (error as? LocalizedError)?.errorDescription ?? "Couldn't read \(source.rawValue)'s tabs."
         }
+
+        var logins = 0
+        var sites = 0
+        if let chromium = source.chromium {
+            do {
+                let profile = store.state.activeSpace.profileID
+                let found = try await passwords.signIns(from: chromium)
+                logins = passwords.save(found.credentials, into: store.state.passwordProfile(for: profile)).added
+                if await pages.addCookies(found.cookies, to: profile) > 0 {
+                    sites = Set(found.cookies.map(\.host)).count
+                }
+            } catch {
+                let reason = (error as? LocalizedError)?.errorDescription ?? "Couldn't read them."
+                problem = "Passwords and sign-ins stayed behind. \(reason)"
+            }
+        }
+
+        var parts: [String] = []
+        if tabs > 0 { parts.append("\(tabs) tab\(tabs == 1 ? "" : "s")") }
+        if logins > 0 { parts.append("\(logins) password\(logins == 1 ? "" : "s")") }
+        if sites > 0 { parts.append("sign-ins for \(sites) site\(sites == 1 ? "" : "s")") }
+        let summary = parts.isEmpty ? nil : "Imported " + ListFormatter.localizedString(byJoining: parts) + " from \(source.rawValue)"
+        let message = [summary, problem].compactMap(\.self).joined(separator: ". ")
+        guard !message.isEmpty else {
+            let same = "Everything from \(source.rawValue) is already here"
+            toasts.show(same, symbol: "square.and.arrow.down")
+            return same
+        }
+        toasts.show(message, symbol: problem == nil ? "square.and.arrow.down" : "exclamationmark.triangle")
+        return message
     }
 
 
@@ -580,7 +612,7 @@ extension Browser: CommandSource {
         command("clear-today", "Clear Today tabs", "arrow.down.to.line") { [weak self] in self?.store.send(.clearToday) }
         for source in ImportSource.allCases where source.isAvailable {
             command("import-\(source.rawValue)", "Import from \(source.rawValue)", "square.and.arrow.down") { [weak self] in
-                self?.importBrowser(source)
+                Task { await self?.importBrowser(source) }
             }
         }
 

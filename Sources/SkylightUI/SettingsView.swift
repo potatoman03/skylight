@@ -342,8 +342,11 @@ struct ProfileBadge: View {
 private struct ImportSettings: View {
     @Environment(Browser.self) private var browser
     @State private var results: [String: String] = [:]
+    @State private var importing: Browser.ImportSource?
+    @State private var csvResult: String?
 
     var body: some View {
+        let state = browser.store.state
         Form {
             Section {
                 ForEach(Browser.ImportSource.allCases, id: \.self) { source in
@@ -354,12 +357,36 @@ private struct ImportSettings: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("Import") { results[source.rawValue] = browser.importBrowser(source) }
-                            .disabled(!source.isAvailable)
+                        if importing == source {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Button("Import") {
+                                importing = source
+                                Task {
+                                    results[source.rawValue] = await browser.importBrowser(source)
+                                    importing = nil
+                                }
+                            }
+                            .disabled(!source.isAvailable || importing != nil)
+                        }
                     }
                 }
             } footer: {
-                Text("Importing adds to what's here. Tabs you already have are skipped.")
+                Text("Imports into the Space on screen, and adds to what's here. macOS asks before Skylight can read another browser's passwords and sign-ins, which stay on this Mac.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+
+            Section {
+                LabeledContent {
+                    Button("Choose…") {
+                        csvResult = browser.passwords.importCSV(into: state.passwordProfile(for: state.activeSpace.profileID)) ?? csvResult
+                    }
+                } label: {
+                    Text("Safari and Apple Passwords")
+                    Text(csvResult ?? "macOS keeps these from other apps. In the Passwords app, choose File → Export All Passwords, then pick the file here.")
+                }
+            } footer: {
+                Text("Sites stay signed in where the browser allows it. Passkeys and two-factor codes can't leave the app that made them.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
