@@ -326,6 +326,14 @@ import Testing
         }
     }
 
+    @Test func anotherProfileIsBesideTheDefault() {
+        let arc = ChromiumBrowser(id: "arc", name: "Arc", profileDirectory: URL(fileURLWithPath: "/x/Arc/User Data/Default"),
+                                  safeStorageServices: ["Arc Safe Storage"], bundleIDs: [])
+        #expect(arc.localState.path == "/x/Arc/User Data/Local State")
+        #expect(arc.profile("Profile 2").loginData.path == "/x/Arc/User Data/Profile 2/Login Data")
+        #expect(arc.profile("Profile 2").safeStorageServices == ["Arc Safe Storage"])
+    }
+
     @Test func newerProfilesKeepCookiesInNetwork() throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: "skylight-profile-\(UUID())")
         try FileManager.default.createDirectory(at: dir.appending(path: "Network"), withIntermediateDirectories: true)

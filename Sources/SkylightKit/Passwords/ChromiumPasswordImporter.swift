@@ -29,6 +29,15 @@ public struct ChromiumBrowser: Sendable, Identifiable, Equatable {
         return FileManager.default.fileExists(atPath: moved.path) ? moved : profileDirectory.appending(path: "Cookies")
     }
     public var isInstalled: Bool { FileManager.default.fileExists(atPath: profileDirectory.path) }
+    /// Beside the profiles: what the browser calls each one.
+    public var localState: URL { profileDirectory.deletingLastPathComponent().appending(path: "Local State") }
+
+    /// The same browser, looking at another of its profiles.
+    public func profile(_ folder: String) -> ChromiumBrowser {
+        var browser = self
+        browser.profileDirectory = profileDirectory.deletingLastPathComponent().appending(path: folder)
+        return browser
+    }
 
     public static let all: [ChromiumBrowser] = {
         let support = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
@@ -137,13 +146,17 @@ public enum ChromiumPasswordImporter {
         try read(loginData: browser.loginData, safeStorageKey: safeStorageKey(for: browser), source: browser.name)
     }
 
-    /// Reads the browser's passwords and cookies, with one Keychain prompt for both. Either can be
-    /// missing: a browser that has never saved a password has no `Login Data`.
-    public static func readSignIns(_ browser: ChromiumBrowser) throws -> (credentials: [Credential], cookies: [WebCookie]) {
-        let key = try safeStorageKey(for: browser)
+    /// Reads the passwords and cookies of a browser's profiles, in order, with one Keychain prompt
+    /// for all of them. Either can be missing: a profile that has never saved a password has no
+    /// `Login Data`.
+    public static func readSignIns(_ profiles: [ChromiumBrowser]) throws -> [(credentials: [Credential], cookies: [WebCookie])] {
+        guard let first = profiles.first else { return [] }
+        let key = try safeStorageKey(for: first)
         let files = FileManager.default
-        return (files.fileExists(atPath: browser.loginData.path) ? try read(loginData: browser.loginData, safeStorageKey: key, source: browser.name) : [],
-                files.fileExists(atPath: browser.cookies.path) ? try ChromiumCookieImporter.read(cookies: browser.cookies, safeStorageKey: key) : [])
+        return try profiles.map { browser in
+            (files.fileExists(atPath: browser.loginData.path) ? try read(loginData: browser.loginData, safeStorageKey: key, source: browser.name) : [],
+             files.fileExists(atPath: browser.cookies.path) ? try ChromiumCookieImporter.read(cookies: browser.cookies, safeStorageKey: key) : [])
+        }
     }
 
     // MARK: - Crypto

@@ -120,17 +120,24 @@ public struct BrowserImport: Equatable, Sendable {
         public var icon: String?
         public var hue: Double?
         public var pinned: [Link]
-        public init(name: String, icon: String? = nil, hue: Double? = nil, pinned: [Link]) {
+        /// Favorites of this Space's profile, when it isn't the one being imported into.
+        public var favorites: [Link] = []
+        /// The folder of the profile this Space used in the other browser. Nil for its default.
+        public var sourceProfile: String?
+        public init(name: String, icon: String? = nil, hue: Double? = nil, pinned: [Link], sourceProfile: String? = nil) {
             self.name = name
             self.icon = icon
             self.hue = hue
             self.pinned = pinned
+            self.sourceProfile = sourceProfile
         }
     }
 
     public var source: String
     public var spaces: [ImportedSpace]
     public var favorites: [Link]
+    /// What the other browser calls its profiles, by folder.
+    public var profileNames: [String: String] = [:]
 
     public init(source: String, spaces: [ImportedSpace], favorites: [Link]) {
         self.source = source
@@ -138,7 +145,18 @@ public struct BrowserImport: Equatable, Sendable {
         self.favorites = favorites
     }
 
-    public var isEmpty: Bool { favorites.isEmpty && spaces.allSatisfy(\.pinned.isEmpty) }
+    public var isEmpty: Bool { favorites.isEmpty && spaces.allSatisfy { $0.pinned.isEmpty && $0.sourceProfile == nil } }
+
+    /// The other browser's profiles that Spaces came from, by folder, in the order they appear.
+    public var profileFolders: [String] {
+        var seen = Set<String>()
+        return spaces.compactMap(\.sourceProfile).filter { seen.insert($0).inserted }
+    }
+
+    /// The name a profile folder goes by here.
+    public func profileName(for folder: String) -> String {
+        profileNames[folder].flatMap { $0.isEmpty ? nil : $0 } ?? folder
+    }
 }
 
 public struct ReduceResult: Equatable, Sendable {

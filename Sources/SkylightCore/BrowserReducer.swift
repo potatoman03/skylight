@@ -379,26 +379,60 @@ public enum BrowserReducer {
         case let .importBrowserData(data):
             guard !data.isEmpty else { return .ignored }
             let now = env.now()
-            var known = Set(state.tabs.values.map(\.url))
-            func add(_ link: BrowserImport.Link) -> TabID? {
-                guard known.insert(link.url).inserted else { return nil }
+            let importing = state.activeSpace.profileID
+            var effects: [BrowserEffect] = []
+            // A page can be open in two profiles, signed in differently, so a tab is a duplicate
+            // only within its profile.
+            struct Place: Hashable {
+                let profile: ProfileID
+                let url: URL
+            }
+            func places(in space: Space) -> [Place] {
+                space.allTabIDs.compactMap { state.tabs[$0].map { Place(profile: space.profileID, url: $0.url) } }
+            }
+            var known = Set(state.spaces.flatMap(places))
+            func add(_ link: BrowserImport.Link, to profile: ProfileID) -> TabID? {
+                guard known.insert(Place(profile: profile, url: link.url)).inserted else { return nil }
                 let tab = Tab(id: env.makeTabID(), url: link.url, title: link.title, now: now)
                 state.tabs[tab.id] = tab
                 return tab.id
             }
-            state.spaces[state.activeSpaceIndex].favorites += data.favorites.compactMap(add)
-            for imported in data.spaces where !imported.pinned.isEmpty {
-                let pinned = imported.pinned.compactMap(add)
-                guard !pinned.isEmpty else { continue }
+            /// The profile with the name that folder goes by, made if it's new.
+            func profile(from folder: String) -> ProfileID {
+                let name = data.profileName(for: folder)
+                if let existing = state.profiles.first(where: { $0.name == name }) { return existing.id }
+                let profile = Profile(id: env.makeProfileID(), name: name)
+                state.profiles.append(profile)
+                return profile.id
+            }
+            let favorites = data.favorites.compactMap { add($0, to: importing) }
+            state.spaces[state.activeSpaceIndex].favorites += favorites
+            for imported in data.spaces where !imported.pinned.isEmpty || imported.sourceProfile != nil {
+                let source = imported.sourceProfile.map(profile(from:)) ?? importing
                 if let i = state.spaces.firstIndex(where: { $0.name.caseInsensitiveCompare(imported.name) == .orderedSame }) {
+                    // Imported before profiles came across: it moves to the profile it had.
+                    if state.spaces[i].profileID == importing, source != importing {
+                        effects += apply(&state, .assignProfile(state.spaces[i].id, source), env: env).effects
+                        known.formUnion(places(in: state.spaces[i]))
+                    }
+                    let home = state.spaces[i].profileID
+                    let pinned = imported.pinned.compactMap { add($0, to: home) }
+                    let favorites = imported.favorites.compactMap { add($0, to: home) }
                     state.spaces[i].pinned += pinned
+                    state.spaces[i].favorites += favorites
                 } else {
-                    state.spaces.append(Space(id: env.makeSpaceID(), name: imported.name,
-                                              hue: imported.hue ?? nextHue(after: state.spaces.map(\.hue)),
-                                              icon: imported.icon, profileID: state.activeSpace.profileID, pinned: pinned))
+                    let pinned = imported.pinned.compactMap { add($0, to: source) }
+                    let favorites = imported.favorites.compactMap { add($0, to: source) }
+                    // A profile needs a Space to hold its logins, even with nothing pinned.
+                    guard !pinned.isEmpty || !favorites.isEmpty || imported.sourceProfile != nil else { continue }
+                    var space = Space(id: env.makeSpaceID(), name: imported.name,
+                                      hue: imported.hue ?? nextHue(after: state.spaces.map(\.hue)),
+                                      icon: imported.icon, profileID: source, pinned: pinned)
+                    space.favorites = favorites
+                    state.spaces.append(space)
                 }
             }
-            return ReduceResult()
+            return ReduceResult(effects: effects)
 
         case let .pageDidUpdate(id, meta):
             guard state.tabs[id] != nil else { return .ignored }

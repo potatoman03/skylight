@@ -219,6 +219,7 @@ Copying and exporting ask for Touch ID or your password.
 sign-ins into the Space on screen, after macOS asks to let Skylight read that browser's key. It also
 brings over Arc's Spaces, pinned tabs and favorites, or a Chromium browser's bookmarks: the bookmarks
 bar becomes favorites and each folder a Space, which is how Aside's sidebar folders come across.
+Arc's other profiles become profiles here, and their Spaces keep their own logins and favorites.
 Safari and Apple Passwords keep logins from other apps, so those come from a CSV export.
 
 The sky is a small Metal shader: light falls through it, slowly, in the theme's colors. It runs at

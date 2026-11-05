@@ -20,8 +20,9 @@ public enum BrowserImporters {
 
     // MARK: - Arc
 
-    /// Arc's `StorableSidebar.json`. Spaces and their pinned tabs (folders flattened), and the
-    /// favorites. Unpinned tabs are left behind; they'd be archived soon anyway.
+    /// Arc's `StorableSidebar.json`. Spaces and their pinned tabs (folders flattened), the
+    /// favorites, and which profile each belongs to. Unpinned tabs are left behind; they'd be
+    /// archived soon anyway.
     public static func arc(_ data: Data) throws -> BrowserImport {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let containers = (root["sidebar"] as? [String: Any])?["containers"] as? [Any],
@@ -54,15 +55,38 @@ public enum BrowserImporters {
             let info = space["customInfo"] as? [String: Any]
             spaces.append(.init(name: (space["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Space \(n + 1)",
                                 icon: arcIcon(info?["iconType"] as? [String: Any]),
-                                hue: arcHue(info), pinned: links(under: pinnedID)))
+                                hue: arcHue(info), pinned: links(under: pinnedID), sourceProfile: arcProfile(space["profile"])))
         }
 
-        let top = main["topAppsContainerIDs"] as? [Any] ?? []
-        let favorites = top.compactMap { $0 as? String }.flatMap { links(under: $0) }
+        // Each profile has its own favorites: a flat [profile, container, profile, container] list.
+        var favorites: [BrowserImport.Link] = []
+        var owner: String?
+        for entry in main["topAppsContainerIDs"] as? [Any] ?? [] {
+            guard let id = entry as? String else {
+                owner = arcProfile(entry)
+                continue
+            }
+            let found = links(under: id)
+            if let i = spaces.firstIndex(where: { owner != nil && $0.sourceProfile == owner }) {
+                spaces[i].favorites += found
+            } else {
+                favorites += found
+            }
+        }
 
         let result = BrowserImport(source: "Arc", spaces: spaces, favorites: favorites)
         if result.isEmpty { throw ImportError.notFound("Arc") }
         return result
+    }
+
+    /// The folder in Arc's `{"custom":{"_0":{"directoryBasename":"Profile 2"}}}`. Its default
+    /// profile, `{"default":true}`, has none.
+    static func arcProfile(_ value: Any?) -> String? {
+        guard let custom = (value as? [String: Any])?["custom"] as? [String: Any],
+              let folder = (custom["_0"] as? [String: Any])?["directoryBasename"] as? String,
+              !folder.isEmpty, folder != "Default", folder != "..", !folder.contains("/")
+        else { return nil }
+        return folder
     }
 
     /// Arc's emoji icons carry over; its named icons map to the closest SF Symbol.
@@ -93,6 +117,14 @@ public enum BrowserImporters {
     }
 
     // MARK: - Chromium (Chrome, Aside, Brave, Edge, ...)
+
+    /// What a Chromium browser calls its profiles, by folder, from its `Local State` file.
+    public static func chromiumProfileNames(_ data: Data) -> [String: String] {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let cache = (root["profile"] as? [String: Any])?["info_cache"] as? [String: Any]
+        else { return [:] }
+        return cache.compactMapValues { ($0 as? [String: Any])?["name"] as? String }
+    }
 
     /// A Chromium `Bookmarks` file. Loose links on the bookmarks bar become favorites (up to
     /// eight). Each folder on the bar becomes a Space, the way Aside shows folders as sidebar
