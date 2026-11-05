@@ -72,6 +72,7 @@ public final class CEFEngine: WebEngine {
     public init(support: URL? = nil) {
         extensions = SKEngine.hasDevToolsPipe() ? CEFExtensionHost(helperFolder: support?.appending(path: "Tabs Helper")) : nil
         SKEngine.setPageScripts(Self.engineScripts)
+        PictureInPictureWindows.roundCorners()
     }
 
     private static var engineScripts: [String] { [bootstrapScript, tabIDScript, extensionPageScript] }
@@ -191,4 +192,41 @@ final class CEFProfile: WebProfile {
 /// Lets main-thread-only Objective-C objects ride along in `@Sendable` closures.
 struct MainThreadBox<T>: @unchecked Sendable {
     let value: T
+}
+
+/// Chromium's Picture in Picture window comes square, with a hairline border. Rounded like other
+/// floating windows, it sits better over the desktop.
+@MainActor
+enum PictureInPictureWindows {
+    static let radius: CGFloat = 12
+    private static var observer: NSObjectProtocol?
+
+    static func roundCorners() {
+        guard observer == nil else { return }
+        // Posted when any window comes on screen, Chromium's own included.
+        observer = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,
+                                                          object: nil, queue: .main) { note in
+            let window = MainThreadBox(value: note.object as? NSWindow)
+            MainActor.assumeIsolated {
+                guard let window = window.value, isPictureInPicture(window) else { return }
+                round(window)
+            }
+        }
+    }
+
+    /// Chromium names the window for what it is, and floats it.
+    private static func isPictureInPicture(_ window: NSWindow) -> Bool {
+        window.level == .floating && window.title == "Picture in Picture"
+    }
+
+    private static func round(_ window: NSWindow) {
+        guard let view = window.contentView, view.layer?.cornerRadius != radius else { return }
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        view.wantsLayer = true
+        view.layer?.cornerRadius = radius
+        view.layer?.cornerCurve = .continuous
+        view.layer?.masksToBounds = true
+        window.invalidateShadow()
+    }
 }

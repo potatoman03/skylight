@@ -100,7 +100,7 @@ struct AddressField: View {
 
     private var lead: CGFloat {
         let prefs = browser.preferences
-        guard !prefs.sidebarCollapsed, let x = anchor.itemX else { return 0 }
+        guard browser.showsSidebar, let x = anchor.itemX else { return 0 }
         return max(0, max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound) + 6 - x)
     }
 
