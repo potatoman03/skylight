@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settings: SettingsWindowController?
     private var updater: Updater?
     private var quitting = false
+    /// The window went full screen for a fullscreen video, so it leaves full screen with it.
+    private var fullScreenForPage = false
+    private var sidebarToggle: NSTitlebarAccessoryViewController?
     /// Links that arrived before the engine was ready, as when a click in another app launches Skylight.
     private var pendingURLs: [URL] = []
 
@@ -61,7 +64,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         toggleView.frame = NSRect(x: 0, y: 0, width: 36, height: 38)
         toggle.view = toggleView
         window.addTitlebarAccessoryViewController(toggle)
+        sidebarToggle = toggle
         window.delegate = self
+        browser.pages.onFullscreenChange = { [weak self] fullscreen in self?.pageFullscreenChanged(fullscreen) }
         browser.showSettings = { [weak self, weak browser] section in
             guard let self, let browser else { return }
             if settings == nil { settings = SettingsWindowController(browser: browser) }
@@ -112,6 +117,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         window?.makeKeyAndOrderFront(nil)
         return true
+    }
+
+    /// A fullscreen video takes the whole screen, as in Chrome: the window goes full screen (unless
+    /// it already is), and the sidebar (RootView), toolbar and traffic lights hide.
+    private func pageFullscreenChanged(_ fullscreen: Bool) {
+        guard let window else { return }
+        sidebarToggle?.isHidden = fullscreen
+        // The titlebar holds the toolbar and the traffic lights. (SwiftUI's toolbar ignores being
+        // hidden while it's bridged into the window.)
+        window.standardWindowButton(.closeButton)?.superview?.superview?.isHidden = fullscreen
+        let isFullScreen = window.styleMask.contains(.fullScreen)
+        if fullscreen, !isFullScreen {
+            fullScreenForPage = true
+            window.toggleFullScreen(nil)
+        } else if !fullscreen, fullScreenForPage {
+            fullScreenForPage = false
+            if isFullScreen { window.toggleFullScreen(nil) }
+        }
+    }
+
+    /// Full screen for a video: the toolbar's reveal strip goes away with the menu bar.
+    func window(_ window: NSWindow, willUseFullScreenPresentationOptions proposed: NSApplication.PresentationOptions = []) -> NSApplication.PresentationOptions {
+        fullScreenForPage ? proposed.union([.autoHideMenuBar, .autoHideToolbar]) : proposed
+    }
+
+    /// Leaving full screen (the green button, ⌃⌘F) brings the video back into the page too.
+    func windowDidExitFullScreen(_ notification: Notification) {
+        fullScreenForPage = false
+        browser?.pages.exitFullscreen()
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {

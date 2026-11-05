@@ -191,6 +191,7 @@ class BrowserClient : public CefClient,
                       public CefJSDialogHandler,
                       public CefDownloadHandler,
                       public CefContextMenuHandler,
+                      public CefKeyboardHandler,
                       public CefMessageRouterBrowserSide::Handler {
  public:
   explicit BrowserClient(SKBrowser* owner) : owner_(owner) {
@@ -207,6 +208,7 @@ class BrowserClient : public CefClient,
   CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
   CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
+  CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
 
   // MARK: Context menu
 
@@ -253,6 +255,23 @@ class BrowserClient : public CefClient,
 
   void OnLoadingProgressChange(CefRefPtr<CefBrowser> b, double progress) override {
     if (IsMain(b)) [owner_.delegate browser:owner_ didChangeProgress:progress];
+  }
+
+  // A video's fullscreen button. The page fills this view; Skylight makes the view fill the screen.
+  void OnFullscreenModeChange(CefRefPtr<CefBrowser> b, bool fullscreen) override {
+    if (IsMain(b)) [owner_.delegate browser:owner_ didChangeFullscreen:fullscreen];
+  }
+
+  // MARK: Keyboard
+
+  // Escape leaves fullscreen, as in Chrome. In a page hosted in our own view, Chromium leaves
+  // that to us.
+  bool OnPreKeyEvent(CefRefPtr<CefBrowser> b, const CefKeyEvent& event, CefEventHandle os_event,
+                     bool* is_keyboard_shortcut) override {
+    if (event.type != KEYEVENT_RAWKEYDOWN || event.windows_key_code != 0x1B /* VK_ESCAPE */) return false;
+    if (!b->GetHost()->IsFullscreen()) return false;
+    b->GetHost()->ExitFullscreen(true);
+    return true;
   }
 
   // MARK: Load
@@ -507,6 +526,10 @@ class BrowserClient : public CefClient,
   params->SetBool("userGesture", true);
   params->SetBool("awaitPromise", false);
   _browser->GetHost()->ExecuteDevToolsMethod(0, "Runtime.evaluate", params);
+}
+
+- (void)exitFullscreen {
+  if (_browser && _browser->GetHost()->IsFullscreen()) _browser->GetHost()->ExitFullscreen(true);
 }
 
 - (void)setHidden:(BOOL)hidden {

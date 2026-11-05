@@ -27,6 +27,9 @@ public final class PageCoordinator: BrowserEffectHandler {
     public private(set) var visibleTabID: TabID?
     /// Every tab on screen: the focused tab's split, or just the focused tab.
     public private(set) var visibleTabIDs: [TabID] = []
+    /// The tab whose page is in fullscreen (a video's fullscreen button). It fills the page area,
+    /// even in a split, and the window hides everything else.
+    public private(set) var fullscreenTabID: TabID?
     /// Space between split panes and their corner radius.
     @ObservationIgnored public var paneStyle: @MainActor () -> (gap: CGFloat, radius: CGFloat) = { (PaneStyle.gap, PaneStyle.radius) }
 
@@ -38,6 +41,8 @@ public final class PageCoordinator: BrowserEffectHandler {
     @ObservationIgnored public var onPageGone: (@MainActor (TabID, _ tabClosed: Bool) -> Void)?
     /// Pages woke, slept, appeared or got their address: extensions want to know.
     @ObservationIgnored public var onPagesChange: (@MainActor () -> Void)?
+    /// A page went into fullscreen or came out of it: the window follows.
+    @ObservationIgnored public var onFullscreenChange: (@MainActor (Bool) -> Void)?
 
     @ObservationIgnored private let engine: WebEngine
     @ObservationIgnored private let paths: AppPaths
@@ -109,6 +114,11 @@ public final class PageCoordinator: BrowserEffectHandler {
             fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0.75, 0.1, 1)
             layer.add(fade, forKey: "swap")
         }
+        // Fullscreen ends when its page leaves the screen.
+        if let full = fullscreenTabID, !panes.contains(full) {
+            pages[full]?.exitFullscreen()
+            setFullscreen(nil, relayout: false)
+        }
         for old in visibleTabIDs where !panes.contains(old) { conceal(old) }
         let focusChanged = visibleTabID != id
         visibleTabIDs = panes
@@ -122,7 +132,12 @@ public final class PageCoordinator: BrowserEffectHandler {
             views.append(page.view)
         }
         let style = paneStyle()
-        hostView.arrange(views, split: views.count == panes.count ? split : nil, gap: style.gap, radius: style.radius)
+        if let full = fullscreenTabID, let page = pages[full] {
+            for view in views where view !== page.view { view.isHidden = true }
+            hostView.arrange([page.view], split: nil, gap: 0, radius: 0)
+        } else {
+            hostView.arrange(views, split: views.count == panes.count ? split : nil, gap: style.gap, radius: style.radius)
+        }
         if focusChanged || views.count == 1, let page = pages[id] { hostView.window?.makeFirstResponder(page.view) }
         onPagesChange?()
     }
@@ -144,6 +159,20 @@ public final class PageCoordinator: BrowserEffectHandler {
 
     /// Lays the visible panes out again (after the gap or radius preference changes).
     public func relayout() { show(visibleTabID) }
+
+    /// Brings the fullscreen page back into the window.
+    public func exitFullscreen() {
+        guard let id = fullscreenTabID else { return }
+        pages[id]?.exitFullscreen()
+        setFullscreen(nil)
+    }
+
+    private func setFullscreen(_ id: TabID?, relayout again: Bool = true) {
+        guard fullscreenTabID != id else { return }
+        fullscreenTabID = id
+        if again { relayout() }
+        onFullscreenChange?(id != nil)
+    }
 
     // MARK: - Page lifetimes
 
@@ -179,6 +208,7 @@ public final class PageCoordinator: BrowserEffectHandler {
     /// Closes the tab's page but keeps the tab. It reloads when shown again.
     public func sleep(_ id: TabID) {
         defer { onPageGone?(id, store?.state.tabs[id] == nil) }
+        if fullscreenTabID == id { setFullscreen(nil, relayout: false) }
         guard let page = pages.removeValue(forKey: id) else { return }
         closing.insert(ObjectIdentifier(page))
         page.view.removeFromSuperview()
@@ -233,6 +263,9 @@ extension PageCoordinator: WebPageDelegate {
             store.send(.pageDidUpdate(id, PageMetadata(url: event.url, title: event.title, faviconURL: event.faviconURL)))
         }
         if event.url != nil || event.extensionTabID != nil { onPagesChange?() }
+        if let full = event.isFullscreen {
+            if full, visibleTabIDs.contains(id) { setFullscreen(id) } else if !full, fullscreenTabID == id { setFullscreen(nil) }
+        }
         store.updateStatus(id) { status in
             if let v = event.isLoading { status.isLoading = v }
             if let v = event.progress { status.progress = v }
