@@ -22,11 +22,13 @@ public struct RootView: View {
     public var body: some View {
         let prefs = browser.preferences
         let state = browser.store.state
+        // A fullscreen video gets the whole window, which goes full screen with it.
+        let fullscreen = browser.pages.fullscreenTabID != nil
 
         // Our own sidebar column, flush with the page: the system's floating glass sidebar casts a
         // shadow on the page, and moves its toggle about.
         HStack(spacing: 0) {
-            if !prefs.sidebarCollapsed {
+            if !prefs.sidebarCollapsed, !fullscreen {
                 Sidebar()
                     .frame(width: max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound))
                     .overlay(alignment: .trailing) { SidebarEdge() }
@@ -34,10 +36,12 @@ public struct RootView: View {
             }
             ContentArea()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Up under the hidden toolbar, edge to edge.
+                .ignoresSafeArea(.container, edges: fullscreen ? .top : [])
                 // A split's rounded panes sit on the window's backdrop, like the sidebar.
                 .background(showsSplit ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
                 .overlay(alignment: .leading) {
-                    if prefs.sidebarCollapsed { SidebarPeek() }
+                    if prefs.sidebarCollapsed, !fullscreen { SidebarPeek() }
                 }
         }
         // One translucent backdrop behind the toolbar and sidebar; only the page is opaque.

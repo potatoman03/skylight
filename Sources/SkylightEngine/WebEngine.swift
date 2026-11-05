@@ -75,6 +75,9 @@ public protocol WebPage: AnyObject {
     /// Runs `script` as if the user had just clicked, for APIs that need a gesture
     /// (picture in picture, fullscreen). Fire and forget.
     func runWithUserGesture(_ script: String)
+
+    /// Brings the page out of fullscreen, if it's in it.
+    func exitFullscreen()
 }
 
 /// A permission a site asks for, answered by the UI.
@@ -145,6 +148,8 @@ public struct PageEvent: Sendable, Equatable {
     public var progress: Double?
     /// The page learned the id extensions know it by.
     public var extensionTabID: Int?
+    /// The page went into fullscreen (a video's fullscreen button) or came out of it.
+    public var isFullscreen: Bool?
 
     public init() {}
 }

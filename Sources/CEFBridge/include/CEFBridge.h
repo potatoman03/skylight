@@ -111,6 +111,8 @@ typedef NS_ENUM(NSInteger, SKDialogKind) {
 - (void)browser:(SKBrowser *)browser didChangeFaviconURL:(NSString *)url;
 - (void)browser:(SKBrowser *)browser didChangeLoading:(BOOL)loading canGoBack:(BOOL)canGoBack canGoForward:(BOOL)canGoForward;
 - (void)browser:(SKBrowser *)browser didChangeProgress:(double)progress;
+/// The page went into fullscreen (a video's fullscreen button) or came out of it.
+- (void)browser:(SKBrowser *)browser didChangeFullscreen:(BOOL)fullscreen;
 - (void)browser:(SKBrowser *)browser wantsNewTabWithURL:(NSString *)url background:(BOOL)background;
 /// A `cefQuery` request from the page. Call `reply` exactly once.
 - (void)browser:(SKBrowser *)browser
@@ -144,6 +146,8 @@ typedef NS_ENUM(NSInteger, SKDialogKind) {
 /// fullscreen) work.
 - (void)evaluateWithUserGesture:(NSString *)script;
 - (void)setHidden:(BOOL)hidden;
+/// Brings the page out of fullscreen, if it's in it.
+- (void)exitFullscreen;
 - (void)showDevTools;
 - (void)close;
 

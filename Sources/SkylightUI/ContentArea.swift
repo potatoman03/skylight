@@ -37,7 +37,7 @@ struct ContentArea: View {
                     .background(.background)
                 }
 
-                if let split, layout.isSplit {
+                if let split, layout.isSplit, browser.pages.fullscreenTabID == nil {
                     PaneChrome(split: split, layout: layout)
                         // The pages move at once; their dividers and grips must move with them.
                         .transaction { $0.animation = nil }

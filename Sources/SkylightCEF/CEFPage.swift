@@ -30,6 +30,7 @@ final class CEFPage: NSObject, WebPage {
     func close() { browser.close() }
     private(set) var extensionTabID = 0
     func runWithUserGesture(_ script: String) { browser.evaluate(withUserGesture: script) }
+    func exitFullscreen() { browser.exitFullscreen() }
 
     func evaluate(_ expression: String) async throws -> JSONValue {
         guard !browser.isClosed else { throw WebEngineError.pageClosed }
@@ -86,6 +87,10 @@ extension CEFPage: @preconcurrency SKBrowserDelegate {
 
     func browser(_ browser: SKBrowser, didChangeProgress progress: Double) {
         emit { $0.progress = progress }
+    }
+
+    func browser(_ browser: SKBrowser, didChangeFullscreen fullscreen: Bool) {
+        emit { $0.isFullscreen = fullscreen }
     }
 
     func browser(_ browser: SKBrowser, wantsNewTabWithURL url: String, background: Bool) {
