@@ -340,7 +340,7 @@ private struct PageDropTarget: View {
                 ArrangementPreview(panes: layout.arrangement(placing: moving, beside: target.tab, edge: target.edge,
                                                              state: browser.store.state),
                                    moving: moving)
-                    .transition(.opacity)
+                    .transition(Arrive(scale: 0.98))
             }
         }
         .onDrop(of: [.plainText, .utf8PlainText], delegate: SplitDropDelegate(
@@ -348,21 +348,29 @@ private struct PageDropTarget: View {
     }
 }
 
-/// The page as it would be after the drop: a card for each pane, the arriving tab's lit up. The
-/// cards slide as the pointer moves from edge to edge.
+/// The page as it would be after the drop: a pane of glass for each tab, the arriving one tinted.
+/// The panes flow from place to place as the pointer moves from edge to edge.
 private struct ArrangementPreview: View {
     let panes: [PaneLayout.Pane]
     let moving: TabID
     @Environment(Browser.self) private var browser
+    @Namespace private var glass
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             // The page stays faintly in view behind the plan.
             Rectangle().fill(.ultraThinMaterial)
-            ForEach(panes, id: \.tab) { pane in
-                card(pane.tab)
-                    .frame(width: pane.frame.width, height: pane.frame.height)
-                    .offset(x: pane.frame.minX, y: pane.frame.minY)
+            GlassEffectContainer(spacing: PaneStyle.gap) {
+                ZStack(alignment: .topLeading) {
+                    ForEach(panes, id: \.tab) { pane in
+                        card(pane.tab)
+                            .frame(width: pane.frame.width, height: pane.frame.height)
+                            .glassEffect(pane.tab == moving ? .regular.tint(.accentColor.opacity(0.35)) : .regular,
+                                         in: .rect(cornerRadius: PaneStyle.radius, style: .continuous))
+                            .glassEffectID(pane.tab, in: glass)
+                            .offset(x: pane.frame.minX, y: pane.frame.minY)
+                    }
+                }
             }
         }
         .allowsHitTesting(false)
@@ -370,8 +378,6 @@ private struct ArrangementPreview: View {
 
     @ViewBuilder
     private func card(_ id: TabID) -> some View {
-        let shape = RoundedRectangle(cornerRadius: PaneStyle.radius, style: .continuous)
-        let arriving = id == moving
         VStack(spacing: 10) {
             if let tab = browser.store.state.tabs[id] {
                 Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 32)
@@ -379,18 +385,11 @@ private struct ArrangementPreview: View {
                     .font(.headline)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(arriving ? .primary : .secondary)
+                    .foregroundStyle(id == moving ? .primary : .secondary)
             }
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background {
-            if arriving {
-                shape.fill(.tint.opacity(0.22)).overlay(shape.strokeBorder(.tint, lineWidth: 2))
-            } else {
-                shape.fill(.background.opacity(0.75)).overlay(shape.strokeBorder(.separator, lineWidth: 1))
-            }
-        }
     }
 }
 
@@ -424,7 +423,7 @@ private struct SplitDropDelegate: DropDelegate {
 
     private func show(_ next: Target?) {
         guard next != target else { return }
-        animate(Motion.travel) { target = next }
+        animate(Motion.flow) { target = next }
     }
 }
 

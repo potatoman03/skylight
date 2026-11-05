@@ -15,6 +15,9 @@ enum Motion {
     static let arrive = Animation.snappy(duration: 0.26)
     /// Leaving is quicker than arriving.
     static let exit = Animation.easeOut(duration: 0.16)
+    /// Glass parting and joining (a tab held over another to split): a spring with a little give,
+    /// so the panes flow apart rather than fade.
+    static let flow = Animation.spring(duration: 0.42, bounce: 0.2)
     /// Body swaps inside the window (switching Space): a quick crossfade.
     static let swap = Animation.easeInOut(duration: 0.18)
     /// Distant hues pass through mud; keep it short.
@@ -47,6 +50,18 @@ struct Arrive: Transition {
             .scaleEffect(phase.isIdentity || reduce ? 1 : scale, anchor: anchor)
             .offset(y: phase.isIdentity || reduce ? 0 : rise)
             .blur(radius: phase.isIdentity || reduce ? 0 : 4)
+    }
+}
+
+/// Slides out from under the thing beside it, growing from its leading edge. Mostly motion, so it
+/// reads as one shape becoming two rather than a fade. With Reduce Motion it only fades.
+struct Emerge: Transition {
+    func body(content: Content, phase: TransitionPhase) -> some View {
+        let still = phase.isIdentity || Motion.reduceMotion
+        content
+            .scaleEffect(x: still ? 1 : 0.5, y: still ? 1 : 0.85, anchor: .leading)
+            .offset(x: still ? 0 : -18)
+            .opacity(phase.isIdentity ? 1 : 0.2)
     }
 }
 
