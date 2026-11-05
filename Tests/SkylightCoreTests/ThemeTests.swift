@@ -101,11 +101,23 @@ struct ThemeTests {
                 #expect(look.text != nil && look.secondaryText != nil && look.selection != nil && look.scrim != nil)
             }
         }
-        #expect(SkyTheme.presets == SkyTheme.skies + themes)
+        #expect(SkyTheme.presets == SkyTheme.skies + themes + SkyTheme.pictureThemes)
     }
 
     @Test func everyPatternFillsTheGlyphAtlas() {
         for pattern in AsciiPattern.allCases { #expect(pattern.glyphs.count == 8) }
+    }
+
+    @Test func everyPictureThemeHasItsPicturesInBothLooks() {
+        let folder = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../Resources/Themes")
+        #expect(SkyTheme.pictureThemes.count == 8)
+        for theme in SkyTheme.pictureThemes {
+            for look in [theme.light, theme.dark] {
+                #expect(look.image?.builtIn == true && look.rays == 0 && look.text != nil && look.scrim != nil)
+                #expect(FileManager.default.fileExists(atPath: folder.appending(path: look.image!.file).path), "\(theme.name)")
+                #expect(look.accent.ink.contrast(with: look.accent) >= 4.5, "\(theme.name)")
+            }
+        }
     }
 
     @Test func quietThemesStayQuiet() {

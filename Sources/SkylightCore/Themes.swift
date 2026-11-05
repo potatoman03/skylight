@@ -303,7 +303,7 @@ public struct SkyTheme: Codable, Identifiable, Hashable, Sendable {
                            sunlight: RGB(h: 0.70, s: 0.35, v: 1), rays: 0.30),
         followsSpace: true)
 
-    public static let presets: [SkyTheme] = skies + asciiThemes + quietThemes
+    public static let presets: [SkyTheme] = skies + asciiThemes + quietThemes + pictureThemes
 
     /// Painted skies.
     public static let skies: [SkyTheme] = [
@@ -435,6 +435,34 @@ public struct SkyTheme: Codable, Identifiable, Hashable, Sendable {
               dark: (("#181818", "#101010", "#202020", "#DEDEDA", "#F4F4F0", 0, 1), ("#EDEDEA", "#9C9C98", "#6C6C68", "#101010", 0.30), "#9C9C98", 0.2)),
     ]
 
+    /// Whole scenes, shipped with the app in Resources/Themes, with colors picked to suit each.
+    public static let pictureThemes: [SkyTheme] = [
+        picture("nebula", "Nebula",
+                light: ("nebula-light.jpg", ("#CCBFF5", "#F4F0FF", "#F4D1FF", "#432A8C", "#F7F5FF", 0, 1), ("#1D1829", "#47405C", "#7052CC", "#F9F7FF", 0.55)),
+                dark: ("nebula-dark.jpg", ("#321F38", "#140D17", "#30264D", "#DF80FF", "#F2CCFF", 0, 1), ("#F6EBFA", "#B99FC2", "#C667E6", "#120C14", 0.55))),
+        picture("northern-lights", "Northern Lights",
+                light: ("northern-lights-light.jpg", ("#BFCCF5", "#F0F4FF", "#D1F4FF", "#2A438C", "#F5F7FF", 0, 1), ("#181D29", "#40475C", "#5270CC", "#F7F9FF", 0.55)),
+                dark: ("northern-lights-dark.jpg", ("#1F2538", "#0D0F17", "#26434D", "#809FFF", "#CCD9FF", 0, 1), ("#EBEFFA", "#9FA8C2", "#6787E6", "#0C0E14", 0.55))),
+        picture("greenwood", "Greenwood",
+                light: ("greenwood-light.jpg", ("#E7F5BF", "#FBFFF0", "#FFF4D1", "#748C2A", "#FCFFF5", 0, 1), ("#252918", "#555C40", "#ADCC52", "#FDFFF7", 0.55)),
+                dark: ("greenwood-dark.jpg", ("#1F3238", "#0D1417", "#264D43", "#80DFFF", "#CCF2FF", 0, 1), ("#EBF6FA", "#9FB9C2", "#67C6E6", "#0C1214", 0.55))),
+        picture("lagoon", "Lagoon",
+                light: ("lagoon-light.jpg", ("#BFE7F5", "#F0FBFF", "#D1FFF4", "#2A748C", "#F5FCFF", 0, 1), ("#182529", "#40555C", "#52ADCC", "#F7FDFF", 0.55)),
+                dark: ("lagoon-dark.jpg", ("#1F3238", "#0D1417", "#26304D", "#80DFFF", "#CCF2FF", 0, 1), ("#EBF6FA", "#9FB9C2", "#67C6E6", "#0C1214", 0.55))),
+        picture("dunes", "Dunes",
+                light: ("dunes-light.jpg", ("#F5CCBF", "#FFF4F0", "#FFF4D1", "#8C432A", "#FFF7F5", 0, 1), ("#291D18", "#5C4740", "#CC7052", "#FFF9F7", 0.55)),
+                dark: ("dunes-dark.jpg", ("#38261F", "#170F0D", "#4D3026", "#FFB070", "#FFE0C2", 0, 1), ("#FAF0E8", "#C2AE9F", "#E8904A", "#140E0C", 0.55))),
+        picture("hanami", "Hanami",
+                light: ("hanami-light.jpg", ("#F5BFCC", "#FFF0F4", "#FFDDD1", "#8C2A43", "#FFF5F7", 0, 1), ("#29181D", "#5C4047", "#CC5270", "#FFF7F9", 0.55)),
+                dark: ("hanami-dark.jpg", ("#381F25", "#170D0F", "#30264D", "#FF809F", "#FFCCD9", 0, 1), ("#FAEBEF", "#C29FA8", "#E66787", "#140C0E", 0.55))),
+        picture("cloudland", "Cloudland",
+                light: ("cloudland-light.jpg", ("#CCBFF5", "#F4F0FF", "#F4D1FF", "#432A8C", "#F7F5FF", 0, 1), ("#1D1829", "#47405C", "#7052CC", "#F9F7FF", 0.55)),
+                dark: ("cloudland-dark.jpg", ("#251F38", "#0F0D17", "#43264D", "#9F80FF", "#D9CCFF", 0, 1), ("#EFEBFA", "#A89FC2", "#8767E6", "#0E0C14", 0.55))),
+        picture("storybook", "Storybook",
+                light: ("storybook-light.jpg", ("#F5BFCC", "#FFF0F4", "#FFDDD1", "#8C2A43", "#FFF5F7", 0, 1), ("#29181D", "#5C4047", "#CC5270", "#FFF7F9", 0.55)),
+                dark: ("storybook-dark.jpg", ("#381F25", "#170D0F", "#4D2643", "#FF809F", "#FFCCD9", 0, 1), ("#FAEBEF", "#C29FA8", "#E66787", "#140C0E", 0.55))),
+    ]
+
     private typealias Colors = (sky: String, horizon: String, glow: String, accent: String, sunlight: String, rays: Double, glass: Double)
 
     private typealias Ink = (text: String, secondaryText: String, selection: String, scrim: String, scrimOpacity: Double)
@@ -446,6 +474,19 @@ public struct SkyTheme: Codable, Identifiable, Hashable, Sendable {
 
     private static func fixed(_ id: String, _ name: String, light: Colors, dark: Colors) -> SkyTheme {
         SkyTheme(id: id, name: name, light: palette(light), dark: palette(dark), followsSpace: false)
+    }
+
+    private static func picture(_ id: String, _ name: String, light: (String, Colors, Ink), dark: (String, Colors, Ink)) -> SkyTheme {
+        func look(_ c: (String, Colors, Ink)) -> ThemePalette {
+            var p = palette(c.1)
+            p.image = ThemeImage(file: c.0, builtIn: true, sidebarFocusX: 0.7)
+            p.text = RGB(hex: c.2.text)
+            p.secondaryText = RGB(hex: c.2.secondaryText)
+            p.selection = RGB(hex: c.2.selection)
+            p.scrim = ThemeScrim(color: RGB(hex: c.2.scrim)!, opacity: c.2.scrimOpacity)
+            return p
+        }
+        return SkyTheme(id: id, name: name, light: look(light), dark: look(dark), followsSpace: false)
     }
 
     private static func ascii(_ id: String, _ name: String, _ pattern: AsciiPattern, light: (Colors, Ink, String, Double),

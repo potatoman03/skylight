@@ -171,7 +171,8 @@ icon and color; Settings → Spaces picks each Space's profile.
 
 **Themes.** Pattern themes draw a live field of characters over the sky, with nothing to download.
 Playful ones include Deep Space, Pink Princess, Terminal, Synthwave and Golden Hour; quiet ones,
-such as Linen, Sage, Fog, Clay and Sumi, keep to soft colors and faint patterns. Drop a picture or GIF
+such as Linen, Sage, Fog, Clay and Sumi, keep to soft colors and faint patterns. Picture themes are
+whole scenes, from Nebula and Northern Lights to Greenwood and Hanami. Drop a picture or GIF
 on Settings → Appearance to make a theme from it: Skylight picks colors to suit and keeps text
 readable. Edit any theme's colors, in hex or with the picker, change its pattern, and export it to a
 `.skylighttheme` file, with its pictures, to share.

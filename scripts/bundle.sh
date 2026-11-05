@@ -52,6 +52,7 @@ ditto "$BIN/Sparkle.framework" "$SPARKLE"
 # The icon is drawn by scripts/make-icon.swift.
 [[ -f "$ROOT/Resources/AppIcon.icns" ]] || swift "$ROOT/scripts/make-icon.swift"
 cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp -R "$ROOT/Resources/Themes" "$APP/Contents/Resources/Themes"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
