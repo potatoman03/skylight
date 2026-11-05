@@ -11,6 +11,7 @@ public struct RootView: View {
     @State private var drag = TabDragSession()
     @State private var anchor = AddressAnchor()
     @State private var newName = ""
+    @State private var leaving: Task<Void, Never>?
 
     public init() {}
 
@@ -28,10 +29,11 @@ public struct RootView: View {
         // Our own sidebar column, flush with the page: the system's floating glass sidebar casts a
         // shadow on the page, and moves its toggle about.
         HStack(spacing: 0) {
-            if !prefs.sidebarCollapsed, !fullscreen {
+            if browser.showsSidebar, !fullscreen {
                 Sidebar()
                     .frame(width: max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound))
                     .overlay(alignment: .trailing) { SidebarEdge() }
+                    .onHover { if browser.sidebarPeeking { peek($0) } }
                     .transition(.move(edge: .leading))
             }
             ContentArea()
@@ -41,10 +43,19 @@ public struct RootView: View {
                 // A split's rounded panes sit on the window's backdrop, like the sidebar.
                 .background(showsSplit ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
         }
-        // Over the page and the toolbar's backdrop, as the sidebar itself sits.
+        // With the sidebar hidden, the pointer at the window's left edge brings it out, just as
+        // showing it does, until the pointer leaves it. A thin strip leaves the page's edge usable.
         .overlay(alignment: .leading) {
-            if prefs.sidebarCollapsed, !fullscreen { SidebarPeek() }
+            if !browser.showsSidebar, !fullscreen {
+                Color.clear
+                    .frame(width: 6)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(.rect)
+                    .onHover { if $0 { peek(true) } }
+            }
         }
+        // Showing or hiding it for good ends the peek.
+        .onChange(of: prefs.sidebarCollapsed) { leaving?.cancel() }
         // One translucent backdrop behind the toolbar and sidebar; only the page is opaque.
         .background { WindowBackdrop().ignoresSafeArea() }
         .toolbar { BrowserToolbar() }
@@ -70,6 +81,20 @@ public struct RootView: View {
         }
         .onChange(of: browser.renameSpace) { _, id in
             newName = state.spaces.first { $0.id == id }?.name ?? ""
+        }
+    }
+
+    /// The pointer reached the edge strip or the peeking sidebar (`inside`), or left the sidebar.
+    /// The sidebar goes a moment after the pointer leaves, so overshooting doesn't close it, and
+    /// after a longer moment if the pointer never reaches it.
+    private func peek(_ inside: Bool) {
+        leaving?.cancel()
+        let opening = inside && !browser.sidebarPeeking
+        if opening { withAnimation { browser.sidebarPeeking = true } }
+        guard !inside || opening else { return }
+        leaving = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(opening ? 1500 : 300))
+            if !Task.isCancelled { withAnimation { browser.sidebarPeeking = false } }
         }
     }
 }
@@ -171,52 +196,6 @@ struct SidebarEdge: View {
                         .onEnded { _ in start = nil })
                     .ignoresSafeArea()
             }
-    }
-}
-
-/// With the sidebar hidden, the pointer at the window's left edge slides the sidebar out over the
-/// page. It stays while the pointer is over it and goes a moment after the pointer leaves.
-struct SidebarPeek: View {
-    @Environment(Browser.self) private var browser
-    @State private var shown = false
-    @State private var leaving: Task<Void, Never>?
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            // A thin strip along the edge: little enough to leave the page's own edge usable.
-            Color.clear
-                .frame(width: 6)
-                .frame(maxHeight: .infinity)
-                .contentShape(.rect)
-                .onHover { if $0 { show(true) } }
-            if shown {
-                // The sidebar itself, sliding out over the page as it does when you show it, and
-                // running up behind the traffic lights.
-                Sidebar()
-                    .frame(width: max(browser.preferences.sidebarWidth, SidebarEdge.widths.lowerBound))
-                    .frame(maxHeight: .infinity)
-                    .background { WindowBackdrop().ignoresSafeArea() }
-                    .shadow(color: .black.opacity(0.18), radius: 14, x: 2)
-                    .onHover { show($0) }
-                    .transition(.move(edge: .leading))
-            }
-        }
-        .motion(.default, value: shown)
-        // Showing the sidebar for good takes the peek with it.
-        .onDisappear { leaving?.cancel() }
-    }
-
-    private func show(_ inside: Bool) {
-        leaving?.cancel()
-        if inside {
-            shown = true
-        } else {
-            // A short grace, so crossing the gap at the edge or overshooting doesn't close it.
-            leaving = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(300))
-                if !Task.isCancelled { shown = false }
-            }
-        }
     }
 }
 

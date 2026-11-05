@@ -311,8 +311,15 @@ public final class Browser {
     }
 
     public func toggleSidebar() {
+        sidebarPeeking = false
         preferences.sidebarCollapsed.toggle()
     }
+
+    /// The hidden sidebar is out for a moment, because the pointer went to the window's edge.
+    public var sidebarPeeking = false
+
+    /// The sidebar is on screen: shown, or out for a peek.
+    public var showsSidebar: Bool { !preferences.sidebarCollapsed || sidebarPeeking }
 
     public func showDeveloperTools() {
         guard let id = store.state.selectedTabID else { return }
