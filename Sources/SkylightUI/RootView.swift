@@ -54,6 +54,7 @@ public struct RootView: View {
                     .onHover { if $0 { peek(true) } }
             }
         }
+        .overlay { SkylightMenu() }
         // Showing or hiding it for good ends the peek.
         .onChange(of: prefs.sidebarCollapsed) { leaving?.cancel() }
         // One translucent backdrop behind the toolbar and sidebar; only the page is opaque.
@@ -164,6 +165,14 @@ private struct BrowserToolbar: ToolbarContent {
 
         ToolbarItem(placement: .primaryAction) {
             ExtensionsMenuButton()
+        }
+        .sharedBackgroundVisibility(.hidden)
+
+        ToolbarItem(placement: .primaryAction) {
+            Button { browser.toggleMainMenu() } label: {
+                Label("Menu", systemImage: "ellipsis")
+            }
+            .help("Menu")
         }
         .sharedBackgroundVisibility(.hidden)
     }
