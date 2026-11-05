@@ -72,6 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if settings == nil { settings = SettingsWindowController(browser: browser) }
             settings?.show(section)
         }
+        browser.showWindow = { [weak self] in
+            self?.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+        }
         window.setContentSize(NSSize(width: 1280, height: 820))
         window.setFrameAutosaveName("SkylightMain")
         if !window.setFrameUsingName("SkylightMain") { window.center() }
@@ -189,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func nextSpace(_ sender: Any?) { store?.send(.switchSpaceByOffset(1)) }
     @objc func previousSpace(_ sender: Any?) { store?.send(.switchSpaceByOffset(-1)) }
     @objc func duplicateSpace(_ sender: Any?) { browser?.duplicateSpace() }
-    @objc func newSpace(_ sender: Any?) { store?.send(.createSpace(name: "Space \((store?.state.spaces.count ?? 0) + 1)")) }
+    @objc func newSpace(_ sender: Any?) { browser?.newSpace() }
     @objc func newFolder(_ sender: Any?) {
         withAnimation(.smooth(duration: 0.28)) { browser?.newFolder() }
     }

@@ -58,9 +58,9 @@ public enum BrowserAction: Equatable, Sendable {
     /// Moves a pane to another position in its split.
     case movePane(TabID, to: Int)
 
-    /// A new Space gets a profile of its own, so it starts signed out of everything. With `sharing`,
-    /// it uses that Space's profile instead.
-    case createSpace(name: String, hue: Double? = nil, sharing: SpaceID? = nil)
+    /// A new Space uses `profile`, or the active Space's, so its logins, passwords and extensions
+    /// carry over.
+    case createSpace(name: String, hue: Double? = nil, profile: ProfileID? = nil)
     /// A new empty Space that looks like this one and shares its profile.
     case duplicateSpace(SpaceID)
     case renameSpace(SpaceID, String)
@@ -73,10 +73,9 @@ public enum BrowserAction: Equatable, Sendable {
     case setSpaceTheme(SpaceID, String?)
     /// Changing a Space's profile reloads its pages in the new cookie jar.
     case assignProfile(SpaceID, ProfileID)
-    /// Moves a Space to a new profile named after it, away from the Spaces it shared logins with.
-    case giveSpaceOwnProfile(SpaceID)
 
-    case createProfile(name: String)
+    /// With `passwordsFrom`, the new profile uses that profile's saved passwords.
+    case createProfile(name: String, passwordsFrom: ProfileID? = nil)
     case renameProfile(ProfileID, String)
     case setProfileIcon(ProfileID, String?)
     case setProfileHue(ProfileID, Double?)

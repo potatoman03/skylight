@@ -29,6 +29,15 @@ private let c = URL(string: "https://c.example")!
         urls.map { BrowserReducer.reduce(&state, .openTab($0), env: env).openedTabID! }
     }
 
+    /// A new Space on a new profile.
+    @discardableResult
+    func separateSpace(_ state: inout BrowserState, _ name: String) -> ProfileID {
+        BrowserReducer.reduce(&state, .createProfile(name: name), env: env)
+        let profile = state.profiles.last!.id
+        BrowserReducer.reduce(&state, .createSpace(name: name, profile: profile), env: env)
+        return profile
+    }
+
     @Test func openTabSelectsAndInsertsAfterSelected() {
         var state = BrowserState.initial()
         let ids = open(&state, a, b)
@@ -161,22 +170,70 @@ private let c = URL(string: "https://c.example")!
         #expect(!BrowserReducer.reduce(&state, .deleteProfile(.standard), env: env).applied)
     }
 
-    @Test func newSpaceStartsWithItsOwnProfile() {
+    @Test func newSpaceSharesTheActiveSpacesProfile() {
         var state = BrowserState.initial()
-        BrowserReducer.reduce(&state, .createSpace(name: "Client"), env: env)
-        #expect(state.activeSpace.name == "Client")
-        #expect(state.activeSpace.profileID != .standard)
-        #expect(state.profile(state.activeSpace.profileID)?.name == "Client")
+        let client = separateSpace(&state, "Client")
+        let profiles = state.profiles.count
+        BrowserReducer.reduce(&state, .createSpace(name: "More"), env: env)
+        #expect(state.activeSpace.name == "More")
+        #expect(state.activeSpace.profileID == client)
+        #expect(state.profiles.count == profiles)
     }
 
-    @Test func newSpaceCanShareAnotherSpacesLogins() {
+    @Test func newSpaceCanUseAnotherProfile() {
         var state = BrowserState.initial()
-        let first = state.spaces[0]
-        let profiles = state.profiles.count
-        BrowserReducer.reduce(&state, .createSpace(name: "Same", sharing: first.id), env: env)
-        #expect(state.activeSpace.profileID == first.profileID)
-        #expect(state.profiles.count == profiles)
-        #expect(!BrowserReducer.reduce(&state, .createSpace(name: "Lost", sharing: SpaceID("gone")), env: env).applied)
+        let client = separateSpace(&state, "Client")
+        #expect(state.activeSpace.name == "Client")
+        #expect(state.activeSpace.profileID == client)
+        #expect(!BrowserReducer.reduce(&state, .createSpace(name: "Lost", profile: ProfileID("gone")), env: env).applied)
+    }
+
+    @Test func aProfileCanUseAnothersPasswords() {
+        var state = BrowserState.initial()
+        let spaces = state.spaces.count
+        BrowserReducer.reduce(&state, .createProfile(name: "Own"), env: env)
+        let own = state.profiles.last!.id
+        BrowserReducer.reduce(&state, .createProfile(name: "Linked", passwordsFrom: own), env: env)
+        let linked = state.profiles.last!.id
+        #expect(state.spaces.count == spaces)
+        #expect(state.passwordProfile(for: own) == own)
+        #expect(state.passwordProfile(for: linked) == own)
+    }
+
+    @Test func passwordsLinkToTheProfileThatHoldsThem() {
+        var state = BrowserState.initial()
+        BrowserReducer.reduce(&state, .createProfile(name: "One", passwordsFrom: .standard), env: env)
+        let one = state.profiles.last!.id
+        BrowserReducer.reduce(&state, .createProfile(name: "Two", passwordsFrom: one), env: env)
+        #expect(state.profiles.last!.passwordsFrom == .standard)
+    }
+
+    @Test func deletingAProfileMovesItsPasswordLinksToDefault() {
+        var state = BrowserState.initial()
+        BrowserReducer.reduce(&state, .createProfile(name: "Own"), env: env)
+        let own = state.profiles.last!.id
+        BrowserReducer.reduce(&state, .createProfile(name: "Linked", passwordsFrom: own), env: env)
+        let linked = state.profiles.last!.id
+        BrowserReducer.reduce(&state, .deleteProfile(own), env: env)
+        #expect(state.passwordProfile(for: linked) == .standard)
+    }
+
+    @Test func oldProfilesKeepTheirOwnPasswords() throws {
+        let profile = try JSONDecoder().decode(Profile.self, from: Data(#"{"id":"p","name":"Old"}"#.utf8))
+        #expect(profile.passwordsFrom == nil)
+    }
+
+    @Test func spaceSetupRemembersWhatItCanRead() throws {
+        let setup = try JSONDecoder().decode(SpaceSetup.self, from: Data(#"{"sharesEverything":false,"sites":["github","gitlab"]}"#.utf8))
+        #expect(setup == SpaceSetup(sharesEverything: false, sites: [.github]))
+        let blank = try JSONDecoder().decode(SpaceSetup.self, from: Data("{}".utf8))
+        #expect(blank == SpaceSetup())
+        #expect(try JSONDecoder().decode(SpaceSetup.self, from: JSONEncoder().encode(setup)) == setup)
+    }
+
+    @Test func signInSitesCoverTheirAccountDomains() {
+        #expect(SignInSite.google.domains.contains("youtube.com"))
+        #expect(SignInSite.github.domains == ["github.com"])
     }
 
     @Test func duplicateSpaceCopiesLookAndLoginsButNotTabs() {
@@ -204,15 +261,15 @@ private let c = URL(string: "https://c.example")!
         let id = open(&state, a)[0]
         BrowserReducer.reduce(&state, .duplicateSpace(first.id), env: env)
         BrowserReducer.reduce(&state, .switchSpace(first.id), env: env)
-        let result = BrowserReducer.reduce(&state, .giveSpaceOwnProfile(first.id), env: env)
+        BrowserReducer.reduce(&state, .createProfile(name: first.name), env: env)
+        let result = BrowserReducer.reduce(&state, .assignProfile(first.id, state.profiles.last!.id), env: env)
         #expect(state.spaces[0].profileID != state.spaces[1].profileID)
-        #expect(state.profile(state.spaces[0].profileID)?.name == first.name)
         #expect(result.effects == [.discardPage(id), .showTab(id)])
     }
 
     @Test func deletingASpaceKeepsItsProfile() {
         var state = BrowserState.initial()
-        BrowserReducer.reduce(&state, .createSpace(name: "Client"), env: env)
+        separateSpace(&state, "Client")
         let space = state.activeSpace
         BrowserReducer.reduce(&state, .deleteSpace(space.id), env: env)
         #expect(state.profile(space.profileID) != nil)

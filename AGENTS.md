@@ -120,6 +120,12 @@ Rules the map implies:
   Skylight finds them, and the default profile's never changes, so older passwords stay with it.
   Other profiles also set a security domain, because the description isn't part of what makes a
   Keychain item unique and the same login may be saved in two profiles.
+- **Fill a new profile before anything opens it.** Extension data is copied as files, so it has to
+  land before `PageCoordinator.profile(for:)` makes the profile; cookies go through Chromium's
+  cookie manager, because the files are encrypted and httpOnly cookies are out of a page's reach.
+  Read cookie names to see who's signed in, never their values. A profile with `passwordsFrom`
+  stores no passwords of its own, so anything reading or saving them goes through
+  `BrowserState.passwordProfile(for:)`.
 - **Run against a throwaway data folder.** `SKYLIGHT_DATA_DIR` resolves symlinks because Chromium
   compares cache paths literally (`/var` vs `/private/var`). If Skylight is installed and running,
   `open build/Skylight.app` activates that copy instead (same bundle id). Start the executable
@@ -133,7 +139,7 @@ Rules the map implies:
 ## Verifying a change
 
 1. `swift build`. It must finish without errors.
-2. `swift test`: every test passes (125 at the time of writing). Without CEF, run
+2. `swift test`: every test passes (131 at the time of writing). Without CEF, run
    `swift build --product SkylightPackageTests` and then `swift test --skip-build`.
 3. For anything that runs in the app: `scripts/bundle.sh`, then
    `SKYLIGHT_DEV=1 SKYLIGHT_DATA_DIR="$(mktemp -d)" build/Skylight.app/Contents/MacOS/Skylight`,

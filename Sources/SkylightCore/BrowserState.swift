@@ -71,6 +71,9 @@ public struct BrowserState: Codable, Equatable, Sendable {
 
     public func profile(_ id: ProfileID) -> Profile? { profiles.first { $0.id == id } }
 
+    /// The profile whose saved passwords `id` uses.
+    public func passwordProfile(for id: ProfileID) -> ProfileID { profile(id)?.passwordsFrom ?? id }
+
     /// Every tab that should stay alive because the user is looking at it in some Space.
     public var selectedTabIDs: Set<TabID> {
         Set(spaces.flatMap { space in space.selectedTabID.map(space.group(of:)) ?? [] })

@@ -30,10 +30,14 @@ public final class Browser {
     public var renameTab: TabID?
     /// Whether the keyboard shortcuts sheet is up.
     public var showShortcuts = false
+    /// The New Space sheet, while it's up.
+    public var spaceSetup: SpaceSetupRequest?
     /// A new version, downloaded and waiting for a restart. The app's updater sets it.
     public var readyUpdate: ReadyUpdate?
     /// Opens the Settings window; the app provides it.
     @ObservationIgnored public var showSettings: @MainActor (String?) -> Void = { _ in }
+    /// Brings the browser window forward; the app provides it.
+    @ObservationIgnored public var showWindow: @MainActor () -> Void = {}
 
     public var omnibox: Omnibox { preferences.omnibox }
     @ObservationIgnored private let engine: WebEngine
@@ -256,7 +260,7 @@ public final class Browser {
     /// Types a saved login into the selected tab.
     public func fillLogin(_ credential: Credential) {
         guard let id = store.state.selectedTabID, let page = pages.page(for: id) ?? pages.wake(id) else { return }
-        guard credential.profile == store.state.profileID(forTab: id) else { return }
+        guard credential.profile == store.state.passwordProfile(for: store.state.profileID(forTab: id)) else { return }
         passwords.fill(credential, in: page, url: store.state.tabs[id]?.url)
     }
 
@@ -269,6 +273,65 @@ public final class Browser {
 
     public func duplicateSpace() {
         store.send(.duplicateSpace(store.state.activeSpaceID))
+    }
+
+    /// Asks what a new Space should keep from the current one.
+    public func newSpace() {
+        let state = store.state
+        askForSpaceSetup(space: nil, name: "Space \(state.spaces.count + 1)", source: state.activeSpace)
+    }
+
+    /// Asks what a Space should keep when it moves to a profile of its own.
+    public func newProfile(for id: SpaceID) {
+        guard let space = store.state.spaces.first(where: { $0.id == id }) else { return }
+        askForSpaceSetup(space: id, name: space.name, source: space)
+    }
+
+    private func askForSpaceSetup(space: SpaceID?, name: String, source: Space) {
+        Task {
+            let signedIn = await pages.signedInSites(in: source.profileID)
+            showWindow()
+            spaceSetup = SpaceSetupRequest(space: space, name: name, sourceName: source.name,
+                                           source: source.profileID, signedIn: signedIn)
+        }
+    }
+
+    /// Closes the New Space sheet and does what it says. A blank name takes the suggested one.
+    public func finishSpaceSetup(name: String, setup: SpaceSetup) {
+        guard let request = spaceSetup else { return }
+        spaceSetup = nil
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmed.isEmpty ? request.name : trimmed
+        if request.space == nil {
+            preferences.newSpaceSetup = setup
+            guard !setup.sharesEverything else {
+                store.send(.createSpace(name: name))
+                return
+            }
+        }
+        Task { await separate(request, name: name, setup: setup) }
+    }
+
+    /// Makes the profile and fills it before anything opens in it, so a page's first load is
+    /// already signed in. Whatever can't be copied just means signing in again.
+    private func separate(_ request: SpaceSetupRequest, name: String, setup: SpaceSetup) async {
+        store.send(.createProfile(name: name, passwordsFrom: setup.passwords ? request.source : nil))
+        guard let profile = store.state.profiles.last?.id else { return }
+        let ids = extensions.enabled.map(\.id).filter { !setup.skippedExtensions.contains($0) }
+        do {
+            try await pages.copyExtensionData(ids, from: request.source, to: profile)
+        } catch {
+            toasts.show("Couldn't bring along your extensions. Sign in to them again here.", symbol: "exclamationmark.triangle")
+        }
+        let sites = request.signedIn.filter(setup.sites.contains)
+        if !sites.isEmpty, await pages.copyCookies(sites.flatMap(\.domains), from: request.source, to: profile) == 0 {
+            toasts.show("Couldn't bring along your sign-ins. Sign in again here.", symbol: "exclamationmark.triangle")
+        }
+        if let space = request.space {
+            store.send(.assignProfile(space, profile))
+        } else {
+            store.send(.createSpace(name: name, profile: profile))
+        }
     }
 
     public enum ImportSource: String, CaseIterable, Sendable {
@@ -358,7 +421,8 @@ extension Browser: PageEventSink {
             agents.updateSiteTools(WebMCP.parseTools(message), tab: id)
             return .null
         case let type? where type.hasPrefix("passwords."):
-            return passwords.handle(message, tab: id, url: store.state.tabs[id]?.url, profile: store.state.profileID(forTab: id))
+            return passwords.handle(message, tab: id, url: store.state.tabs[id]?.url,
+                                    profile: store.state.passwordProfile(for: store.state.profileID(forTab: id)))
         case let type? where type.hasPrefix("media."):
             return media.handle(message, tab: id)
         case "extensions.storeStatus", "extensions.storeInstall":
@@ -456,9 +520,7 @@ extension Browser: CommandSource {
         }
         command("packages", "Show packages folder", "folder") { [weak self] in self?.packages.revealInFinder() }
         command("reopen", "Reopen closed tab", "arrow.uturn.backward") { [weak self] in self?.store.send(.reopenClosedTab) }
-        command("new-space", "New Space", "plus.square.on.square") { [weak self] in
-            self?.store.send(.createSpace(name: "Space \((self?.store.state.spaces.count ?? 0) + 1)"))
-        }
+        command("new-space", "New Space", "plus.square.on.square") { [weak self] in self?.newSpace() }
         command("duplicate-space", "Duplicate Space", "plus.square.on.square") { [weak self] in self?.duplicateSpace() }
         command("mcp", "Copy Claude Code connection command", "point.3.connected.trianglepath.dotted") { [weak self] in
             self?.copyMCPCommand()
@@ -482,7 +544,7 @@ extension Browser: CommandSource {
                 self?.store.send(.toggleFavorite(selected))
             }
         }
-        for login in passwords.logins(for: state.selectedTab?.url, in: state.activeSpace.profileID) {
+        for login in passwords.logins(for: state.selectedTab?.url, in: state.passwordProfile(for: state.activeSpace.profileID)) {
             commands.append(CommandItem(id: "fill-\(login.id)", kind: .command, title: "Fill password",
                                         subtitle: login.username.isEmpty ? login.displayHost : login.username, symbol: "key.fill") { [weak self] in
                 self?.fillLogin(login)

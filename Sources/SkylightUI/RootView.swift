@@ -79,6 +79,9 @@ public struct RootView: View {
         .sheet(isPresented: Binding(get: { browser.showShortcuts }, set: { browser.showShortcuts = $0 })) {
             ShortcutsSheet()
         }
+        .sheet(item: Binding(get: { browser.spaceSetup }, set: { browser.spaceSetup = $0 })) {
+            SpaceSetupSheet(request: $0)
+        }
         .onChange(of: browser.renameSpace) { _, id in
             newName = state.spaces.first { $0.id == id }?.name ?? ""
         }
