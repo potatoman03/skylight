@@ -114,13 +114,12 @@ lands:
 
 ## Future work: releases
 
-Not built yet. The plan:
+Steps 1–3 are `scripts/release.sh`: it signs with a **Developer ID Application** certificate through
+`bundle.sh`'s signed path, notarizes and staples the app, then packs it in a **DMG** that is signed,
+notarized and stapled too. `bundle.sh` takes `SKYLIGHT_VERSION` and `SKYLIGHT_BUILD` (the release
+script uses the commit count) from the environment. Still to build:
 
-1. Sign with a **Developer ID Application** certificate through `bundle.sh`'s existing signed
-   path (hardened runtime and nested CEF libraries are already handled).
-2. **Notarize** with `xcrun notarytool submit --wait`, then `xcrun stapler staple`.
-3. Package a **DMG** (signed, notarized and stapled too).
 4. **Sparkle** for updates: an EdDSA-signed appcast, `SUFeedURL` and `SUPublicEDKey` in
    Info.plist, and Sparkle's framework signed inside out like CEF's.
 5. A tag-triggered CI job holding the certificate and notary credentials as secrets, and
-   `VERSION` in `bundle.sh` read from the tag instead of the hard-coded `0.1.0`.
+   `SKYLIGHT_VERSION` read from the tag.

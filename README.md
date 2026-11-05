@@ -95,10 +95,13 @@ the last re-keys Chromium's cookies, and you are signed out of sites once.
 The app icon is drawn in code: edit `scripts/make-icon.swift` and run it to regenerate
 `Resources/AppIcon.icns`.
 
-### Releases (not built yet)
+### Releases
 
-There's no release pipeline yet. The plan is a Developer ID-signed, notarized build in a DMG,
-updated with Sparkle. Until then, build it yourself as above.
+`scripts/release.sh 0.2.0` builds `build/Skylight-0.2.0.dmg`: signed with a Developer ID, notarized
+and stapled, so it opens on any Mac without warnings. It needs a Developer ID Application
+certificate in your keychain and notary credentials saved with `xcrun notarytool
+store-credentials`; the top of the script has the steps. Automatic updates (Sparkle) and a CI job
+that publishes releases aren't built yet.
 
 ## Modules
 

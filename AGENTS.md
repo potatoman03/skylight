@@ -67,7 +67,7 @@ Rules the map implies:
 | A prompt (permission, dialog, approval) | A `Prompt` case in `PromptCenter`, shown by the alert host in `ContentArea.swift`. |
 | A view, Settings page, sidebar row, toolbar item | `SkylightUI`. Motion tokens are in `Motion.swift`, colors in `Theme.swift`. |
 | A menu item or keyboard shortcut | `Sources/Skylight/MainMenu.swift` (the action is an `@objc` method on `AppDelegate`). The shortcuts sheet reads the menu bar, so it picks the item up. |
-| Build, bundle, signing | `scripts/bundle.sh`. CEF version: `scripts/fetch-cef.sh`. |
+| Build, bundle, signing | `scripts/bundle.sh`. Notarized DMGs: `scripts/release.sh`. CEF version: `scripts/fetch-cef.sh`. |
 
 ## Invariants and gotchas
 
