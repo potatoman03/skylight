@@ -223,6 +223,7 @@ public final class Preferences {
         var tidyInstruction: String?
         var sidebarWidth: Double?
         var shortcuts: [String: KeyBinding]?
+        var newSpaceSetup: SpaceSetup?
     }
 
     /// A shortcut you set yourself: the key, and the modifier flags' raw value. An empty key takes
@@ -284,6 +285,8 @@ public final class Preferences {
     public var tidyInstruction = "" { didSet { save() } }
     /// Your own shortcuts, by menu command, over the menus' own.
     public var shortcuts: [String: KeyBinding] = [:] { didSet { save() } }
+    /// The last choice in the New Space sheet.
+    public var newSpaceSetup = SpaceSetup() { didSet { save() } }
 
     /// Every theme you can pick: the presets, then your own.
     public var themes: [SkyTheme] { SkyTheme.presets + customThemes }
@@ -507,6 +510,7 @@ public final class Preferences {
         tidyInstruction = stored.tidyInstruction ?? tidyInstruction
         sidebarWidth = stored.sidebarWidth ?? sidebarWidth
         shortcuts = stored.shortcuts ?? shortcuts
+        newSpaceSetup = stored.newSpaceSetup ?? newSpaceSetup
     }
 
     public func applyAppearance() {
@@ -529,7 +533,7 @@ public final class Preferences {
                             extensionPlacement: extensionPlacement, skyBackdrop: skyBackdrop,
                             highlightFocusedPane: highlightFocusedPane, autoPictureInPicture: autoPictureInPicture,
                             showMediaControls: showMediaControls, tidyInstruction: tidyInstruction, sidebarWidth: sidebarWidth,
-                            shortcuts: shortcuts)
+                            shortcuts: shortcuts, newSpaceSetup: newSpaceSetup)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)

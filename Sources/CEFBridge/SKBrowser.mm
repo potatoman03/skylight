@@ -1,13 +1,137 @@
 #import "CEFBridge.h"
 
+#include <functional>
+#include <memory>
+
 #include "Internal.h"
 #include "include/cef_client.h"
+#include "include/cef_cookie.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
 #include "include/wrapper/cef_helpers.h"
 #include "include/wrapper/cef_message_router.h"
 
 #pragma mark - Profile
+
+namespace {
+
+using Cookies = std::vector<CefCookie>;
+
+std::vector<std::string> ToDomains(NSArray<NSString*>* domains) {
+  std::vector<std::string> result;
+  for (NSString* domain in domains) {
+    result.push_back(domain.UTF8String);
+  }
+  return result;
+}
+
+bool IsWithin(const std::string& cookieDomain, const std::vector<std::string>& domains) {
+  const std::string host = cookieDomain.starts_with(".") ? cookieDomain.substr(1) : cookieDomain;
+  for (const std::string& domain : domains) {
+    if (host == domain || host.ends_with("." + domain)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+class CookieManagerReady : public CefCompletionCallback {
+ public:
+  explicit CookieManagerReady(std::function<void()> ready) : ready_(std::move(ready)) {}
+  void OnComplete() override { ready_(); }
+
+ private:
+  std::function<void()> ready_;
+  IMPLEMENT_REFCOUNTING(CookieManagerReady);
+};
+
+/// Calls back once the context's cookie store has loaded.
+void WithCookieManager(CefRefPtr<CefRequestContext> context,
+                       std::function<void(CefRefPtr<CefCookieManager>)> ready) {
+  auto manager = std::make_shared<CefRefPtr<CefCookieManager>>();
+  *manager = context->GetCookieManager(new CookieManagerReady([manager, ready] { ready(*manager); }));
+}
+
+/// Chromium releases the visitor when the walk ends, and never visits an empty cookie store, so
+/// the result goes out from the destructor.
+class CookieCollector : public CefCookieVisitor {
+ public:
+  CookieCollector(std::vector<std::string> domains, std::function<void(Cookies)> done)
+      : domains_(std::move(domains)), done_(std::move(done)) {}
+
+  ~CookieCollector() override {
+    auto done = done_;
+    auto cookies = cookies_;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      done(cookies);
+    });
+  }
+
+  bool Visit(const CefCookie& cookie, int, int, bool&) override {
+    if (IsWithin(CefString(&cookie.domain).ToString(), domains_)) {
+      cookies_.push_back(cookie);
+    }
+    return true;
+  }
+
+ private:
+  std::vector<std::string> domains_;
+  std::function<void(Cookies)> done_;
+  Cookies cookies_;
+  IMPLEMENT_REFCOUNTING(CookieCollector);
+};
+
+class CookieWritten : public CefSetCookieCallback {
+ public:
+  explicit CookieWritten(std::function<void(bool)> done) : done_(std::move(done)) {}
+  void OnComplete(bool success) override { done_(success); }
+
+ private:
+  std::function<void(bool)> done_;
+  IMPLEMENT_REFCOUNTING(CookieWritten);
+};
+
+void CollectCookies(CefRefPtr<CefRequestContext> context, std::vector<std::string> domains,
+                    std::function<void(Cookies)> done) {
+  WithCookieManager(context, [domains, done](CefRefPtr<CefCookieManager> manager) {
+    if (!manager || !manager->VisitAllCookies(new CookieCollector(domains, done))) {
+      done({});
+    }
+  });
+}
+
+void WriteCookies(CefRefPtr<CefCookieManager> manager, const Cookies& cookies,
+                  std::function<void(NSInteger)> done) {
+  if (!manager || cookies.empty()) {
+    return done(0);
+  }
+  auto waiting = std::make_shared<size_t>(cookies.size());
+  auto copied = std::make_shared<NSInteger>(0);
+  auto written = [waiting, copied, done](bool success) {
+    *copied += success ? 1 : 0;
+    if (--*waiting == 0) {
+      done(*copied);
+    }
+  };
+  for (const CefCookie& source : cookies) {
+    CefCookie cookie = source;
+    std::string domain = CefString(&source.domain).ToString();
+    // A cookie for one host has no domain of its own. Giving it one would widen it to subdomains,
+    // and Chromium refuses that for __Host- cookies.
+    const bool wholeDomain = domain.starts_with(".");
+    if (wholeDomain) {
+      domain.erase(0, 1);
+    } else {
+      CefString(&cookie.domain).clear();
+    }
+    const std::string url = (source.secure ? "https://" : "http://") + domain + "/";
+    if (!manager->SetCookie(url, cookie, new CookieWritten(written))) {
+      written(false);
+    }
+  }
+}
+
+}  // namespace
 
 @interface SKProfile ()
 @property (nonatomic, readonly) CefRefPtr<CefRequestContext> context;
@@ -30,6 +154,28 @@
 
 - (CefRefPtr<CefRequestContext>)context {
   return _context;
+}
+
+- (void)cookieNamesForDomains:(NSArray<NSString*>*)domains
+                   completion:(void (^)(NSSet<NSString*>*))completion {
+  CollectCookies(_context, ToDomains(domains), [completion](Cookies cookies) {
+    NSMutableSet<NSString*>* names = [NSMutableSet set];
+    for (const CefCookie& cookie : cookies) {
+      [names addObject:skylight::ToNS(CefString(&cookie.name))];
+    }
+    completion(names);
+  });
+}
+
+- (void)copyCookiesForDomains:(NSArray<NSString*>*)domains
+                    toProfile:(SKProfile*)profile
+                   completion:(void (^)(NSInteger))completion {
+  CefRefPtr<CefRequestContext> target = profile.context;
+  CollectCookies(_context, ToDomains(domains), [target, completion](Cookies cookies) {
+    WithCookieManager(target, [cookies, completion](CefRefPtr<CefCookieManager> manager) {
+      WriteCookies(manager, cookies, [completion](NSInteger copied) { completion(copied); });
+    });
+  });
 }
 
 @end

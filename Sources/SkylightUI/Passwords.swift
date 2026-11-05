@@ -14,8 +14,9 @@ struct PasswordSettings: View {
 
     var body: some View {
         let passwords = browser.passwords
-        let profiles = browser.store.state.profiles
-        let current = profile.flatMap { id in profiles.contains { $0.id == id } ? id : nil } ?? browser.store.state.activeSpace.profileID
+        let state = browser.store.state
+        let profiles = state.profiles.filter { $0.passwordsFrom == nil }
+        let current = profile.flatMap { id in profiles.contains { $0.id == id } ? id : nil } ?? state.passwordProfile(for: state.activeSpace.profileID)
         let saved = passwords.logins(in: current)
         let shown = saved.filter {
             search.isEmpty || $0.displayHost.localizedCaseInsensitiveContains(search) || $0.username.localizedCaseInsensitiveContains(search)
@@ -28,7 +29,7 @@ struct PasswordSettings: View {
                         ForEach(profiles) { Text($0.name).tag($0.id) }
                     }
                 } footer: {
-                    Text("Each profile has its own saved passwords. Importing and exporting use the one chosen here.")
+                    Text("Each profile has its own saved passwords, unless a Space was set up to share them. Importing and exporting use the one chosen here.")
                 }
             }
             Section {
@@ -139,7 +140,8 @@ struct LoginKeyButton: View {
     @Environment(Browser.self) private var browser
 
     var body: some View {
-        let logins = browser.passwords.logins(for: url, in: browser.store.state.activeSpace.profileID)
+        let state = browser.store.state
+        let logins = browser.passwords.logins(for: url, in: state.passwordProfile(for: state.activeSpace.profileID))
         if !logins.isEmpty {
             Menu {
                 Section("Fill a saved login") {

@@ -181,7 +181,7 @@ private struct SpacesSettings: View {
             ForEach(state.spaces) { space in
                 SpaceSettingsRow(space: space, profiles: state.profiles, deletable: state.spaces.count > 1)
             }
-            Button("New Space") { browser.store.send(.createSpace(name: "Space \(state.spaces.count + 1)")) }
+            Button("New Space…") { browser.newSpace() }
         }
         .formStyle(.grouped)
     }
@@ -249,7 +249,7 @@ private struct ProfilesSettings: View {
         Form {
             Section {
             } footer: {
-                Text("Each profile has its own cookies, site logins, saved passwords and extension data. A new Space gets its own profile. Spaces on the same profile share all of that, so duplicate a Space to keep its logins. Choose a Space's profile in Spaces.")
+                Text("Each profile has its own cookies, site logins and extension data. Spaces on the same profile share all of that. When you make a new Space, you choose what it keeps from the current one, and its profile can share saved passwords with that one. Choose a Space's profile in Spaces.")
             }
             ForEach(state.profiles) { profile in
                 ProfileSection(profile: profile, spaces: state.spaces.filter { $0.profileID == profile.id })

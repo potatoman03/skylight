@@ -73,6 +73,14 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SKProfile : NSObject
 - (instancetype)initWithCachePath:(NSString *)path;
 @property (nonatomic, readonly, copy) NSString *cachePath;
+/// The names of the cookies for these domains and their subdomains.
+- (void)cookieNamesForDomains:(NSArray<NSString *> *)domains
+                   completion:(void (^)(NSSet<NSString *> *names))completion;
+/// Copies the cookies for these domains and their subdomains, httpOnly ones too. Completion gets
+/// how many were copied.
+- (void)copyCookiesForDomains:(NSArray<NSString *> *)domains
+                    toProfile:(SKProfile *)profile
+                   completion:(void (^)(NSInteger copied))completion;
 @end
 
 #pragma mark - Requests from pages
