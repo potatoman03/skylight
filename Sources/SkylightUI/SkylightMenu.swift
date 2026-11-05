@@ -127,9 +127,19 @@ final class MenuSession {
     @ObservationIgnored private let browser: Browser
     @ObservationIgnored private var monitors: [Any] = []
     @ObservationIgnored private var hoverChange: Task<Void, Never>?
+    /// The row `hoverChange` will settle on.
+    @ObservationIgnored private var settling: Int?
+    /// Where the pointer last was on the open row: the tip of the funnel to its submenu.
+    @ObservationIgnored private var apex: CGPoint?
+    /// The mouse is down and has reached a row, so letting go chooses what's under it.
+    @ObservationIgnored private var dragging = false
+    /// The row the mouse went down on, whose own button handles letting go on it.
+    @ObservationIgnored private var pressed: Int?
 
-    /// Long enough to cross a row on the way to a submenu without it changing.
+    /// How long the pointer rests on a row before its submenu opens or goes.
     private static let hoverDelay = Duration.milliseconds(130)
+    /// How long the pointer can stop inside the funnel before the row under it wins.
+    private static let funnelDelay = Duration.milliseconds(300)
 
     init(browser: Browser) {
         self.browser = browser
@@ -150,13 +160,23 @@ final class MenuSession {
             NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
                 MainActor.assumeIsolated { self?.click(event) ?? false } ? nil : event
             },
+            // SwiftUI's hover stops while the mouse is down, so one tracker serves both.
+            NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+                MainActor.assumeIsolated { self?.pointerMoved(event) }
+                return event
+            },
+            NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
+                MainActor.assumeIsolated { self?.mouseUp(event) }
+                return event
+            },
         ].compactMap(\.self)
+        (NSApp.keyWindow ?? NSApp.mainWindow)?.acceptsMouseMovedEvents = true
     }
 
     func stop() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors = []
-        hoverChange?.cancel()
+        cancelHover()
     }
 
     func close() {
@@ -175,45 +195,107 @@ final class MenuSession {
 
     /// The menu's row `index` was clicked or chosen. A submenu opens now, without the hover's wait.
     func choose(_ index: Int) {
-        hoverChange?.cancel()
+        cancelHover()
         row = index
         if rows[index].opensSubmenu { open = index } else { run(rows[index]) }
     }
 
     // MARK: Pointer
 
-    func hover(_ index: Int, inside: Bool) {
-        guard inside else {
-            if row == index, open != index { row = nil }
+    private func point(of event: NSEvent) -> CGPoint? {
+        guard let content = event.window?.contentView else { return nil }
+        return CGPoint(x: event.locationInWindow.x, y: content.bounds.height - event.locationInWindow.y)
+    }
+
+    private func mainRow(at point: CGPoint) -> Int? {
+        guard panels[0].contains(point) else { return nil }
+        return MenuNavigation.row(at: point.y - panels[0].minY, sections: MenuContent.sections(browser).map(\.count),
+                                  inset: MenuMetrics.inset, rowHeight: MenuMetrics.rowHeight, divider: MenuMetrics.divider)
+    }
+
+    private func submenuRow(at point: CGPoint) -> Int? {
+        guard open != nil, panels[1].contains(point), let open else { return nil }
+        return MenuNavigation.row(at: point.y - panels[1].minY, sections: rows[open].submenu.map(\.count),
+                                  inset: MenuMetrics.inset, rowHeight: MenuMetrics.rowHeight, divider: MenuMetrics.divider)
+    }
+
+    private func pointerMoved(_ event: NSEvent) {
+        guard let point = point(of: event) else { return }
+        let held = event.type == .leftMouseDragged
+        if open != nil, panels[1].contains(point) {
+            cancelHover()
+            row = open
+            subrow = submenuRow(at: point).flatMap { subrows[$0].enabled ? $0 : nil }
+            if held { dragging = true }
             return
         }
-        row = index
         subrow = nil
+        guard let index = mainRow(at: point) else {
+            if open == nil { row = nil }
+            if settling != open { cancelHover() }
+            return
+        }
+        if held { dragging = true }
+        if index == open {
+            cancelHover()
+            row = index
+            apex = point
+        } else if open != nil, let apex, panels[1].width > 0,
+                  MenuNavigation.isInFunnel(point, from: apex, toEdgeAtX: panels[1].maxX, top: panels[1].minY, bottom: panels[1].maxY) {
+            // On the way to the submenu. It only gives way if the pointer stops here.
+            settle(on: index, after: Self.funnelDelay, restart: true)
+        } else {
+            row = index
+            settle(on: index, after: Self.hoverDelay, restart: false)
+            if rows[index].opensSubmenu, open == nil { apex = point }
+        }
+    }
+
+    /// In a moment, `index` becomes the highlighted row and shows its submenu, if any. Moving
+    /// within a row doesn't start the wait again, unless `restart`.
+    private func settle(on index: Int, after delay: Duration, restart: Bool) {
+        guard restart || settling != index else { return }
         hoverChange?.cancel()
-        guard open != index else { return }
+        settling = index
         hoverChange = Task { [weak self] in
-            try? await Task.sleep(for: Self.hoverDelay)
+            try? await Task.sleep(for: delay)
             guard let self, !Task.isCancelled else { return }
+            settling = nil
+            row = index
             open = rows[index].opensSubmenu ? index : nil
         }
     }
 
-    func hoverSubmenu(_ index: Int, inside: Bool) {
-        if inside {
-            hoverChange?.cancel()
-            row = open
-            subrow = index
-        } else if subrow == index {
-            subrow = nil
+    private func cancelHover() {
+        hoverChange?.cancel()
+        settling = nil
+    }
+
+    /// Letting go after dragging over the menu chooses what's under the pointer, as with a system
+    /// menu. A row's own button handles a plain click.
+    private func mouseUp(_ event: NSEvent) {
+        defer {
+            dragging = false
+            pressed = nil
+        }
+        guard dragging, let point = point(of: event) else { return }
+        if let index = submenuRow(at: point) {
+            run(subrows[index])
+        } else if let index = mainRow(at: point) {
+            if index != pressed { choose(index) }
+        } else if !panels[1].contains(point) || open == nil {
+            close()
         }
     }
 
     /// A click outside closes the menu and goes no further, as with a system menu. Returns whether
     /// it took the click.
     private func click(_ event: NSEvent) -> Bool {
-        guard let window = event.window, let content = window.contentView else { return false }
-        let point = CGPoint(x: event.locationInWindow.x, y: content.bounds.height - event.locationInWindow.y)
-        if panels[0].contains(point) || (open != nil && panels[1].contains(point)) { return false }
+        guard let point = point(of: event) else { return false }
+        if panels[0].contains(point) || (open != nil && panels[1].contains(point)) {
+            pressed = mainRow(at: point)
+            return false
+        }
         close()
         return true
     }
@@ -230,12 +312,13 @@ final class MenuSession {
         switch event.keyCode {
         case 125: move(1)  // down
         case 126: move(-1)  // up
-        case 123, 124: side()  // left, right
+        case 123: enterSubmenu()  // left
+        case 124: if subrow != nil { leaveSubmenu() } else { enterSubmenu() }  // right
         case 36, 49, 76:  // return, space, enter
             if let subrow, subrows.indices.contains(subrow) {
                 run(subrows[subrow])
             } else if let row {
-                rows[row].opensSubmenu ? side() : choose(row)
+                rows[row].opensSubmenu ? enterSubmenu() : choose(row)
             }
         case 53:  // esc
             if open != nil { leaveSubmenu() } else { close() }
@@ -245,7 +328,7 @@ final class MenuSession {
     }
 
     private func move(_ offset: Int) {
-        hoverChange?.cancel()
+        cancelHover()
         if subrow != nil {
             subrow = MenuNavigation.step(from: subrow, by: offset, enabled: subrows.map(\.enabled))
         } else {
@@ -254,22 +337,51 @@ final class MenuSession {
         }
     }
 
-    /// The submenu sits to the left, so left goes into it, but right is what a Mac's menus use, so
-    /// both do: into the highlighted row's submenu, or back out of the one you're in.
-    private func side() {
-        hoverChange?.cancel()
-        if subrow != nil {
-            leaveSubmenu()
-        } else if let row, rows[row].opensSubmenu {
-            open = row
-            subrow = MenuNavigation.step(from: nil, by: 1, enabled: subrows.map(\.enabled))
-        }
+    /// The submenu sits to the left, so left goes into it and right comes back. Right also goes
+    /// in, as on a Mac's menus.
+    private func enterSubmenu() {
+        cancelHover()
+        guard subrow == nil, let row, rows[row].opensSubmenu else { return }
+        open = row
+        apex = nil
+        subrow = MenuNavigation.step(from: nil, by: 1, enabled: subrows.map(\.enabled))
     }
 
     private func leaveSubmenu() {
-        hoverChange?.cancel()
+        cancelHover()
         open = nil
         subrow = nil
+    }
+}
+
+/// The ··· button. It opens on press, like a Mac's menus, so you can drag straight down into the
+/// menu and let go on a row. The action is for VoiceOver and Full Keyboard Access, which don't press.
+struct SkylightMenuButton: View {
+    @Environment(Browser.self) private var browser
+    @State private var openedByPress = false
+
+    var body: some View {
+        Button {
+            if !openedByPress { browser.toggleMainMenu() }
+            openedByPress = false
+        } label: {
+            Label("Menu", systemImage: "ellipsis").labelStyle(.iconOnly)
+        }
+        .buttonStyle(MenuButtonStyle { pressed in
+            guard pressed, !browser.showsMainMenu else { return }
+            openedByPress = true
+            browser.toggleMainMenu()
+        })
+        .help("Menu")
+    }
+}
+
+private struct MenuButtonStyle: ButtonStyle {
+    let onPress: (Bool) -> Void
+
+    func makeBody(configuration: Configuration) -> some View {
+        ToolbarIconStyle().makeBody(configuration: configuration)
+            .onChange(of: configuration.isPressed) { _, pressed in onPress(pressed) }
     }
 }
 
@@ -287,16 +399,18 @@ struct SkylightMenu: View {
                 MenuPanels(browser: browser, height: height)
                     .padding(.top, MenuMetrics.margin)
                     .padding(.trailing, MenuMetrics.margin + 2)
-                    .transition(Arrive(anchor: .topTrailing, scale: 0.96, rise: -4))
+                    .transition(.opacity)
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
-        .motion(showing ? Motion.arrive : Motion.exit, value: showing)
+        .motion(Motion.feedback, value: showing)
     }
 }
 
-private enum MenuMetrics {
+enum MenuMetrics {
     static let margin: CGFloat = 6
+    static let gap: CGFloat = 6
+    static let gutter: CGFloat = 17
     static let inset: CGFloat = 5
     static let rowHeight: CGFloat = 28
     static let divider: CGFloat = 9
@@ -329,31 +443,32 @@ private struct MenuPanels: View {
     var body: some View {
         let sections = MenuContent.sections(browser)
         let rows = sections.flatMap(\.self)
-        HStack(alignment: .top, spacing: 6) {
-            if let open = session.open, rows.indices.contains(open) {
-                MenuPanel(sections: rows[open].submenu, highlight: session.subrow,
-                          choose: { session.run(session.subrows[$0]) },
-                          hover: { session.hoverSubmenu($0, inside: $1) })
-                    .frame(minWidth: 200, maxWidth: 300)
-                    .fixedSize()
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
-                        session.panels[1] = $0
-                        submenuHeight = $0.height
+        MenuPanel(sections: sections, highlight: session.row, gutter: true, choose: { session.choose($0) })
+            .frame(width: MenuMetrics.width)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.panels[0] = $0 }
+            // Hung off the menu's left edge, outside its layout, so the menu stays put. It appears at
+            // once, like a Mac's.
+            .overlay(alignment: .topLeading) {
+                Color.clear
+                    .frame(width: 0, height: 0)
+                    .overlay(alignment: .topTrailing) {
+                        if let open = session.open, rows.indices.contains(open) {
+                            MenuPanel(sections: rows[open].submenu, highlight: session.subrow, gutter: false,
+                                      choose: { session.run(session.subrows[$0]) })
+                                .frame(minWidth: 200, maxWidth: 300)
+                                .fixedSize()
+                                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                                    session.panels[1] = $0
+                                    submenuHeight = $0.height
+                                }
+                                // Level with its row, as far as the window allows.
+                                .offset(x: -MenuMetrics.gap,
+                                        y: max(0, min(MenuMetrics.top(of: open, in: sections) - MenuMetrics.inset,
+                                                      height - submenuHeight - 2 * MenuMetrics.margin)))
+                        }
                     }
-                    // Beside its row, as far as the window allows.
-                    .padding(.top, max(0, min(MenuMetrics.top(of: open, in: sections) - MenuMetrics.inset,
-                                              height - submenuHeight - 2 * MenuMetrics.margin)))
-                    .id(open)
-                    .transition(.opacity)
             }
-            MenuPanel(sections: sections, highlight: session.row,
-                      choose: { session.choose($0) },
-                      hover: { session.hover($0, inside: $1) })
-                .frame(width: MenuMetrics.width)
-                .fixedSize(horizontal: false, vertical: true)
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { session.panels[0] = $0 }
-        }
-        .motion(Motion.feedback, value: session.open)
         .onAppear(perform: session.start)
         .onDisappear {
             session.stop()
@@ -368,8 +483,9 @@ private struct MenuPanels: View {
 private struct MenuPanel: View {
     let sections: [[MenuRow]]
     let highlight: Int?
+    /// Room at the rows' leading edge for the chevrons.
+    let gutter: Bool
     let choose: (Int) -> Void
-    let hover: (Int, Bool) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -381,8 +497,8 @@ private struct MenuPanel: View {
                 }
                 let first = sections[..<section].joined().count
                 ForEach(Array(sections[section].enumerated()), id: \.element.id) { offset, row in
-                    MenuRowView(row: row, highlighted: highlight == first + offset,
-                                choose: { choose(first + offset) }, hover: { hover(first + offset, $0) })
+                    MenuRowView(row: row, highlighted: highlight == first + offset, gutter: gutter,
+                                choose: { choose(first + offset) })
                 }
             }
         }
@@ -395,8 +511,8 @@ private struct MenuPanel: View {
 private struct MenuRowView: View {
     let row: MenuRow
     let highlighted: Bool
+    let gutter: Bool
     let choose: () -> Void
-    let hover: (Bool) -> Void
     @Environment(Browser.self) private var browser
 
     var body: some View {
@@ -408,20 +524,24 @@ private struct MenuRowView: View {
                 if let keys = row.keys {
                     Text(keys).foregroundStyle(.secondary)
                 }
-                if row.opensSubmenu {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
             }
             .font(browser.preferences.density.rowFont)
-            .padding(.horizontal, 9)
+            .padding(.leading, gutter ? MenuMetrics.gutter : 9)
+            .padding(.trailing, 9)
             .frame(height: MenuMetrics.rowHeight)
+            // Submenus open to the left, so the chevron sits on that side and points there.
+            .overlay(alignment: .leading) {
+                if row.opensSubmenu {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: MenuMetrics.gutter)
+                }
+            }
             .contentShape(.rect)
         }
         .buttonStyle(MenuRowStyle(highlighted: highlighted))
         .disabled(!row.enabled)
-        .onHover(perform: hover)
     }
 
     @ViewBuilder

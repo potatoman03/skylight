@@ -169,10 +169,7 @@ private struct BrowserToolbar: ToolbarContent {
         .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .primaryAction) {
-            Button { browser.toggleMainMenu() } label: {
-                Label("Menu", systemImage: "ellipsis")
-            }
-            .help("Menu")
+            SkylightMenuButton()
         }
         .sharedBackgroundVisibility(.hidden)
     }
