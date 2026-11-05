@@ -49,6 +49,10 @@ jobs:
           scripts/fetch-cef.sh
           # Only Release is linked and bundled; dropping the rest halves the cache.
           rm -rf Vendor/cef/Debug Vendor/cef/tests
+      - name: Check CEF is complete
+        run: |
+          test -f "Vendor/cef/Release/Chromium Embedded Framework.framework/Chromium Embedded Framework"
+          test -f Vendor/cef/build/libcef_dll_wrapper/libcef_dll_wrapper.a
       - name: Build everything
         run: swift build
       - name: Bundle (ad hoc signed)

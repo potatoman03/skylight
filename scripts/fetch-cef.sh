@@ -15,7 +15,9 @@ else
   url="https://cef-builds.spotifycdn.com/$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$name").tar.bz2"
   work="$(mktemp -d)"
   trap 'rm -rf "$work"' EXIT
-  echo "Downloading $name…"
+  # Braces: in a UTF-8 locale, macOS's bash 3.2 reads the "…" as part of the variable's name,
+  # stops with "unbound variable", and still exits 0.
+  echo "Downloading ${name}…"
   curl --fail --location --progress-bar "$url" -o "$work/cef.tar.bz2"
   mkdir -p "$work/x"
   tar -xjf "$work/cef.tar.bz2" -C "$work/x"
