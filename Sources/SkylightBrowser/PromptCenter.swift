@@ -30,6 +30,9 @@ public enum Prompt: Identifiable {
 public struct AgentApproval: Identifiable, Sendable {
     public let id = UUID()
     public let client: String
+    /// The agent's MCP session, which "Allow for This Session" trusts. Nil outside a session,
+    /// where there's nothing to trust.
+    public let session: String?
     public let tool: ToolDefinition
     public let summary: String
 }
@@ -41,9 +44,17 @@ public struct AgentApproval: Identifiable, Sendable {
 public final class PromptCenter: ApprovalProvider {
     public private(set) var prompts: [Prompt] = []
 
-    /// Origin + permission kind → the user's answer, for this run of the app.
+    /// Asking site + the page's site + permission kind → the user's answer, for this run of the app.
     @ObservationIgnored private var permissionAnswers: [String: Bool] = [:]
-    /// Agents the user allowed to act without asking, for this run of the app.
+
+    private static func keys(_ request: PermissionRequest) -> [String] {
+        let pair = "\(PermissionRequest.origin(of: request.origin)) in \(PermissionRequest.origin(of: request.topOrigin))"
+        return request.kinds.map { "\(pair)|\($0.rawValue)" }
+    }
+    /// Agent sessions the user allowed to act without asking, with the agents' names, for this
+    /// run of the app. Kept by session, not name: another agent could call itself the same.
+    @ObservationIgnored private var trustedSessions: [String: String] = [:] { didSet { trustedClients = Set(trustedSessions.values) } }
+    /// The names of agents allowed to act without asking, to show.
     public private(set) var trustedClients: Set<String> = []
     @ObservationIgnored private var approvalContinuations: [UUID: CheckedContinuation<Bool, Never>] = [:]
 
@@ -56,7 +67,7 @@ public final class PromptCenter: ApprovalProvider {
     // MARK: Permissions
 
     public func enqueue(_ request: PermissionRequest, tab: TabID) {
-        let keys = request.kinds.map { "\(request.origin)|\($0.rawValue)" }
+        let keys = Self.keys(request)
         let answers = keys.compactMap { permissionAnswers[$0] }
         if answers.count == keys.count, !keys.isEmpty {
             request.respond(answers.allSatisfy { $0 })
@@ -66,7 +77,7 @@ public final class PromptCenter: ApprovalProvider {
     }
 
     public func answer(permission request: PermissionRequest, allow: Bool, remember: Bool) {
-        if remember { for kind in request.kinds { permissionAnswers["\(request.origin)|\(kind.rawValue)"] = allow } }
+        if remember { for key in Self.keys(request) { permissionAnswers[key] = allow } }
         request.respond(allow)
         prompts.removeAll { $0.id == "permission-\(request.id)" }
     }
@@ -85,8 +96,9 @@ public final class PromptCenter: ApprovalProvider {
     // MARK: Agent approvals
 
     public func approve(tool: ToolDefinition, arguments: JSONValue, client: AgentClient) async -> Bool {
-        if trustedClients.contains(client.name) { return true }
-        let approval = AgentApproval(client: client.name, tool: tool, summary: Self.describe(tool: tool, arguments: arguments))
+        if let session = client.session, trustedSessions[session] != nil { return true }
+        let approval = AgentApproval(client: client.name, session: client.session, tool: tool,
+                                     summary: Self.describe(tool: tool, arguments: arguments))
         // Agents give up on slow calls; don't leave a stale card behind.
         Task { [weak self] in
             try? await Task.sleep(for: Self.approvalTimeout)
@@ -101,12 +113,12 @@ public final class PromptCenter: ApprovalProvider {
     static let approvalTimeout: Duration = .seconds(120)
 
     public func answer(approval: AgentApproval, allow: Bool, trustClient: Bool = false) {
-        if allow && trustClient { trustedClients.insert(approval.client) }
+        if allow && trustClient, let session = approval.session { trustedSessions[session] = approval.client }
         prompts.removeAll { $0.id == "approval-\(approval.id)" }
         approvalContinuations.removeValue(forKey: approval.id)?.resume(returning: allow)
     }
 
-    public func revokeTrust() { trustedClients.removeAll() }
+    public func revokeTrust() { trustedSessions.removeAll() }
 
     /// Drops prompts for a tab that closed, answering them negatively.
     public func dismissAll(for tab: TabID) {

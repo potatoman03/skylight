@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import SkylightKit
 
@@ -105,18 +106,79 @@ import Testing
         return Data(Array("Cr24".utf8) + [3, 0, 0, 0] + le + header + archive)
     }
 
-    @Test func findsTheDeveloperKeyAmongTheProofs() throws {
-        let storeKey = [UInt8](repeating: 7, count: 30)
-        let developerKey = Array(0..<40).map(UInt8.init)
-        // The signed data names the id; the developer key is the proof that hashes to it.
-        let id: [UInt8] = [0x5f, 0xaa, 0x4e, 0xec, 0x36, 0x11, 0x55, 0x68, 0x12, 0xc2, 0xd7, 0x4b, 0x43, 0x7c, 0x8c, 0x49]
-        #expect(ExtensionID.from(publicKey: Data(developerKey)) == "fpkkeoomdgbbffgibcmcnheledhmimej")
-        let header = field(2, field(1, storeKey) + field(2, [1, 2]))
-            + field(2, field(1, developerKey) + field(2, [3, 4]))
-            + field(10000, field(1, id))
-        let package = try CRXPackage(crx(header: header, archive: Array("PK\u{3}\u{4}zip".utf8)))
-        #expect(package.publicKey == Data(developerKey))
-        #expect(package.archive == Data("PK\u{3}\u{4}zip".utf8))
+    /// DER length, short or long form.
+    func derLength(_ n: Int) -> [UInt8] {
+        n < 0x80 ? [UInt8(n)] : n < 0x100 ? [0x81, UInt8(n)] : [0x82, UInt8(n >> 8), UInt8(n & 0xFF)]
+    }
+
+    /// A fresh RSA key, and its public half as the SubjectPublicKeyInfo Chrome uses.
+    func developerKey() throws -> (SecKey, [UInt8]) {
+        let attributes: [CFString: Any] = [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: 2048]
+        let key = try #require(SecKeyCreateRandomKey(attributes as CFDictionary, nil))
+        let pub = try #require(SecKeyCopyPublicKey(key))
+        let pkcs1 = [UInt8](try #require(SecKeyCopyExternalRepresentation(pub, nil)) as Data)
+        let algorithm: [UInt8] = [0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01, 0x05, 0x00]
+        let bits = [0x03] + derLength(pkcs1.count + 1) + [0] + pkcs1
+        return (key, [0x30] + derLength(algorithm.count + bits.count) + algorithm + bits)
+    }
+
+    /// A CRX3 signed the way the store signs one: the developer's proof over the signed data and zip.
+    func signedCRX(key: SecKey, publicKey: [UInt8], id: String, archive: [UInt8], extraProof: [UInt8] = []) throws -> Data {
+        let alphabet = Array("abcdefghijklmnop")
+        let idBytes = stride(from: 0, to: 32, by: 2).map { i -> UInt8 in
+            let chars = Array(id)
+            return UInt8(alphabet.firstIndex(of: chars[i])! << 4 | alphabet.firstIndex(of: chars[i + 1])!)
+        }
+        let signedData = field(1, idBytes)
+        let n = UInt32(signedData.count)
+        let message = Array("CRX3 SignedData\u{0}".utf8) + [UInt8(n & 0xFF), UInt8(n >> 8 & 0xFF), UInt8(n >> 16 & 0xFF), UInt8(n >> 24)] + signedData + archive
+        let signature = [UInt8](try #require(SecKeyCreateSignature(key, .rsaSignatureMessagePKCS1v15SHA256, Data(message) as CFData, nil)) as Data)
+        let header = extraProof + field(2, field(1, publicKey) + field(2, signature)) + field(10000, signedData)
+        return crx(header: header, archive: archive)
+    }
+
+    @Test func acceptsAPackageSignedByItsDeveloper() throws {
+        let (key, publicKey) = try developerKey()
+        let id = ExtensionID.from(publicKey: Data(publicKey))
+        let zip = Array("PK\u{3}\u{4}zip".utf8)
+        // Another proof (the store's) comes first; the developer's is the one whose key makes the id.
+        let store = field(2, field(1, [UInt8](repeating: 7, count: 30)) + field(2, [1, 2]))
+        let package = try CRXPackage(signedCRX(key: key, publicKey: publicKey, id: id, archive: zip, extraProof: store), expected: id)
+        #expect(package.publicKey == Data(publicKey))
+        #expect(package.id == id)
+        #expect(package.archive == Data(zip))
+    }
+
+    @Test func rejectsATamperedOrMislabelledPackage() throws {
+        let (key, publicKey) = try developerKey()
+        let id = ExtensionID.from(publicKey: Data(publicKey))
+        var tampered = [UInt8](try signedCRX(key: key, publicKey: publicKey, id: id, archive: Array("PK\u{3}\u{4}zip".utf8)))
+        tampered[tampered.count - 1] ^= 1
+        #expect(throws: CRXPackage.Failure.badSignature) { try CRXPackage(Data(tampered)) }
+
+        // Signed by its developer, but not the extension asked for.
+        let good = try signedCRX(key: key, publicKey: publicKey, id: id, archive: [1, 2, 3])
+        #expect(throws: CRXPackage.Failure.wrongExtension) { try CRXPackage(good, expected: String(repeating: "a", count: 32)) }
+
+        // Claiming someone else's id: no proof's key makes that id.
+        let (_, otherKey) = try developerKey()
+        let stolen = try signedCRX(key: key, publicKey: publicKey, id: ExtensionID.from(publicKey: Data(otherKey)), archive: [1, 2, 3])
+        #expect(throws: CRXPackage.Failure.badSignature) { try CRXPackage(stolen) }
+    }
+
+    @Test func readsStoreUpdateChecks() {
+        let reply = """
+        <?xml version="1.0" encoding="UTF-8"?><gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">
+        <app appid="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" status="ok"><updatecheck codebase="https://example/x.crx" version="2.1.0" status="ok"/></app>
+        <app appid="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" status="ok"><updatecheck status="noupdate"/></app>
+        </gupdate>
+        """
+        #expect(WebStore.availableVersions(in: Data(reply.utf8)) == ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "2.1.0"])
+        #expect(WebStore.isVersion("1.10", laterThan: "1.9"))
+        #expect(WebStore.isVersion("2.0.1", laterThan: "2.0"))
+        #expect(!WebStore.isVersion("2.0", laterThan: "2.0.0"))
+        let url = WebStore.updateCheckURL(for: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "1.0"], chromeVersion: "156")
+        #expect(url.absoluteString.contains("x=id%3Daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa%26v%3D1.0%26uc"))
     }
 
     @Test func rejectsOtherFiles() {

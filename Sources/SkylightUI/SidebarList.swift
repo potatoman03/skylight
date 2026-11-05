@@ -1,0 +1,345 @@
+import AppKit
+import SkylightBrowser
+import SkylightCore
+import SwiftUI
+import UniformTypeIdentifiers
+
+/// The sidebar's list, line by line, top to bottom. It's our own rather than a `List`: an outline
+/// view only makes room under a drag it started itself, and throws if SwiftUI changes its rows
+/// mid-drag. Here the rows slide apart under a dragged tab, wherever it came from.
+struct SidebarLines {
+    /// The runs of rows a tab can land among.
+    enum Box: Hashable {
+        case pinned, today
+        case folder(String)
+
+        var isFolder: Bool { if case .folder = self { true } else { false } }
+    }
+
+    struct Line: Identifiable {
+        enum Kind {
+            case spaceHeader
+            case folder(TabFolder)
+            /// A tab, or a split's tabs, the `index`th row of its box.
+            case row([TabID], box: Box, index: Int)
+            /// An empty box's line: says what it's for and takes drops.
+            case hint(String, TabDropTarget)
+            case todayHeader
+            case newTab
+        }
+
+        let id: String
+        let kind: Kind
+    }
+
+    private(set) var lines: [Line] = []
+    /// Where each box's rows are in `lines`.
+    private(set) var boxes: [Box: Range<Int>] = [:]
+
+    init(space: Space, showsNewTab: Bool) {
+        add("header.space", .spaceHeader)
+        for folder in space.folders {
+            add("folder.\(folder.id)", .folder(folder))
+            addRows(folder.isOpen ? folder.tabs.map { [$0] } : [], in: .folder(folder.id), space: space)
+            if folder.isOpen, folder.tabs.isEmpty {
+                add("hint.\(folder.id)", .hint("Drag tabs here", .folder(folder.id, index: 0)))
+            }
+        }
+        // Pinned tabs in folders show in their folders.
+        addRows(SidebarRows.make(space.loosePinned, space: space), in: .pinned, space: space)
+        if space.pinned.isEmpty, space.folders.isEmpty {
+            add("hint.pinned", .hint("Drag tabs here to pin them", .section(.pinned, row: 0)))
+        }
+        add("header.today", .todayHeader)
+        if showsNewTab { add("new-tab", .newTab) }
+        addRows(SidebarRows.make(space.today, space: space), in: .today, space: space)
+    }
+
+    private mutating func add(_ id: String, _ kind: Line.Kind) {
+        lines.append(Line(id: id, kind: kind))
+    }
+
+    private mutating func addRows(_ rows: [[TabID]], in box: Box, space: Space) {
+        let start = lines.count
+        for (index, row) in rows.enumerated() {
+            let split = row.count > 1 ? space.split(containing: row[0]) : nil
+            add(split.map { "split.\($0.id)" } ?? "tab.\(row[0])", .row(row, box: box, index: index))
+        }
+        boxes[box] = start..<lines.count
+    }
+
+    /// The row a tab is in.
+    func line(holding tab: TabID) -> Int? {
+        lines.firstIndex { line in
+            if case let .row(ids, _, _) = line.kind { ids.contains(tab) } else { false }
+        }
+    }
+
+    /// What dropping at `y` would do. The lines are hit-tested as if `hidden` were gone, as it is
+    /// on screen, but before any gap opens: the gap then opens under the pointer, and stays put
+    /// while the pointer is in it.
+    func hover(at y: CGFloat, frames: [String: CGRect], hidden: Int?, dragging tab: TabID?) -> SidebarHover? {
+        let lift = hidden.flatMap { frames[lines[$0].id]?.height } ?? 0
+        for (index, line) in lines.enumerated() where index != hidden {
+            guard var frame = frames[line.id] else { continue }
+            if let hidden, index > hidden { frame.origin.y -= lift }
+            if y < frame.minY { return nil }
+            if y < frame.maxY {
+                // A whole split dragged from its row can't join another.
+                let splits = hidden.map { if case let .row(ids, _, _) = lines[$0].kind { ids.count == 1 } else { true } } ?? true
+                return hover(on: index, at: (y - frame.minY) / max(frame.height, 1), dragging: tab, splits: splits)
+            }
+        }
+        // Below everything: the end of today's tabs.
+        return gap(.today, at: boxes[.today]?.count ?? 0)
+    }
+
+    private func hover(on index: Int, at fraction: CGFloat, dragging tab: TabID?, splits: Bool) -> SidebarHover? {
+        let line = lines[index]
+        switch line.kind {
+        case .spaceHeader:
+            return nil
+        case .todayHeader, .newTab:
+            return gap(.today, at: 0)
+        case let .hint(_, target):
+            return .onto(line.id, target)
+        case let .folder(folder):
+            // The lower part of an open folder's line is the top of its list.
+            if folder.isOpen, !folder.tabs.isEmpty, fraction > 0.6 { return gap(.folder(folder.id), at: 0) }
+            return .onto(line.id, .folder(folder.id, index: .max))
+        case let .row(ids, box, row):
+            // A row's middle puts the tab beside it in a split; its edges make room above or below.
+            if splits, let last = ids.last, ids.count < TabSplit.maxPanes, !ids.contains(where: { $0 == tab }),
+               (0.3...0.7).contains(fraction) {
+                return .onto(line.id, .split(last, .trailing))
+            }
+            return gap(box, at: fraction < 0.5 ? row : row + 1)
+        }
+    }
+
+    private func gap(_ box: Box, at row: Int) -> SidebarHover? {
+        guard let rows = boxes[box] else { return nil }
+        let target: TabDropTarget = switch box {
+        case .pinned: .section(.pinned, row: row)
+        case .today: .section(.today, row: row)
+        case let .folder(id): .folder(id, index: row)
+        }
+        return .gap(before: rows.lowerBound + row, box: box, target: target)
+    }
+
+    /// The top of a gap opened before the `line`th line, on screen.
+    func gapTop(before line: Int, frames: [String: CGRect], hidden: Int?, lift: CGFloat) -> CGFloat {
+        let y = line < lines.count ? frames[lines[line].id]?.minY : lines.last.flatMap { frames[$0.id]?.maxY }
+        guard let y else { return 0 }
+        return hidden.map { line > $0 } == true ? y - lift : y
+    }
+}
+
+/// Where a tab dragged over the sidebar would land.
+enum SidebarHover: Equatable {
+    /// Room opens before the `before`th line (or at the end) for the tab to land at `target`.
+    case gap(before: Int, box: SidebarLines.Box, target: TabDropTarget)
+    /// On a line itself: beside its tab in a split, into a folder, into an empty box.
+    case onto(String, TabDropTarget)
+
+    var target: TabDropTarget {
+        switch self {
+        case let .gap(_, _, target), let .onto(_, target): target
+        }
+    }
+}
+
+/// A drag over the sidebar: where it would land, and the row it came from, which is hidden
+/// meanwhile so the rest close up behind it.
+@MainActor
+@Observable
+final class SidebarDropState {
+    private(set) var hover: SidebarHover?
+    private(set) var hidden: String?
+    private(set) var hiddenHeight: CGFloat = 0
+    private(set) var gapHeight: CGFloat = 0
+    /// Every line's frame as laid out, before any gap: what drags are hit-tested against.
+    @ObservationIgnored var frames: [String: CGRect] = [:]
+
+    func show(_ hover: SidebarHover?, hiding hidden: String?, height: CGFloat) {
+        self.hover = hover
+        self.hidden = hidden
+        hiddenHeight = hidden == nil ? 0 : height
+        gapHeight = height
+    }
+
+    func clear() {
+        hover = nil
+        hidden = nil
+        hiddenHeight = 0
+    }
+
+    func isTargeting(_ line: String) -> Bool {
+        if case let .onto(id, _)? = hover { id == line } else { false }
+    }
+
+    /// How far the `index`th line moves: up behind the hidden row, down below an open gap.
+    func shift(of index: Int, hidden: Int?) -> CGFloat {
+        var dy: CGFloat = 0
+        if let hidden, index > hidden { dy -= hiddenHeight }
+        if case let .gap(before, _, _)? = hover, index >= before { dy += gapHeight }
+        return dy
+    }
+
+    /// A gap with no row hidden to make up for it makes the list longer.
+    var extraRoom: CGFloat {
+        if case .gap? = hover, hidden == nil { gapHeight } else { 0 }
+    }
+}
+
+/// Takes drags over the whole list: tabs from the sidebar, the page or a favorite, and links
+/// from pages and other apps.
+struct SidebarDropDelegate: DropDelegate {
+    static let types: [UTType] = [.utf8PlainText, .plainText, .url]
+
+    let lines: SidebarLines
+    let state: SidebarDropState
+    let drag: TabDragSession
+    let browser: Browser
+    /// A row's height, for a gap with no row of its own to measure.
+    let rowHeight: CGFloat
+
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: Self.types) }
+
+    func dropEntered(info: DropInfo) { follow(info) }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        follow(info)
+        return DropProposal(operation: drag.active == nil ? .copy : .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        animate(Motion.travel) { state.clear() }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        follow(info)
+        guard let hover = state.hover else {
+            animate(Motion.travel) { state.clear() }
+            return false
+        }
+        if let payload = drag.active {
+            if case .gap = hover {
+                // The rows already stand where the drop puts them: land without moving anything.
+                var still = Transaction()
+                still.disablesAnimations = true
+                withTransaction(still) {
+                    browser.drop(payload, on: hover.target, animated: false)
+                    state.clear()
+                }
+            } else {
+                browser.drop(payload, on: hover.target)
+                animate(Motion.travel) { state.clear() }
+            }
+            return true
+        }
+        animate(Motion.travel) { state.clear() }
+        // A link from a page or another app: open it there.
+        let target = hover.target
+        let opener = browser
+        if let provider = info.itemProviders(for: [.url]).first {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url else { return }
+                Task { @MainActor in opener.drop([url.absoluteString], on: target) }
+            }
+        } else if let provider = info.itemProviders(for: [.utf8PlainText, .plainText]).first {
+            _ = provider.loadObject(ofClass: String.self) { text, _ in
+                guard let text else { return }
+                Task { @MainActor in opener.drop([text], on: target) }
+            }
+        }
+        return true
+    }
+
+    private func follow(_ info: DropInfo) {
+        let payload = drag.active
+        // A row dragged from the list leaves it; a pane leaving its split doesn't take the row.
+        let hidden = payload.flatMap { $0.source == .row ? lines.line(holding: $0.id) : nil }
+        let hover = lines.hover(at: info.location.y, frames: state.frames, hidden: hidden, dragging: payload?.id)
+        let hiddenID = hidden.map { lines.lines[$0].id }
+        guard hover != state.hover || hiddenID != state.hidden else { return }
+        let height = hiddenID.flatMap { state.frames[$0]?.height } ?? rowHeight
+        animate(Motion.travel) { state.show(hover, hiding: hiddenID, height: height) }
+    }
+}
+
+// MARK: - Look
+
+extension EnvironmentValues {
+    @Entry var sidebarDensity: Preferences.Density = .comfortable
+}
+
+extension Preferences.Density {
+    /// A row's height, without the point of space above and below it.
+    var rowHeight: CGFloat {
+        switch self {
+        case .compact: 26
+        case .comfortable: 30
+        case .roomy: 34
+        }
+    }
+
+    var rowFont: Font {
+        switch self {
+        case .compact: .system(size: 12)
+        case .comfortable: .system(size: 13)
+        case .roomy: .system(size: 14)
+        }
+    }
+}
+
+extension View {
+    /// A sidebar row's look: its height, and a rounded highlight when it's selected, hovered, or
+    /// about to take a dropped tab.
+    func sidebarRow(selected: Bool = false, targeted: Bool = false, indent: CGFloat = 0) -> some View {
+        modifier(SidebarRowChrome(selected: selected, targeted: targeted, indent: indent))
+    }
+
+    /// A section's title line: small and quiet, with room above it.
+    func sidebarHeader(top: CGFloat = 10) -> some View {
+        font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .padding(.leading, 8)
+            .padding(.trailing, 2)
+            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+            .padding(.top, top)
+            .padding(.bottom, 2)
+    }
+}
+
+private struct SidebarRowChrome: ViewModifier {
+    let selected: Bool
+    let targeted: Bool
+    let indent: CGFloat
+    @Environment(\.sidebarDensity) private var density
+    @Environment(\.colorScheme) private var scheme
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        content
+            .padding(.leading, 8 + indent)
+            .padding(.trailing, 4)
+            .frame(maxWidth: .infinity, minHeight: density.rowHeight, alignment: .leading)
+            .background {
+                shape.fill(fill).overlay { shape.strokeBorder(.tint.opacity(targeted ? 0.9 : 0), lineWidth: 1.5) }
+            }
+            .animation(Motion.resolved(Motion.feedback), value: hovering)
+            .contentShape(.rect)
+            .onHover { hovering = $0 }
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .padding(.vertical, 1)
+    }
+
+    private var fill: AnyShapeStyle {
+        if targeted { return AnyShapeStyle(.tint.opacity(0.18)) }
+        let dark = scheme == .dark
+        let ink = dark ? Color.white : Color.black
+        return AnyShapeStyle(ink.opacity(selected ? (dark ? 0.14 : 0.09) : hovering ? (dark ? 0.06 : 0.045) : 0))
+    }
+}

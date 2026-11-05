@@ -101,6 +101,11 @@ public final class Browser {
         packages.start()
         updatePageScripts()
         startPages()
+        // Once things have settled, then every few hours.
+        Task { [extensions] in
+            try? await Task.sleep(for: .seconds(60))
+            await extensions.keepUpdated()
+        }
         mcp.start { [weak self] connection in self?.mcpConnection = connection }
     }
 
@@ -125,7 +130,7 @@ public final class Browser {
     }
 
     private func updatePageScripts() {
-        engine.setPageScripts(AgentService.pageScripts + [PasswordService.pageScript, MediaService.pageScript] + packages.scripts)
+        engine.setPageScripts(AgentService.pageScripts + [PasswordService.pageScript, MediaService.pageScript, ExtensionService.storePageScript] + packages.scripts)
     }
 
     static let agentInstructions = """
@@ -141,6 +146,17 @@ public final class Browser {
     public func open(_ input: String, inNewTab: Bool) {
         guard let url = omnibox.interpret(input)?.url else { return }
         open(url, inNewTab: inNewTab)
+    }
+
+    /// Opens links from other apps (or web pages and files opened with Skylight) as new tabs at the
+    /// top of Today, showing the last one.
+    public func openExternal(_ urls: [URL]) {
+        let usable = urls.filter { ["http", "https", "file"].contains($0.scheme?.lowercased() ?? "") }
+        guard !usable.isEmpty else { return }
+        if commandBar.isPresented { commandBar.dismiss() }
+        for (i, url) in usable.enumerated() {
+            store.send(.openTab(url, placement: .top, select: i == usable.count - 1))
+        }
     }
 
     /// Opens `url` beside the selected tab, in a split.
@@ -301,7 +317,11 @@ extension Browser: PageEventSink {
             return passwords.handle(message, tab: id, url: store.state.tabs[id]?.url)
         case let type? where type.hasPrefix("media."):
             return media.handle(message, tab: id)
+        case "extensions.storeStatus", "extensions.storeInstall":
+            return await extensions.handleStore(message, tabURL: store.state.tabs[id]?.url)
         case let type? where type.hasPrefix("extensions."):
+            // For extensions' own pages, not the web.
+            guard store.state.tabs[id]?.url.scheme == "chrome-extension" else { throw WebEngineError.script("Unknown message.") }
             return extensions.handle(message, from: pages.page(for: id))
         default:
             throw WebEngineError.script("Unknown message.")

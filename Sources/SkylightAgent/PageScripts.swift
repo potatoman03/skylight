@@ -20,7 +20,9 @@ public enum AgentPageScripts {
         const ref = String(++n);
         el.setAttribute('data-skylight-ref', ref);
         const role = el.getAttribute('role') || roles[el.tagName] || (el.tagName === 'INPUT' ? (el.type || 'text') : el.tagName.toLowerCase());
-        const name = (el.getAttribute('aria-label') || el.innerText || el.value || el.placeholder || el.title || el.getAttribute('alt') || '')
+        // What's typed in a password or card field never leaves the page.
+        const secret = el.type === 'password' || /(^|\\s)(current-password|new-password|one-time-code|cc-)/.test(el.autocomplete || '');
+        const name = (el.getAttribute('aria-label') || el.innerText || (secret ? '' : el.value) || el.placeholder || el.title || el.getAttribute('alt') || '')
           .trim().replace(/\\s+/g, ' ').slice(0, 100);
         const item = { ref, role, name };
         if (el.href) item.href = el.href;

@@ -93,12 +93,47 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
 private struct GeneralSettings: View {
     @Environment(Browser.self) private var browser
+    @State private var isDefault = DefaultBrowser.isSkylight
 
     var body: some View {
         @Bindable var prefs = browser.preferences
         Form {
-            Picker("Search with", selection: $prefs.searchEngine) {
-                ForEach(Preferences.SearchEngine.allCases) { Text($0.name).tag($0) }
+            Section {
+                LabeledContent("Default browser") {
+                    if isDefault {
+                        Label("Skylight", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Button("Make Skylight Default") {
+                            Task {
+                                await DefaultBrowser.makeSkylight()
+                                isDefault = DefaultBrowser.isSkylight
+                            }
+                        }
+                    }
+                }
+            } footer: {
+                if !isDefault {
+                    Text("Links you click in other apps open in Skylight. macOS asks you to confirm.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Section {
+                Picker("Search with", selection: $prefs.searchEngine) {
+                    ForEach(Preferences.SearchEngine.allCases) { engine in
+                        if engine == .custom { Divider() }
+                        Text(engine.name).tag(engine)
+                    }
+                }
+                if prefs.searchEngine == .custom {
+                    TextField("Search address", text: $prefs.customSearchTemplate,
+                              prompt: Text("https://example.com/search?q=%s"))
+                    let valid = Preferences.SearchEngine.isValidTemplate(prefs.customSearchTemplate)
+                    Text(valid ? "%s is replaced by what you type." : "Use a web address with %s where the search goes. Until then, Skylight searches Google.")
+                        .font(.caption)
+                        .foregroundStyle(valid ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
+                }
             }
             Picker("Archive Today tabs after", selection: $prefs.archiveAfterHours) {
                 Text("6 hours").tag(6.0)
@@ -109,6 +144,31 @@ private struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
+        // You might change it in System Settings meanwhile.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            isDefault = DefaultBrowser.isSkylight
+        }
+    }
+}
+
+/// Whether Skylight opens the links you click elsewhere, and asking macOS to make it so.
+@MainActor
+enum DefaultBrowser {
+    private nonisolated static let probe = URL(string: "https://example.com")!
+
+    nonisolated static var isSkylight: Bool {
+        guard let app = NSWorkspace.shared.urlForApplication(toOpen: probe) else { return false }
+        return Bundle(url: app)?.bundleIdentifier == Bundle.main.bundleIdentifier
+    }
+
+    /// macOS asks you to confirm; declining leaves things as they were.
+    static func makeSkylight() async {
+        let app = Bundle.main.bundleURL
+        let workspace = NSWorkspace.shared
+        for scheme in ["http", "https"] {
+            do { try await workspace.setDefaultApplication(at: app, toOpenURLsWithScheme: scheme) } catch { return }
+        }
+        try? await workspace.setDefaultApplication(at: app, toOpen: .html)
     }
 }
 

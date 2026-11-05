@@ -146,6 +146,38 @@ private func makeHub(approve: Bool) -> (ToolHub, Approver) {
         #expect(!MCPServer.constantTimeEquals("Bearer abc", "Bearer abd"))
         #expect(MCPServer.makeToken().count == 64)
     }
+
+    /// Trust is kept by session, so a request must only carry a session the server handed out.
+    @MainActor @Test func sessionsAreTheServersOwn() async throws {
+        let (hub, _) = makeHub(approve: true)
+        let recorder = SessionRecorder()
+        hub.approvals = recorder
+        let server = MCPServer(catalog: hub, info: .init(name: "Skylight", version: "1", instructions: ""),
+                               connectionFile: FileManager.default.temporaryDirectory.appending(path: "mcp-\(UUID()).json"))
+        func post(_ json: String, session: String? = nil) async -> HTTPResponse {
+            var headers = ["user-agent": "claude-code"]
+            headers["mcp-session-id"] = session
+            return await server.route(HTTPRequest(method: "POST", path: "/mcp", headers: headers, body: Data(json.utf8)))
+        }
+        let initialized = await post(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"claude-code"}}}"#)
+        let session = try #require(initialized.headers["Mcp-Session-Id"])
+        let call = #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"poke","arguments":{}}}"#
+
+        _ = await post(call, session: session)
+        #expect(recorder.clients.last == AgentClient(name: "claude-code", session: session))
+        // Same name, made-up session: not that agent.
+        _ = await post(call, session: "made-up")
+        #expect(recorder.clients.last?.session == nil)
+    }
+}
+
+@MainActor
+private final class SessionRecorder: ApprovalProvider {
+    var clients: [AgentClient] = []
+    func approve(tool: ToolDefinition, arguments: JSONValue, client: AgentClient) async -> Bool {
+        clients.append(client)
+        return true
+    }
 }
 
 @Suite struct WebMCPTests {

@@ -5,6 +5,7 @@
 
 #include "Internal.h"
 #include "include/cef_app.h"
+#include "include/cef_sandbox_mac.h"
 #include "include/wrapper/cef_library_loader.h"
 #include "include/wrapper/cef_message_router.h"
 
@@ -67,6 +68,10 @@ class RendererApp : public CefApp, public CefRenderProcessHandler {
 }  // namespace skylight
 
 int SKHelperMain(int argc, char* argv[]) {
+  // Lock the process down (Chromium's seatbelt sandbox) before it loads the engine or touches
+  // any web content: a page that breaks the renderer is then still boxed in.
+  CefScopedSandboxContext sandbox;
+  if (!sandbox.Initialize(argc, argv)) return 1;
   CefScopedLibraryLoader loader;
   if (!loader.LoadInHelper()) return 1;
   CefMainArgs args(argc, argv);

@@ -85,8 +85,9 @@ public final class ExtensionService {
 
     // MARK: - Installing
 
-    /// Downloads an extension from the Chrome Web Store (a link or an id) and turns it on.
-    public func install(fromStore input: String) async {
+    /// Downloads an extension from the Chrome Web Store (a link or an id) and turns it on. With
+    /// `confirm`, you're shown what it can do and asked first: for installs a web page asked for.
+    public func install(fromStore input: String, confirm: Bool = false) async {
         guard let id = WebStore.extensionID(from: input) else {
             return fail("That isn't a Chrome Web Store link.")
         }
@@ -99,10 +100,40 @@ public final class ExtensionService {
                 throw CRXPackage.Failure.notCRX
             }
             let folder = storeFolder.appending(path: id, directoryHint: .isDirectory)
-            try unpack(CRXPackage(data), into: folder)
+            let staging = try stage(CRXPackage(data, expected: id), for: folder)
+            if confirm {
+                guard let manifest = try? ExtensionManifest.load(from: staging), await Self.askToAdd(manifest) else {
+                    try? FileManager.default.removeItem(at: staging)
+                    return
+                }
+            }
+            try replace(folder, with: staging)
             try await add(Installed(id: id, folder: folder, source: .store, enabled: true, pinned: true))
         } catch {
             fail("Couldn't install the extension: \(error.localizedDescription)")
+        }
+    }
+
+    /// The extension's name and what it can do, with Add and Cancel. For an update, only what
+    /// it can newly do.
+    private static func askToAdd(_ manifest: ExtensionManifest, newWarnings: [String]? = nil) async -> Bool {
+        let alert = NSAlert()
+        let warnings = newWarnings ?? manifest.warnings
+        if newWarnings != nil {
+            alert.messageText = "Update “\(manifest.name)” to version \(manifest.version)?"
+            alert.informativeText = "The update asks for more access. It could also:\n" + warnings.map { "• \($0)" }.joined(separator: "\n")
+            alert.addButton(withTitle: "Update")
+        } else {
+            alert.messageText = "Add “\(manifest.name)” to Skylight?"
+            alert.informativeText = warnings.isEmpty
+                ? "It doesn't ask for any special access."
+                : "It can:\n" + warnings.map { "• \($0)" }.joined(separator: "\n")
+            alert.addButton(withTitle: "Add Extension")
+        }
+        alert.addButton(withTitle: "Cancel")
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return alert.runModal() == .alertFirstButtonReturn }
+        return await withCheckedContinuation { done in
+            alert.beginSheetModal(for: window) { done.resume(returning: $0 == .alertFirstButtonReturn) }
         }
     }
 
@@ -135,7 +166,8 @@ public final class ExtensionService {
         toasts.show("Added \(manifests[ext.id]?.name ?? "the extension")", symbol: "puzzlepiece.extension")
     }
 
-    private func unpack(_ package: CRXPackage, into folder: URL) throws {
+    /// Unzips a package beside `folder`, to look at before `replace(_:with:)` moves it in.
+    private func stage(_ package: CRXPackage, for folder: URL) throws -> URL {
         let fm = FileManager.default
         let zip = fm.temporaryDirectory.appending(path: "skylight-\(UUID().uuidString).zip")
         try package.archive.write(to: zip)
@@ -152,13 +184,88 @@ public final class ExtensionService {
         // The store id comes from the developer's key. Unpacked, Chromium would derive another
         // from the folder unless the manifest carries the key.
         let manifestFile = staging.appending(path: "manifest.json")
-        if let key = package.publicKey, let data = try? Data(contentsOf: manifestFile),
+        if let data = try? Data(contentsOf: manifestFile),
            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], object["key"] == nil {
-            object["key"] = key.base64EncodedString()
+            object["key"] = package.publicKey.base64EncodedString()
             try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted]).write(to: manifestFile)
         }
-        try? fm.removeItem(at: folder)
-        try fm.moveItem(at: staging, to: folder)
+        return staging
+    }
+
+    private func replace(_ folder: URL, with staging: URL) throws {
+        try? FileManager.default.removeItem(at: folder)
+        try FileManager.default.moveItem(at: staging, to: folder)
+    }
+
+    // MARK: - Updating
+
+    /// Updates that ask for more access than the version you have, waiting for your OK: id to the
+    /// version on offer.
+    public private(set) var updatesToApprove: [String: String] = [:]
+
+    /// Checks the store for updates now and then, as Chrome does every five hours.
+    func keepUpdated() async {
+        while !Task.isCancelled {
+            await checkForUpdates()
+            try? await Task.sleep(for: .seconds(5 * 60 * 60))
+        }
+    }
+
+    /// Installs newer versions of extensions from the store. An update that asks for more access
+    /// waits in `updatesToApprove`.
+    func checkForUpdates() async {
+        let versions = Dictionary(installed.filter { $0.source == .store }.compactMap { ext in
+            manifests[ext.id].map { (ext.id, $0.version) }
+        }, uniquingKeysWith: { a, _ in a })
+        guard host != nil, !versions.isEmpty,
+              let (data, _) = try? await URLSession.shared.data(from: WebStore.updateCheckURL(for: versions, chromeVersion: Self.chromeVersion))
+        else { return }
+        for (id, version) in WebStore.availableVersions(in: data) {
+            guard let current = versions[id], WebStore.isVersion(version, laterThan: current), updatesToApprove[id] == nil else { continue }
+            await update(id, approved: false)
+        }
+    }
+
+    /// Asks before installing an update that wants more access.
+    public func approveUpdate(_ id: String) async {
+        await update(id, approved: true)
+    }
+
+    private func update(_ id: String, approved: Bool) async {
+        guard let ext = installed.first(where: { $0.id == id && $0.source == .store }), let old = manifests[id], !busy.contains(id) else { return }
+        busy.insert(id)
+        defer { busy.remove(id) }
+        do {
+            let (data, response) = try await URLSession.shared.data(from: WebStore.downloadURL(for: id, chromeVersion: Self.chromeVersion))
+            if let http = response as? HTTPURLResponse, http.statusCode != 200 || data.isEmpty { throw CRXPackage.Failure.notCRX }
+            let staging = try stage(CRXPackage(data, expected: id), for: ext.folder)
+            let new = try ExtensionManifest.load(from: staging)
+            guard WebStore.isVersion(new.version, laterThan: old.version) else {
+                try? FileManager.default.removeItem(at: staging)
+                updatesToApprove[id] = nil
+                return
+            }
+            let added = new.warnings.filter { !old.warnings.contains($0) }
+            if !added.isEmpty {
+                guard approved else {
+                    try? FileManager.default.removeItem(at: staging)
+                    updatesToApprove[id] = new.version
+                    return
+                }
+                guard await Self.askToAdd(new, newWarnings: added) else {
+                    try? FileManager.default.removeItem(at: staging)
+                    return
+                }
+            }
+            updatesToApprove[id] = nil
+            if popup?.id == id { closePopup() }
+            if ext.enabled { try? await host?.unload(id) }
+            try replace(ext.folder, with: staging)
+            manifests[id] = new
+            if ext.enabled { _ = try await host?.load(ext.folder) }
+        } catch {
+            fail("Couldn't update \(old.name): \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Managing
@@ -268,6 +375,101 @@ public final class ExtensionService {
     }
 
     /// Messages from extension pages (popups, options tabs) and their shim.
+    /// The Chrome Web Store page's own button, which `storePageScript` takes over: whether its
+    /// extension is in, and adding it.
+    ///
+    /// Any page can post this, so the extension is the one the tab is really showing, by the
+    /// address Skylight knows rather than the page's word, and adding it asks you first.
+    func handleStore(_ message: JSONValue, tabURL: URL?) async -> JSONValue {
+        guard isAvailable, let tabURL, tabURL.scheme == "https", tabURL.host() == "chromewebstore.google.com",
+              let id = WebStore.extensionID(from: tabURL.absoluteString) else { return "unavailable" }
+        if message["type"]?.stringValue == "extensions.storeInstall", !installed.contains(where: { $0.id == id }), !busy.contains(id) {
+            await install(fromStore: id, confirm: true)
+        }
+        return installed.contains { $0.id == id } ? "added" : busy.contains(id) ? "adding" : "add"
+    }
+
+    /// On the Chrome Web Store, its Add to Chrome button (which only works in Chrome) becomes Add
+    /// to Skylight, and the prompts to switch to Chrome go away.
+    public static let storePageScript = """
+    (() => {
+      if (location.hostname !== 'chromewebstore.google.com' || !window.__skylight || window.__skylightStore) return;
+      Object.defineProperty(window, '__skylightStore', { value: true });
+      const labels = { add: 'Add to Skylight', adding: 'Adding…', added: 'Added to Skylight' };
+      const theirs = /^(Add to Chrome|Remove from Chrome)$/;
+      const post = (type) => window.__skylight.post({ type, url: location.href }).catch(() => 'unavailable');
+      let state = null, page = '', dismissed = false;
+
+      // Puts `text` in the button's first piece of text, leaving its icon and styling be.
+      const relabel = (button, text) => {
+        const walker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT);
+        let first = null, node;
+        while ((node = walker.nextNode())) {
+          if (!node.nodeValue.trim()) continue;
+          if (!first) first = node; else node.nodeValue = '';
+        }
+        if (first && first.nodeValue !== text) first.nodeValue = text;
+      };
+      const apply = () => {
+        if (!labels[state]) return;
+        for (const button of document.querySelectorAll('button')) {
+          if (!button.dataset.skylight && !theirs.test(button.textContent.trim())) continue;
+          button.dataset.skylight = '1';
+          relabel(button, labels[state]);
+          const off = state !== 'add';
+          button.disabled = false;
+          button.removeAttribute('aria-disabled');
+          button.style.opacity = off ? '0.6' : '';
+          button.style.pointerEvents = 'auto';
+        }
+      };
+      // The "Switch to Chrome" dialog and banner.
+      const quiet = () => {
+        if (!dismissed) {
+          for (const button of document.querySelectorAll('button, [role=button]')) {
+            if (button.textContent.trim() !== 'No thanks') continue;
+            const box = button.closest('[role=dialog], [role=alertdialog]') || button.parentElement?.parentElement?.parentElement;
+            if (box && /Switch to Chrome/.test(box.textContent)) { button.click(); dismissed = true; }
+          }
+        }
+        const walker = document.createTreeWalker(document.body || document, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+          if (!/^Switch to Chrome to install/.test(node.nodeValue.trim())) continue;
+          let box = node.parentElement;
+          while (box.parentElement && box.parentElement !== document.body && box.parentElement.textContent.trim().length < 160) box = box.parentElement;
+          box.style.display = 'none';
+        }
+      };
+      const update = () => {
+        scheduled = false;
+        quiet();
+        if (!/^\\/detail\\//.test(location.pathname)) return;
+        if (location.href !== page) {
+          page = location.href;
+          state = null;
+          document.querySelectorAll('button[data-skylight]').forEach((b) => delete b.dataset.skylight);
+          post('extensions.storeStatus').then((s) => { state = s; apply(); });
+        }
+        apply();
+      };
+      let scheduled = false;
+      const schedule = () => { if (!scheduled) { scheduled = true; requestAnimationFrame(update); } };
+      new MutationObserver(schedule).observe(document, { childList: true, subtree: true, characterData: true });
+      document.addEventListener('click', (event) => {
+        const button = event.target instanceof Element && event.target.closest('button[data-skylight]');
+        if (!button || !labels[state]) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (state !== 'add') return;
+        state = 'adding';
+        apply();
+        post('extensions.storeInstall').then((s) => { state = s; apply(); });
+      }, true);
+      schedule();
+    })();
+    """
+
     func handle(_ message: JSONValue, from page: WebPage?) -> JSONValue {
         switch message["type"]?.stringValue {
         case "extensions.tabs":
@@ -276,7 +478,9 @@ public final class ExtensionService {
             return ["active": active.map { .number(Double($0)) } ?? .null,
                     "all": .array(tabs.pages.map(\.extensionTabID).filter { $0 != 0 }.map { .number(Double($0)) })]
         case "extensions.openTab":
-            if let url = message["url"]?.stringValue.flatMap(URL.init(string:)) {
+            // Only addresses a web page could open itself, or the extension's own pages.
+            if let url = message["url"]?.stringValue.flatMap(URL.init(string:)),
+               ["http", "https", "chrome-extension"].contains(url.scheme?.lowercased() ?? "") {
                 openTab?(url)
                 if page === popup?.page { closePopup() }
             }

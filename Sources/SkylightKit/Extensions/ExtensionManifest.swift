@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Security
 
 /// What Skylight reads from a Chrome extension's `manifest.json`: enough to draw its button,
 /// open its popup and describe it in Settings. Chromium reads the rest.
@@ -194,6 +195,47 @@ public enum WebStore {
     }
 
     /// The update service's direct download of the current CRX.
+    /// Asks the store for the latest version of each extension, without downloading them.
+    public static func updateCheckURL(for versions: [String: String], chromeVersion: String) -> URL {
+        var components = URLComponents(string: "https://clients2.google.com/service/update2/crx")!
+        components.queryItems = [
+            URLQueryItem(name: "response", value: "updatecheck"),
+            URLQueryItem(name: "prodversion", value: chromeVersion),
+            URLQueryItem(name: "acceptformat", value: "crx3"),
+        ] + versions.sorted { $0.key < $1.key }.map { URLQueryItem(name: "x", value: "id=\($0.key)&v=\($0.value)&uc") }
+        return components.url!
+    }
+
+    /// The versions the store offers, from an update check's reply:
+    /// `<app appid="…"><updatecheck status="ok" version="…"/></app>`. Extensions with no update
+    /// are left out.
+    public static func availableVersions(in xml: Data) -> [String: String] {
+        final class Reader: NSObject, XMLParserDelegate {
+            var app: String?
+            var found: [String: String] = [:]
+            func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?, qualifiedName: String?,
+                        attributes: [String: String]) {
+                if name == "app" { app = attributes["appid"] }
+                if name == "updatecheck", let app, attributes["status"] == "ok", let version = attributes["version"] { found[app] = version }
+            }
+        }
+        let reader = Reader()
+        let parser = XMLParser(data: xml)
+        parser.delegate = reader
+        parser.parse()
+        return reader.found
+    }
+
+    /// Whether version `a` is later than `b`, comparing dotted numbers as Chrome does (1.10 > 1.9).
+    public static func isVersion(_ a: String, laterThan b: String) -> Bool {
+        let x = a.split(separator: ".").map { Int($0) ?? 0 }, y = b.split(separator: ".").map { Int($0) ?? 0 }
+        for i in 0..<max(x.count, y.count) {
+            let l = i < x.count ? x[i] : 0, r = i < y.count ? y[i] : 0
+            if l != r { return l > r }
+        }
+        return false
+    }
+
     public static func downloadURL(for id: String, chromeVersion: String) -> URL {
         var components = URLComponents(string: "https://clients2.google.com/service/update2/crx")!
         components.queryItems = [
@@ -210,22 +252,31 @@ public enum WebStore {
 public struct CRXPackage: Sendable {
     /// The zip archive.
     public let archive: Data
-    /// The developer key that the extension's id derives from.
-    public let publicKey: Data?
+    /// The developer key that the extension's id derives from, and that signed the package.
+    public let publicKey: Data
+    /// The extension's id.
+    public let id: String
 
     public enum Failure: Error, LocalizedError, Equatable {
         case notCRX
         case unsupportedVersion(UInt32)
+        case badSignature
+        case wrongExtension
 
         public var errorDescription: String? {
             switch self {
             case .notCRX: "The download isn't a Chrome extension."
             case let .unsupportedVersion(v): "That extension uses package format \(v), which Skylight can't open."
+            case .badSignature: "The extension's signature doesn't match its contents."
+            case .wrongExtension: "The download is a different extension from the one asked for."
             }
         }
     }
 
-    public init(_ data: Data) throws {
+    /// Opens a CRX3 package, as Chrome does: it must be signed by the developer key its id comes
+    /// from, so nobody but that developer can make a package with that id. Given `expected`, it
+    /// must also be that extension.
+    public init(_ data: Data, expected: String? = nil) throws {
         let bytes = [UInt8](data)
         guard bytes.count > 12, bytes[0..<4] == [0x43, 0x72, 0x32, 0x34] else { throw Failure.notCRX }  // "Cr24"
         let version = Self.uint32(bytes, 4)
@@ -233,29 +284,74 @@ public struct CRXPackage: Sendable {
         let headerSize = Int(Self.uint32(bytes, 8))
         guard 12 + headerSize <= bytes.count else { throw Failure.notCRX }
         let header = Array(bytes[12..<(12 + headerSize)])
-        archive = Data(bytes[(12 + headerSize)...])
-        publicKey = Self.developerKey(in: header)
+        let archive = Data(bytes[(12 + headerSize)...])
+
+        // The header is a protobuf `CrxFileHeader`: field 2 holds RSA proofs (a key and a
+        // signature), field 10000 the signed data, whose field 1 is the id.
+        let fields = Protobuf.fields(header)
+        guard let signedData = fields.first(where: { $0.number == 10000 })?.bytes,
+              let idBytes = Protobuf.fields(signedData).first(where: { $0.number == 1 })?.bytes, idBytes.count == 16
+        else { throw Failure.badSignature }
+        let alphabet = Array("abcdefghijklmnop")
+        let id = String(idBytes.flatMap { [alphabet[Int($0 >> 4)], alphabet[Int($0 & 0xF)]] })
+        if let expected, expected != id { throw Failure.wrongExtension }
+
+        // What's signed: a fixed prefix, the signed data's length and the data, then the zip.
+        let length = UInt32(signedData.count)
+        var message = Data("CRX3 SignedData\u{0}".utf8)
+        message.append(contentsOf: [UInt8(length & 0xFF), UInt8(length >> 8 & 0xFF), UInt8(length >> 16 & 0xFF), UInt8(length >> 24)])
+        message.append(contentsOf: signedData)
+        message.append(archive)
+        let proofs = fields.filter { $0.number == 2 }.map { Protobuf.fields($0.bytes) }
+        guard let proof = proofs.first(where: { proof in
+                  proof.first { $0.number == 1 }.map { ExtensionID.from(publicKey: Data($0.bytes)) == id } ?? false
+              }),
+              let key = proof.first(where: { $0.number == 1 }).map({ Data($0.bytes) }),
+              let signature = proof.first(where: { $0.number == 2 }).map({ Data($0.bytes) }),
+              Self.verify(signature, of: message, key: key)
+        else { throw Failure.badSignature }
+
+        self.archive = archive
+        self.publicKey = key
+        self.id = id
     }
 
     static func uint32(_ b: [UInt8], _ i: Int) -> UInt32 {
         UInt32(b[i]) | UInt32(b[i + 1]) << 8 | UInt32(b[i + 2]) << 16 | UInt32(b[i + 3]) << 24
     }
 
-    /// The header is a protobuf `CrxFileHeader`. Field 2 holds RSA proofs, field 10000 the signed
-    /// data whose field 1 is the id the store assigned. The developer key is the proof whose
-    /// key hashes to that id.
-    static func developerKey(in header: [UInt8]) -> Data? {
-        let fields = Protobuf.fields(header)
-        let keys = fields.filter { $0.number == 2 }.compactMap { proof in
-            Protobuf.fields(proof.bytes).first { $0.number == 1 }.map { Data($0.bytes) }
+    /// An RSA PKCS #1 v1.5 SHA-256 signature, by a key in the SubjectPublicKeyInfo form Chrome uses.
+    static func verify(_ signature: Data, of message: Data, key: Data) -> Bool {
+        guard let pkcs1 = pkcs1(fromSPKI: [UInt8](key)),
+              let secKey = SecKeyCreateWithData(pkcs1 as CFData, [kSecAttrKeyType: kSecAttrKeyTypeRSA,
+                                                                  kSecAttrKeyClass: kSecAttrKeyClassPublic] as CFDictionary, nil)
+        else { return false }
+        return SecKeyVerifySignature(secKey, .rsaSignatureMessagePKCS1v15SHA256, message as CFData, signature as CFData, nil)
+    }
+
+    /// The PKCS #1 key inside a SubjectPublicKeyInfo, which is what Security takes:
+    /// SEQUENCE { SEQUENCE algorithm, BIT STRING { 0 unused bits, key } }.
+    static func pkcs1(fromSPKI b: [UInt8]) -> Data? {
+        guard let outer = der(b, at: 0), outer.tag == 0x30, outer.end == b.count,
+              let algorithm = der(b, at: outer.body.lowerBound), algorithm.tag == 0x30,
+              let bits = der(b, at: algorithm.end), bits.tag == 0x03, bits.body.count > 1, b[bits.body.lowerBound] == 0
+        else { return nil }
+        return Data(b[(bits.body.lowerBound + 1)..<bits.body.upperBound])
+    }
+
+    /// One DER element at `i`: its tag, where its contents are, and where it ends.
+    static func der(_ b: [UInt8], at i: Int) -> (tag: UInt8, body: Range<Int>, end: Int)? {
+        guard i + 2 <= b.count else { return nil }
+        var length = Int(b[i + 1])
+        var start = i + 2
+        if length & 0x80 != 0 {
+            let n = length & 0x7F
+            guard (1...4).contains(n), start + n <= b.count else { return nil }
+            length = b[start..<(start + n)].reduce(0) { $0 << 8 | Int($1) }
+            start += n
         }
-        if let signed = fields.first(where: { $0.number == 10000 }),
-           let idBytes = Protobuf.fields(signed.bytes).first(where: { $0.number == 1 })?.bytes {
-            let alphabet = Array("abcdefghijklmnop")
-            let id = String(idBytes.flatMap { [alphabet[Int($0 >> 4)], alphabet[Int($0 & 0xF)]] })
-            if let match = keys.first(where: { ExtensionID.from(publicKey: $0) == id }) { return match }
-        }
-        return keys.first
+        guard start + length <= b.count else { return nil }
+        return (b[i], start..<(start + length), start + length)
     }
 }
 

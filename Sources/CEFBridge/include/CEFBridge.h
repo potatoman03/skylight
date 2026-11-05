@@ -78,6 +78,9 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SKPermissionRequest : NSObject
 @property (nonatomic, readonly) uint64_t requestID;
 @property (nonatomic, readonly, copy) NSString *origin;
+/// The address of the page the request was made in: the tab's top frame, which may be another
+/// site from the one asking.
+@property (nonatomic, readonly, copy) NSString *topURL;
 /// Stable names: camera, microphone, screen, geolocation, notifications, clipboard, ...
 @property (nonatomic, readonly, copy) NSArray<NSString *> *kinds;
 /// Answer once. Unanswered requests are dismissed when the request is deallocated.

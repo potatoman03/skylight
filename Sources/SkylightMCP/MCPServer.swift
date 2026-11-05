@@ -92,9 +92,9 @@ public final class MCPServer {
     }
 
     private func handlePost(_ request: HTTPRequest) async -> HTTPResponse {
-        let sessionID = request.headers["mcp-session-id"]
+        let sessionID = request.headers["mcp-session-id"].flatMap { sessions[$0] != nil ? $0 : nil }
         let clientName = sessionID.flatMap { sessions[$0] } ?? request.headers["user-agent"] ?? "An agent"
-        let outcome = await handler.handle(request.body, client: AgentClient(name: clientName))
+        let outcome = await handler.handle(request.body, client: AgentClient(name: clientName, session: sessionID))
 
         var headers: [String: String] = [:]
         if outcome.response?["result"]?["serverInfo"] != nil {

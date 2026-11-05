@@ -1,6 +1,7 @@
 import AppKit
 import SkylightCEF
 import SkylightCore
+import SkylightKit
 
 // Chromium needs its own NSApplication subclass, created before anything touches NSApp.
 let app = CEFRuntime.makeApplication()
@@ -15,6 +16,8 @@ app.delegate = delegate
 let info = Bundle.main.infoDictionary ?? [:]
 let devBuild = ProcessInfo.processInfo.environment["SKYLIGHT_DEV"] != nil || (info["SkylightDevBuild"] as? Bool ?? false)
 let debugPort = Int(ProcessInfo.processInfo.environment["SKYLIGHT_DEBUG_PORT"] ?? "") ?? 0
+// Password managers and other apps' extensions reach their apps through hosts made for other browsers.
+NativeMessagingHosts.adopt(into: paths.engineRoot.appending(path: "NativeMessagingHosts", directoryHint: .isDirectory))
 
 do {
     try CEFRuntime.start(.init(

@@ -14,6 +14,11 @@ public struct RootView: View {
 
     public init() {}
 
+    private var showsSplit: Bool {
+        let state = browser.store.state
+        return state.selectedTabID.flatMap { state.activeSpace.split(containing: $0) }.map { $0.tabs.count > 1 } ?? false
+    }
+
     public var body: some View {
         let prefs = browser.preferences
         let state = browser.store.state
@@ -23,13 +28,14 @@ public struct RootView: View {
         HStack(spacing: 0) {
             if !prefs.sidebarCollapsed {
                 Sidebar()
-                    .frame(width: prefs.sidebarWidth)
+                    .frame(width: max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound))
                     .overlay(alignment: .trailing) { SidebarEdge() }
                     .transition(.move(edge: .leading))
             }
             ContentArea()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.background)
+                // A split's rounded panes sit on the window's backdrop, like the sidebar.
+                .background(showsSplit ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
         }
         // One translucent backdrop behind the toolbar and sidebar; only the page is opaque.
         .background { WindowBackdrop().ignoresSafeArea() }
@@ -67,30 +73,35 @@ private struct BrowserToolbar: ToolbarContent {
         let status = browser.selectedStatus
         let id = browser.store.state.selectedTabID
 
-        ToolbarItemGroup(placement: .navigation) {
-            Button {
-                if let id { browser.store.send(.goBack(id)) }
-            } label: {
-                Label("Back", systemImage: "chevron.backward")
+        // One compact group, so Reload keeps clear of the sidebar's edge.
+        ToolbarItem(placement: .navigation) {
+            HStack(spacing: 2) {
+                Button {
+                    if let id { browser.store.send(.goBack(id)) }
+                } label: {
+                    Label("Back", systemImage: "chevron.backward")
+                }
+                .help("Back")
+                .disabled(!status.canGoBack)
+                Button {
+                    if let id { browser.store.send(.goForward(id)) }
+                } label: {
+                    Label("Forward", systemImage: "chevron.forward")
+                }
+                .help("Forward")
+                .disabled(!status.canGoForward)
+                Button {
+                    if let id { browser.store.send(status.isLoading ? .stop(id) : .reload(id)) }
+                } label: {
+                    Label(status.isLoading ? "Stop" : "Reload", systemImage: status.isLoading ? "xmark" : "arrow.clockwise")
+                }
+                .help(status.isLoading ? "Stop Loading (⌘.)" : "Reload Page (⌘R)")
+                .disabled(id == nil)
             }
-            .help("Back")
-            .disabled(!status.canGoBack)
-            Button {
-                if let id { browser.store.send(.goForward(id)) }
-            } label: {
-                Label("Forward", systemImage: "chevron.forward")
-            }
-            .help("Forward")
-            .disabled(!status.canGoForward)
-            Button {
-                if let id { browser.store.send(status.isLoading ? .stop(id) : .reload(id)) }
-            } label: {
-                Label(status.isLoading ? "Stop" : "Reload", systemImage: status.isLoading ? "xmark" : "arrow.clockwise")
-            }
-            .help(status.isLoading ? "Stop Loading (⌘.)" : "Reload Page (⌘R)")
-            .disabled(id == nil)
+            .labelStyle(.iconOnly)
+            .buttonStyle(ToolbarIconStyle())
         }
-        // Plain icons and text, no capsules behind them.
+        // Plain icons, no capsules behind them.
         .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .navigation) {
@@ -98,11 +109,13 @@ private struct BrowserToolbar: ToolbarContent {
         }
         .sharedBackgroundVisibility(.hidden)
 
-        // Extension buttons and New Tab keep to the window's right edge, however wide it is.
+        // Extension buttons keep to the window's right edge, however wide it is.
         ToolbarSpacer(.flexible)
 
         // On an extension's page in the Chrome Web Store, whose own button only works in Chrome.
-        if let id = browser.store.state.selectedTab.flatMap({ WebStore.extensionID(from: $0.url.absoluteString) }), browser.extensions.isAvailable {
+        // Not over a new tab's empty page, which isn't the store.
+        if let id = browser.store.state.selectedTab.flatMap({ WebStore.extensionID(from: $0.url.absoluteString) }), browser.extensions.isAvailable,
+           !(browser.commandBar.isPresented && browser.commandBar.mode == .newTab) {
             ToolbarItem(placement: .primaryAction) {
                 StoreAddButton(id: id)
             }
@@ -120,25 +133,16 @@ private struct BrowserToolbar: ToolbarContent {
             ExtensionsMenuButton()
         }
         .sharedBackgroundVisibility(.hidden)
-
-        ToolbarItem(placement: .primaryAction) {
-            Button {
-                browser.presentCommandBar(.newTab)
-            } label: {
-                Label("New Tab", systemImage: "plus")
-            }
-            .help("New Tab (⌘T)")
-        }
-        .sharedBackgroundVisibility(.hidden)
     }
 }
 
 /// The sidebar's edge: a hairline you can drag to resize it, which remembers the width.
-private struct SidebarEdge: View {
+struct SidebarEdge: View {
     @Environment(Browser.self) private var browser
     @State private var start: Double?
 
-    static let widths = 200.0...420.0
+    /// Wide enough that the toolbar's back, forward and reload buttons sit over the sidebar.
+    static let widths = 220.0...420.0
 
     var body: some View {
         Rectangle()
@@ -159,6 +163,30 @@ private struct SidebarEdge: View {
                         .onEnded { _ in start = nil })
                     .ignoresSafeArea()
             }
+    }
+}
+
+/// A toolbar icon with a box that shows on hover and dips when pressed, like the sidebar button.
+struct ToolbarIconStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { Look(configuration: configuration) }
+
+    private struct Look: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var enabled
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 30, height: 26)
+                .background(.primary.opacity(!enabled ? 0 : configuration.isPressed ? 0.14 : hovering ? 0.08 : 0), in: .rect(cornerRadius: 6))
+                .contentShape(.rect)
+                .foregroundStyle(enabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.quaternary))
+                .scaleEffect(configuration.isPressed ? 0.9 : 1)
+                .animation(Motion.resolved(Motion.feedback), value: configuration.isPressed)
+                .animation(Motion.resolved(Motion.feedback), value: hovering)
+                .onHover { hovering = $0 }
+        }
     }
 }
 

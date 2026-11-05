@@ -8,7 +8,9 @@ import SkylightCore
 @Observable
 public final class Preferences {
     public enum SearchEngine: String, Codable, CaseIterable, Identifiable, Sendable {
-        case google, duckDuckGo, kagi, bing, perplexity
+        case google, duckDuckGo, kagi, bing, perplexity, brave, ecosia, startpage, chatGPT
+        /// Your own, from `customSearchTemplate`.
+        case custom
 
         public var id: String { rawValue }
 
@@ -19,17 +21,35 @@ public final class Preferences {
             case .kagi: "Kagi"
             case .bing: "Bing"
             case .perplexity: "Perplexity"
+            case .brave: "Brave Search"
+            case .ecosia: "Ecosia"
+            case .startpage: "Startpage"
+            case .chatGPT: "ChatGPT"
+            case .custom: "Custom…"
             }
         }
 
+        /// The search address, with `%s` for what you typed. Custom's is in preferences.
         public var template: String {
             switch self {
-            case .google: "https://www.google.com/search?q=%s"
+            case .google, .custom: "https://www.google.com/search?q=%s"
             case .duckDuckGo: "https://duckduckgo.com/?q=%s"
             case .kagi: "https://kagi.com/search?q=%s"
             case .bing: "https://www.bing.com/search?q=%s"
             case .perplexity: "https://www.perplexity.ai/search?q=%s"
+            case .brave: "https://search.brave.com/search?q=%s"
+            case .ecosia: "https://www.ecosia.org/search?q=%s"
+            case .startpage: "https://www.startpage.com/do/search?q=%s"
+            case .chatGPT: "https://chatgpt.com/?q=%s"
             }
+        }
+
+        /// A search address you can use: http or https, with `%s` where the query goes.
+        public static func isValidTemplate(_ template: String) -> Bool {
+            let trimmed = template.trimmingCharacters(in: .whitespaces)
+            guard trimmed.contains("%s"), let url = URL(string: trimmed.replacingOccurrences(of: "%s", with: "q")),
+                  ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host() != nil else { return false }
+            return true
         }
     }
 
@@ -98,6 +118,7 @@ public final class Preferences {
 
     private struct Stored: Codable {
         var searchEngine: SearchEngine?
+        var customSearchTemplate: String?
         var appearance: Appearance?
         var godRays: Bool?
         var archiveAfterHours: Double?
@@ -131,6 +152,8 @@ public final class Preferences {
     }
 
     public var searchEngine: SearchEngine = .google { didSet { save() } }
+    /// The Custom engine's address, with `%s` for the query.
+    public var customSearchTemplate = "" { didSet { save() } }
     public var appearance: Appearance = .system { didSet { save(); applyAppearance() } }
     /// The theme's sky behind the sidebar, instead of the system's sidebar material.
     public var skyBackdrop = false { didSet { save() } }
@@ -195,7 +218,14 @@ public final class Preferences {
         if themeID == id { themeID = SkyTheme.standard.id }
     }
 
-    public var omnibox: Omnibox { Omnibox(searchTemplate: searchEngine.template) }
+    /// What searches go to. A custom address that isn't usable falls back to Google.
+    public var searchTemplate: String {
+        guard searchEngine == .custom else { return searchEngine.template }
+        let custom = customSearchTemplate.trimmingCharacters(in: .whitespaces)
+        return SearchEngine.isValidTemplate(custom) ? custom : SearchEngine.google.template
+    }
+
+    public var omnibox: Omnibox { Omnibox(searchTemplate: searchTemplate) }
 
     @ObservationIgnored private let fileURL: URL?
     @ObservationIgnored private var loading = false
@@ -207,6 +237,7 @@ public final class Preferences {
         guard let fileURL, let data = try? Data(contentsOf: fileURL),
               let stored = try? JSONDecoder().decode(Stored.self, from: data) else { return }
         searchEngine = stored.searchEngine ?? searchEngine
+        customSearchTemplate = stored.customSearchTemplate ?? customSearchTemplate
         appearance = stored.appearance ?? appearance
         godRays = stored.godRays ?? godRays
         archiveAfterHours = stored.archiveAfterHours ?? archiveAfterHours
@@ -235,7 +266,7 @@ public final class Preferences {
 
     private func save() {
         guard !loading, let fileURL else { return }
-        let stored = Stored(searchEngine: searchEngine, appearance: appearance, godRays: godRays,
+        let stored = Stored(searchEngine: searchEngine, customSearchTemplate: customSearchTemplate, appearance: appearance, godRays: godRays,
                             archiveAfterHours: archiveAfterHours, sidebarCollapsed: sidebarCollapsed, themeID: themeID,
                             customThemes: customThemes, hiddenSidebarItems: hiddenSidebarItems, density: density,
                             extensionPlacement: extensionPlacement, skyBackdrop: skyBackdrop,

@@ -27,8 +27,8 @@ public final class PageCoordinator: BrowserEffectHandler {
     public private(set) var visibleTabID: TabID?
     /// Every tab on screen: the focused tab's split, or just the focused tab.
     public private(set) var visibleTabIDs: [TabID] = []
-    /// Space between split panes (a hairline, like a split view's divider) and their corner radius.
-    @ObservationIgnored public var paneStyle: @MainActor () -> (gap: CGFloat, radius: CGFloat) = { (1, 0) }
+    /// Space between split panes and their corner radius.
+    @ObservationIgnored public var paneStyle: @MainActor () -> (gap: CGFloat, radius: CGFloat) = { (PaneStyle.gap, PaneStyle.radius) }
 
     @ObservationIgnored public var policy = HibernationPolicy()
     /// Today tabs idle this long are archived.
@@ -279,6 +279,20 @@ extension PageCoordinator: WebPageDelegate {
     }
 }
 
+/// How a split's panes sit in the window: rounded cards, apart from each other and from the
+/// window's edges, on the window's backdrop.
+public enum PaneStyle {
+    public static let gap: CGFloat = 6
+    public static let radius: CGFloat = 10
+    public static let inset: CGFloat = 6
+
+    /// Each pane's frame in a content area of `size`.
+    public static func frames(of split: TabSplit, in size: CGSize, gap: CGFloat = gap) -> [CGRect] {
+        let inner = CGSize(width: max(0, size.width - inset * 2), height: max(0, size.height - inset * 2))
+        return split.frames(in: inner, gap: gap).map { $0.offsetBy(dx: inset, dy: inset) }
+    }
+}
+
 /// Hosts page views. Alone, a page fills the bounds; in a split, each visible page gets its pane.
 public final class PageHostView: NSView {
     public override var isFlipped: Bool { true }
@@ -309,7 +323,7 @@ public final class PageHostView: NSView {
     public override func resizeSubviews(withOldSize oldSize: NSSize) { layoutPanes() }
 
     private func layoutPanes() {
-        let frames = split?.frames(in: bounds.size, gap: gap)
+        let frames = split.map { PaneStyle.frames(of: $0, in: bounds.size, gap: gap) }
         for view in subviews {
             if let frames, let i = panes.firstIndex(where: { $0 === view }) {
                 view.frame = frames[i]

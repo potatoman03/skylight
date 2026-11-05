@@ -32,6 +32,8 @@ struct AddressField: View {
         let tab = browser.store.state.selectedTab
         let status = browser.selectedStatus
         let editing = bar.isPresented && bar.mode == .editCurrent
+        // A new tab hasn't gone anywhere yet; the page behind the bar is empty.
+        let newTab = bar.isPresented && bar.mode == .newTab
 
         // At rest, just where you are: the site, then the page's title. Click to type.
         HStack(spacing: 8) {
@@ -46,6 +48,10 @@ struct AddressField: View {
                     .onKeyPress(.downArrow) { bar.moveSelection(1); return .handled }
                     .onKeyPress(.upArrow) { bar.moveSelection(-1); return .handled }
                     .onKeyPress(.escape) { browser.dismissCommandBar(); return .handled }
+            } else if newTab {
+                Text("New Tab")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else if let tab {
                 Text(Self.display(tab))
                     .fontWeight(.medium)
@@ -81,7 +87,7 @@ struct AddressField: View {
                     .fill(.tint)
                     .frame(width: geo.size.width * max(status.progress, 0.05), height: 2)
                     .frame(maxHeight: .infinity, alignment: .bottom)
-                    .opacity(status.isLoading && !editing ? 1 : 0)
+                    .opacity(status.isLoading && !editing && !newTab ? 1 : 0)
                     .animation(.easeOut(duration: 0.2), value: status.progress)
             }
             .allowsHitTesting(false)
@@ -103,6 +109,16 @@ struct AddressField: View {
             }
         }
         .accessibilityLabel("Address and search")
+        // The address starts over the page, past the sidebar's edge, wherever the toolbar puts it.
+        .padding(.leading, lead)
+        .background { WindowXProbe { anchor.itemX = $0 } }
+        .animation(Motion.resolved(Motion.travel), value: lead)
+    }
+
+    private var lead: CGFloat {
+        let prefs = browser.preferences
+        guard !prefs.sidebarCollapsed, let x = anchor.itemX else { return 0 }
+        return max(0, max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound) + 6 - x)
     }
 
     static func display(_ tab: BrowserTab) -> String {
@@ -149,6 +165,8 @@ struct SuggestionsList: View {
 final class AddressAnchor {
     @ObservationIgnored weak var field: NSView?
     @ObservationIgnored weak var page: NSView?
+    /// Where the address field's toolbar item starts, in the window.
+    var itemX: CGFloat?
 
     /// The field's frame in the page's coordinates, y down; `size` is the page's.
     func fieldFrame(size: CGSize) -> CGRect? {
@@ -169,6 +187,54 @@ struct ViewProbe: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSView, context: Context) {}
+}
+
+/// Reports where a view starts in its window, again whenever the window resizes or goes full screen.
+struct WindowXProbe: NSViewRepresentable {
+    let changed: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> Probe { Probe(changed: changed) }
+    func updateNSView(_ view: Probe, context: Context) { view.changed = changed }
+
+    final class Probe: NSView {
+        var changed: (CGFloat) -> Void
+        private var last: CGFloat?
+        private var observers: [NSObjectProtocol] = []
+
+        init(changed: @escaping (CGFloat) -> Void) {
+            self.changed = changed
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            guard let window else { return }
+            for name in [NSWindow.didResizeNotification, NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.report() }
+                })
+            }
+            report()
+        }
+
+        override func layout() {
+            super.layout()
+            report()
+        }
+
+        /// After layout settles, so SwiftUI state doesn't change mid-layout.
+        private func report() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.window != nil else { return }
+                let x = self.convert(self.bounds, to: nil).minX.rounded()
+                if x != self.last { self.last = x; self.changed(x) }
+            }
+        }
+    }
 }
 
 private struct SuggestionRow: View {
@@ -210,8 +276,8 @@ struct CommandPalette: View {
         @Bindable var bar = browser.commandBar
         GeometryReader { geo in
             ZStack(alignment: .top) {
-                // Clicking outside closes it.
-                Color.black.opacity(0.06)
+                // Clicking outside closes it. Over a new tab's empty page there's nothing to dim.
+                Color.black.opacity(bar.mode == .newTab ? 0 : 0.06)
                     .contentShape(.rect)
                     .onTapGesture { browser.dismissCommandBar() }
 

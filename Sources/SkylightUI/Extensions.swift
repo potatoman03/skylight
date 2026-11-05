@@ -52,8 +52,13 @@ struct ExtensionsMenuButton: View {
         let hosted = service.popup.map { popup in !showsButtons || !service.toolbar.contains { $0.id == popup.id } } ?? false
         Button { listing.toggle() } label: {
             Label("Extensions", systemImage: "puzzlepiece.extension")
+                .overlay(alignment: .topTrailing) {
+                    if !service.updatesToApprove.isEmpty {
+                        Circle().fill(.tint).frame(width: 6, height: 6).offset(x: 2, y: -1)
+                    }
+                }
         }
-        .help("Extensions")
+        .help(service.updatesToApprove.isEmpty ? "Extensions" : "Extensions: an update needs your OK")
         .popover(isPresented: Binding(get: { listing || hosted }, set: { shown in
             if !shown {
                 listing = false
@@ -81,6 +86,17 @@ private struct ExtensionList: View {
         let service = browser.extensions
         VStack(alignment: .leading, spacing: 0) {
             List {
+                // Updates that ask for more access wait for you, as in Chrome.
+                if !service.updatesToApprove.isEmpty {
+                    Section("Updates") {
+                        ForEach(service.updatesToApprove.sorted { $0.key < $1.key }, id: \.key) { id, version in
+                            Button { Task { await service.approveUpdate(id) } } label: {
+                                Label("Update \(service.manifest(id)?.name ?? "extension") to \(version)…", systemImage: "arrow.down.circle")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
                 Section("Extensions") {
                     if service.enabled.isEmpty {
                         Text("No extensions turned on").foregroundStyle(.secondary)
@@ -92,7 +108,8 @@ private struct ExtensionList: View {
             }
             .listStyle(.inset)
             .scrollContentBackground(.hidden)
-            .frame(height: min(CGFloat(max(service.enabled.count, 1)) * 32 + 40, 360))
+            .frame(height: min(CGFloat(max(service.enabled.count, 1) + service.updatesToApprove.count) * 32
+                             + (service.updatesToApprove.isEmpty ? 40 : 70), 360))
             Divider()
             HStack {
                 Button("Find Extensions…") { browser.store.send(.openTab(WebStore.homeURL)) }
@@ -289,7 +306,7 @@ struct ExtensionSettings: View {
             } header: {
                 Text("Toolbar")
             } footer: {
-                Text("Pin extensions from the Extensions menu in the toolbar. Right-click a button for its options.")
+                Text("Pin extensions above, or from the Extensions menu in the toolbar. Right-click a button for its options.")
             }
         }
         .formStyle(.grouped)
@@ -435,6 +452,16 @@ private struct InstalledExtensionRow: View {
                 }
                 Spacer(minLength: 8)
                 if service.busy.contains(ext.id) { ProgressView().controlSize(.small) }
+                Button {
+                    service.setPinned(ext.id, !ext.pinned)
+                } label: {
+                    Label(ext.pinned ? "Pinned" : "Pin", systemImage: ext.pinned ? "pin.fill" : "pin")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(ext.pinned ? .accentColor : nil)
+                .disabled(!ext.enabled)
+                .help(ext.pinned ? "Unpin from the toolbar" : "Pin to the toolbar")
                 Menu {
                     ExtensionMenu(ext: ext)
                     Button("Show in Finder") { service.revealFolder(ext.id) }

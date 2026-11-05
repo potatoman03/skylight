@@ -88,10 +88,11 @@ NSArray<NSString*>* MediaKinds(uint32_t mask) {
   uint32_t _mediaMask;
 }
 
-- (instancetype)initWithID:(uint64_t)requestID origin:(NSString*)origin kinds:(NSArray<NSString*>*)kinds {
+- (instancetype)initWithID:(uint64_t)requestID origin:(NSString*)origin topURL:(NSString*)topURL kinds:(NSArray<NSString*>*)kinds {
   if ((self = [super init])) {
     _requestID = requestID;
     _origin = [origin copy];
+    _topURL = [topURL copy];
     _kinds = [kinds copy];
   }
   return self;
@@ -303,7 +304,9 @@ class BrowserClient : public CefClient,
 
   bool OnQuery(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> frame, int64_t query_id, const CefString& request,
                bool persistent, CefRefPtr<Callback> callback) override {
-    if (!IsMain(b)) return false;
+    // Only a tab's own page, never a frame inside it: an ad or embed from another site would
+    // otherwise speak with the page's address.
+    if (!IsMain(b) || !frame->IsMain()) return false;
     [owner_.delegate browser:owner_
                receivedQuery:ToNS(request)
                        reply:^(NSString* result, NSString* error) {
@@ -315,10 +318,16 @@ class BrowserClient : public CefClient,
 
   // MARK: Permissions
 
+  static NSString* TopURL(CefRefPtr<CefBrowser> b) {
+    CefRefPtr<CefFrame> main = b->GetMainFrame();
+    return main ? ToNS(main->GetURL()) : @"";
+  }
+
   bool OnShowPermissionPrompt(CefRefPtr<CefBrowser> b, uint64_t prompt_id, const CefString& origin,
                               uint32_t permissions, CefRefPtr<CefPermissionPromptCallback> callback) override {
     if (!IsMain(b)) return false;
-    SKPermissionRequest* req = [[SKPermissionRequest alloc] initWithID:prompt_id origin:ToNS(origin) kinds:PermissionKinds(permissions)];
+    SKPermissionRequest* req = [[SKPermissionRequest alloc] initWithID:prompt_id origin:ToNS(origin) topURL:TopURL(b)
+                                                                 kinds:PermissionKinds(permissions)];
     [req setPrompt:callback];
     [owner_.delegate browser:owner_ requestsPermission:req];
     return true;
@@ -327,7 +336,8 @@ class BrowserClient : public CefClient,
   bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> frame, const CefString& origin,
                                       uint32_t permissions, CefRefPtr<CefMediaAccessCallback> callback) override {
     if (!IsMain(b)) return false;
-    SKPermissionRequest* req = [[SKPermissionRequest alloc] initWithID:0 origin:ToNS(origin) kinds:MediaKinds(permissions)];
+    SKPermissionRequest* req = [[SKPermissionRequest alloc] initWithID:0 origin:ToNS(origin) topURL:TopURL(b)
+                                                                 kinds:MediaKinds(permissions)];
     [req setMedia:callback mask:permissions];
     [owner_.delegate browser:owner_ requestsPermission:req];
     return true;

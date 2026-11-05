@@ -132,7 +132,7 @@ extension CEFPage: @preconcurrency SKBrowserDelegate {
         let box = MainThreadBox(value: request)
         let kinds = request.kinds.map { PermissionRequest.Kind(rawValue: $0) ?? .other }
         delegate?.page(self, requestsPermission: PermissionRequest(
-            id: request.requestID, origin: request.origin, kinds: kinds,
+            id: request.requestID, origin: request.origin, topOrigin: PermissionRequest.origin(of: request.topURL), kinds: kinds,
             respond: { allow in box.value.respond(allow) }
         ))
     }

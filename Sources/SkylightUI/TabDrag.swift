@@ -3,8 +3,8 @@ import SkylightBrowser
 import SkylightCore
 import SwiftUI
 
-/// Tabs travel by the system's drag and drop, so the sidebar shows its own insertion line, Space
-/// buttons spring open, and the drag image is the system's.
+/// Tabs travel by the system's drag and drop, so they can land in the sidebar, on the page, on a
+/// favorite or a Space button (which springs open), and the drag image is the system's.
 ///
 /// The session also knows when a tab drag is under way, so the page can put a drop target over
 /// the engine's view (which would otherwise take the drop as text).
@@ -83,13 +83,14 @@ extension Browser {
         return drop(TabDragSession.Payload(id: id, source: .row), on: target)
     }
 
+    /// Unanimated when the sidebar has already made room for the tab where it lands.
     @discardableResult
-    func drop(_ payload: TabDragSession.Payload, on target: TabDropTarget) -> Bool {
+    func drop(_ payload: TabDragSession.Payload, on target: TabDropTarget, animated: Bool = true) -> Bool {
         let id = payload.id
         let state = store.state
         guard state.tabs[id] != nil else { return false }
         var applied = false
-        animate(Motion.travel) {
+        let move = { [self] in
             switch target {
             case let .section(section, row):
                 if payload.source == .pane { store.send(.leaveSplit(id)) }
@@ -135,6 +136,7 @@ extension Browser {
                 }
             }
         }
+        if animated { animate(Motion.travel, move) } else { move() }
         return applied
     }
 }

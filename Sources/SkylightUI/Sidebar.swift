@@ -7,57 +7,44 @@ import SwiftUI
 /// SwiftUI has its own `Tab`.
 typealias BrowserTab = SkylightCore.Tab
 
-/// What a sidebar row stands for: a tab, or a split (one row for all its panes).
-enum SidebarRow: Hashable {
-    case tab(TabID)
-    case split(String)
-}
-
 /// A source list, like Finder's or Mail's: favorites shared by every Space, then the Space's pinned
 /// tabs and today's tabs. Spaces switch from the bar at the bottom.
 struct Sidebar: View {
     @Environment(Browser.self) private var browser
     @Environment(TabDragSession.self) private var drag
     @Environment(\.colorScheme) private var scheme
+    @State private var drop = SidebarDropState()
+    @State private var viewport: CGFloat = 0
+
+    private static let coordinates = "sidebar.list"
 
     var body: some View {
         let state = browser.store.state
         let space = state.activeSpace
         let prefs = browser.preferences
+        let lines = SidebarLines(space: space, showsNewTab: prefs.shows(.newTab))
 
         VStack(spacing: 0) {
-            // Favorites sit on top as a grid of tiles, as in Arc, shared by every Space. They're
-            // outside the list so each tile takes its own clicks, tooltips and menu.
+            // Favorites sit on top as a grid of tiles, as in Arc, shared by every Space.
             if prefs.shows(.favorites), !state.favorites.isEmpty || drag.active != nil {
                 FavoritesGrid(tabs: state.favoriteTabs, selected: state.selectedTabID)
                     .padding(.horizontal, 10)
                     .padding(.top, 4)
                     .padding(.bottom, 6)
             }
-            List(selection: selection) {
-
-            Section {
-                ForEach(space.folders) { folder in
-                    FolderRow(folder: folder)
-                }
-                rows(space, .pinned)
-                if space.pinned.isEmpty, space.folders.isEmpty {
-                    DropHint(text: "Drag tabs here to pin them", target: .section(.pinned, row: 0))
-                }
-            } header: {
-                SpaceHeader(space: space)
+            ScrollView {
+                list(lines, space: space)
+                    // Down to the bottom, so a tab dropped below the rows lands at the end.
+                    .frame(maxWidth: .infinity, minHeight: viewport, alignment: .top)
+                    .contentShape(.rect)
+                    .coordinateSpace(.named(Self.coordinates))
+                    .onDrop(of: SidebarDropDelegate.types,
+                            delegate: SidebarDropDelegate(lines: lines, state: drop, drag: drag, browser: browser,
+                                                          rowHeight: prefs.density.rowHeight + 2))
             }
-
-            Section {
-                if prefs.shows(.newTab) { NewTabRow() }
-                rows(space, .today)
-            } header: {
-                TodayHeader(space: space)
-            }
-        }
-            .listStyle(.sidebar)
-            .environment(\.sidebarRowSize, prefs.density.rowSize)
-            .scrollContentBackground(.hidden)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewport = $0 }
+            .environment(\.sidebarDensity, prefs.density)
+            .font(prefs.density.rowFont)
         }
         .background {
             if prefs.skyBackdrop {
@@ -79,40 +66,61 @@ struct Sidebar: View {
         .transition(.opacity)
     }
 
-    /// One section's rows: a row per tab, one per split.
-    @ViewBuilder
-    private func rows(_ space: Space, _ section: SkylightCore.TabSection) -> some View {
-        let state = browser.store.state
-        // Pinned tabs in folders show in their folders.
-        ForEach(SidebarRows.make(section == .pinned ? space.loosePinned : space.today, space: space), id: \.self) { row in
-            if row.count > 1, let split = space.split(containing: row[0]) {
-                SplitRow(split: split).tag(SidebarRow.split(split.id))
-            } else if let tab = state.tabs[row[0]] {
-                TabRow(tab: tab, kind: section == .pinned ? .pinned : .today).tag(SidebarRow.tab(tab.id))
+    /// Every line, each moved aside as a drag needs. Frames are measured before the move, so the
+    /// drag is hit-tested against where rows belong, not where they've slid to.
+    private func list(_ lines: SidebarLines, space: Space) -> some View {
+        let hidden = drop.hidden.flatMap { id in lines.lines.firstIndex { $0.id == id } }
+        return VStack(spacing: 0) {
+            ForEach(Array(lines.lines.enumerated()), id: \.element.id) { index, line in
+                self.line(line, space: space)
+                    .opacity(index == hidden ? 0 : 1)
+                    .offset(y: drop.shift(of: index, hidden: hidden))
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.coordinates)) } action: { [drop] in
+                        drop.frames[line.id] = $0
+                    }
             }
         }
-        .dropDestination(for: String.self) { items, index in browser.drop(items, on: .section(section, row: index)) }
+        .overlay(alignment: .topLeading) {
+            // Where the tab will land: a soft slot in the gap.
+            if case let .gap(before, box, _)? = drop.hover {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(.primary.opacity(0.06))
+                    .frame(height: max(drop.gapHeight - 2, 0))
+                    .padding(.leading, box.isFolder ? SidebarMetrics.indent : 0)
+                    .offset(y: lines.gapTop(before: before, frames: drop.frames, hidden: hidden, lift: drop.hiddenHeight) + 1)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, drop.extraRoom + 6)
     }
 
-    /// The list's selection is the selected tab, or the split showing it.
-    private var selection: Binding<SidebarRow?> {
-        Binding {
-            let state = browser.store.state
-            guard let id = state.selectedTabID else { return nil }
-            return state.activeSpace.split(containing: id).map { .split($0.id) } ?? .tab(id)
-        } set: { row in
-            let state = browser.store.state
-            switch row {
-            case let .tab(id)?:
-                if id != state.selectedTabID { browser.store.send(.selectTab(id)) }
-            case let .split(id)?:
-                // Keep the focused pane if it's already in this split.
-                guard let split = state.activeSpace.splits.first(where: { $0.id == id }),
-                      !split.tabs.contains(where: { $0 == state.selectedTabID }) else { return }
-                browser.store.send(.selectTab(split.tabs[0]))
-            case nil:
-                break
+    @ViewBuilder
+    private func line(_ line: SidebarLines.Line, space: Space) -> some View {
+        let targeted = drop.isTargeting(line.id)
+        switch line.kind {
+        case .spaceHeader:
+            SpaceHeader(space: space).sidebarHeader(top: 4)
+        case let .folder(folder):
+            FolderRow(folder: folder, targeted: targeted)
+        case let .row(ids, box, _):
+            if targeted, let joining = drag.active?.id {
+                // What the row would become: the dragged tab beside it in a split.
+                SplitPreviewRow(tabs: ids, joining: joining, indent: box.isFolder ? SidebarMetrics.indent : 0)
+            } else if ids.count > 1, let split = space.split(containing: ids[0]) {
+                SplitRow(split: split, targeted: targeted)
+            } else if let tab = browser.store.state.tabs[ids[0]] {
+                TabRow(tab: tab, kind: box == .today ? .today : .pinned, targeted: targeted,
+                       indent: box.isFolder ? SidebarMetrics.indent : 0)
             }
+        case let .hint(text, target):
+            let inFolder = if case .folder = target { true } else { false }
+            DropHint(text: text, targeted: targeted, indent: inFolder ? SidebarMetrics.indent : 0)
+        case .todayHeader:
+            TodayHeader(space: space).sidebarHeader()
+        case .newTab:
+            NewTabRow()
         }
     }
 }
@@ -182,52 +190,40 @@ private struct FavoriteTile: View {
 }
 
 /// A folder of pinned tabs: click it to open or close it, drop tabs on it or between its tabs.
+/// Its tabs are lines of their own, below it.
 private struct FolderRow: View {
     let folder: TabFolder
+    let targeted: Bool
     @Environment(Browser.self) private var browser
     @State private var editing = false
     @State private var name = ""
     @FocusState private var focused: Bool
 
     var body: some View {
-        let state = browser.store.state
-        DisclosureGroup(isExpanded: Binding(get: { folder.isOpen }, set: { setOpen($0) })) {
-            ForEach(folder.tabs, id: \.self) { id in
-                if let tab = state.tabs[id] {
-                    TabRow(tab: tab, kind: .pinned).tag(SidebarRow.tab(id))
-                }
-            }
-            .dropDestination(for: String.self) { items, index in browser.drop(items, on: .folder(folder.id, index: index)) }
-            if folder.tabs.isEmpty {
-                DropHint(text: "Drag tabs here", target: .folder(folder.id, index: 0))
-            }
-        } label: {
-            Label {
-                if editing {
-                    TextField("Folder name", text: $name)
-                        .inlineName()
-                        .focused($focused)
-                        .onSubmit(commit)
-                        .onExitCommand { editing = false }
-                        .onChange(of: focused) { _, now in if !now { commit() } }
-                } else {
-                    HStack {
-                        Text(folder.name).fadingTail()
-                        Spacer(minLength: 4)
-                        if !folder.isOpen, !folder.tabs.isEmpty {
-                            Text("\(folder.tabs.count)").font(.caption).foregroundStyle(.tertiary).monospacedDigit()
-                        }
+        Label {
+            if editing {
+                TextField("Folder name", text: $name)
+                    .inlineName()
+                    .focused($focused)
+                    .onSubmit(commit)
+                    .onExitCommand { editing = false }
+                    .onChange(of: focused) { _, now in if !now { commit() } }
+            } else {
+                HStack {
+                    Text(folder.name).fadingTail()
+                    Spacer(minLength: 4)
+                    if !folder.isOpen, !folder.tabs.isEmpty {
+                        Text("\(folder.tabs.count)").font(.caption).foregroundStyle(.tertiary).monospacedDigit()
                     }
-                    .contentShape(.rect)
-                    .onTapGesture { setOpen(!folder.isOpen) }
                 }
-            } icon: {
-                Image(systemName: folder.isOpen ? "folder" : "folder.fill")
-                    .foregroundStyle(.secondary)
             }
-            .contextMenu { FolderMenu(folder: folder, rename: startEditing) }
-            .dropDestination(for: String.self) { items, _ in browser.drop(items, on: .folder(folder.id, index: .max)) }
+        } icon: {
+            Image(systemName: folder.isOpen ? "folder" : "folder.fill")
+                .foregroundStyle(.secondary)
         }
+        .sidebarRow(targeted: targeted)
+        .onTapGesture { if !editing { setOpen(!folder.isOpen) } }
+        .contextMenu { FolderMenu(folder: folder, rename: startEditing) }
         .onAppear { if browser.renameFolder == folder.id { startEditing() } }
         .onChange(of: browser.renameFolder) { _, id in if id == folder.id { startEditing() } }
     }
@@ -280,18 +276,17 @@ private struct FolderMenu: View {
     }
 }
 
-/// An empty section's row: says what it's for and takes drops.
+/// An empty section's row: says what it's for, and lights up under a tab that would land there.
 private struct DropHint: View {
     let text: String
-    let target: TabDropTarget
-    @Environment(Browser.self) private var browser
+    let targeted: Bool
+    let indent: CGFloat
 
     var body: some View {
         Text(text)
             .font(.callout)
             .foregroundStyle(.tertiary)
-            .selectionDisabled()
-            .dropDestination(for: String.self) { items, _ in browser.drop(items, on: target) }
+            .sidebarRow(targeted: targeted, indent: indent)
     }
 }
 
@@ -344,8 +339,6 @@ private struct SpaceHeader: View {
             .fixedSize()
             .help("Space options")
         }
-        // Headers run to the list's edge; bring their buttons in line with the rows' highlight.
-        .padding(.trailing, SidebarMetrics.headerTrailing)
         .contextMenu { SpaceMenu(space: space) }
         .onChange(of: browser.renameSpace) { _, id in
             // Renaming the Space on screen happens right here, not in an alert.
@@ -386,7 +379,6 @@ private struct TodayHeader: View {
                 .help("Close today's tabs, except this one (⌘⇧K)")
             }
         }
-        .padding(.trailing, SidebarMetrics.headerTrailing)
     }
 }
 
@@ -499,11 +491,9 @@ private struct NewTabRow: View {
         Button { browser.presentCommandBar(.newTab) } label: {
             Label("New Tab", systemImage: "plus")
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(.rect)
+                .sidebarRow()
         }
         .buttonStyle(.plain)
-        .selectionDisabled()
     }
 }
 
@@ -512,6 +502,9 @@ private struct TabRow: View {
 
     let tab: BrowserTab
     let kind: Kind
+    /// A dragged tab would split beside this one.
+    var targeted = false
+    var indent: CGFloat = 0
     @Environment(Browser.self) private var browser
     @Environment(TabDragSession.self) private var drag
     @State private var hovering = false
@@ -541,6 +534,7 @@ private struct TabRow: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle)
+                        .opacity(status.isAwake || kind == .today ? 1 : 0.6)
                 }
             }
             Spacer(minLength: 0)
@@ -551,17 +545,19 @@ private struct TabRow: View {
                     animate(Motion.travel) { _ = browser.store.send(.closeTab(tab.id)) }
                 } label: {
                     Image(systemName: kind == .today ? "xmark" : "minus")
+                        .font(.system(size: 10, weight: .bold))
                 }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                .foregroundStyle(.secondary)
+                .buttonStyle(RowActionStyle())
                 // A pinned tab's button only unloads it.
                 .help(kind == .today ? "Close Tab (⌘W)" : "Unload Tab")
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
         }
-        .contentShape(.rect)
+        .animation(Motion.resolved(Motion.feedback), value: hovering)
+        // Unloading a pinned tab: its row quiets down, and the button goes.
+        .animation(Motion.resolved(Motion.travel), value: status.isAwake)
+        .sidebarRow(selected: browser.store.state.selectedTabID == tab.id, targeted: targeted, indent: indent)
         .onHover { hovering = $0 }
-        // A draggable row keeps its clicks from the list, so the row selects itself.
         .onTapGesture {
             if browser.store.state.selectedTabID != tab.id { browser.store.send(.selectTab(tab.id)) }
         }
@@ -625,6 +621,8 @@ struct MediaBadge: View {
 /// A split as one row: its panes side by side, the focused one emphasized.
 private struct SplitRow: View {
     let split: TabSplit
+    /// A dragged tab would join the split.
+    var targeted = false
     @Environment(Browser.self) private var browser
     @Environment(TabDragSession.self) private var drag
 
@@ -632,8 +630,6 @@ private struct SplitRow: View {
         let state = browser.store.state
         let focused = state.selectedTabID
         HStack(spacing: 6) {
-            Image(systemName: split.axis == .horizontal ? "rectangle.split.2x1" : "rectangle.split.1x2")
-                .foregroundStyle(.secondary)
             ForEach(split.tabs, id: \.self) { id in
                 if let tab = state.tabs[id] {
                     HStack(spacing: 4) {
@@ -651,7 +647,39 @@ private struct SplitRow: View {
                 }
             }
         }
+        .sidebarRow(selected: split.tabs.contains { $0 == focused }, targeted: targeted)
         .contextMenu { SplitMenu(tab: split.tabs[0]) }
+    }
+}
+
+/// A row with a tab held over it: the split it would become, the arriving tab lit up.
+private struct SplitPreviewRow: View {
+    let tabs: [TabID]
+    let joining: TabID
+    let indent: CGFloat
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        let state = browser.store.state
+        HStack(spacing: 4) {
+            ForEach(tabs + [joining], id: \.self) { id in
+                if let tab = state.tabs[id] {
+                    let arriving = id == joining
+                    HStack(spacing: 4) {
+                        Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 14)
+                        Text(tab.shortTitle).fadingTail()
+                    }
+                    .padding(.horizontal, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: 22)
+                    .background(arriving ? AnyShapeStyle(.tint.opacity(0.25)) : AnyShapeStyle(.clear),
+                                in: .rect(cornerRadius: 5, style: .continuous))
+                    .transition(.scale(scale: 0.6, anchor: .leading).combined(with: .opacity))
+                }
+            }
+        }
+        .padding(.leading, -5)
+        .sidebarRow(targeted: true, indent: indent)
     }
 }
 
@@ -865,18 +893,8 @@ private struct AgentActivityBadge: View {
 }
 
 enum SidebarMetrics {
-    /// Section headers' trailing inset, so their buttons end where a selected row's highlight does.
-    static let headerTrailing: CGFloat = 12
-}
-
-extension Preferences.Density {
-    var rowSize: SidebarRowSize {
-        switch self {
-        case .compact: .small
-        case .comfortable: .medium
-        case .roomy: .large
-        }
-    }
+    /// How far a folder's tabs sit in from the folder.
+    static let indent: CGFloat = 14
 }
 
 /// The window's backdrop behind the sidebar and toolbar: the desktop shows through, softly.
@@ -930,3 +948,26 @@ extension View {
             }
     }
 }
+
+/// A small button in a row, with a box you can see: it shows on hover and dips when pressed.
+struct RowActionStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { Look(configuration: configuration) }
+
+    private struct Look: View {
+        let configuration: Configuration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .frame(width: 20, height: 20)
+                .foregroundStyle(hovering ? .primary : .secondary)
+                .background(.primary.opacity(configuration.isPressed ? 0.18 : hovering ? 0.1 : 0), in: .rect(cornerRadius: 5, style: .continuous))
+                .contentShape(.rect)
+                .scaleEffect(configuration.isPressed ? 0.82 : 1)
+                .animation(Motion.resolved(Motion.feedback), value: configuration.isPressed)
+                .animation(Motion.resolved(Motion.feedback), value: hovering)
+                .onHover { hovering = $0 }
+        }
+    }
+}
+

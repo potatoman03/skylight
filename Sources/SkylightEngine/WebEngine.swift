@@ -86,15 +86,30 @@ public struct PermissionRequest: Identifiable, Sendable {
     }
 
     public let id: UInt64
+    /// The site asking, which may be a frame inside the page.
     public let origin: String
+    /// The site of the page it's asking in. An answer for a site holds only within the same
+    /// page's site, so allowing maps.example its camera doesn't let any page that embeds it use it.
+    public let topOrigin: String
     public let kinds: [Kind]
     public let respond: @MainActor @Sendable (Bool) -> Void
 
-    public init(id: UInt64, origin: String, kinds: [Kind], respond: @escaping @MainActor @Sendable (Bool) -> Void) {
+    public init(id: UInt64, origin: String, topOrigin: String? = nil, kinds: [Kind], respond: @escaping @MainActor @Sendable (Bool) -> Void) {
         self.id = id
         self.origin = origin
+        self.topOrigin = topOrigin.flatMap { $0.isEmpty ? nil : $0 } ?? origin
         self.kinds = kinds
         self.respond = respond
+    }
+
+    /// Asked from a frame of another site than the page's.
+    public var isEmbedded: Bool { Self.origin(of: origin) != Self.origin(of: topOrigin) }
+
+    /// scheme://host[:port] of an address, the way origins compare.
+    public static func origin(of address: String) -> String {
+        guard let url = URL(string: address), let scheme = url.scheme?.lowercased(), let host = url.host(percentEncoded: false)?.lowercased()
+        else { return address }
+        return url.port.map { "\(scheme)://\(host):\($0)" } ?? "\(scheme)://\(host)"
     }
 }
 

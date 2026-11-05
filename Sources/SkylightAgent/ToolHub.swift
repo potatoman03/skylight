@@ -60,8 +60,15 @@ public struct AgentTool: Sendable {
 
 /// Who is asking, shown to the user when approval is needed.
 public struct AgentClient: Equatable, Sendable {
+    /// What the agent calls itself. Any agent can claim any name, so it's only for showing.
     public var name: String
-    public init(name: String) { self.name = name }
+    /// The MCP session Skylight gave this agent's connection: a secret only that connection holds,
+    /// so it's what trust is kept against. Nil for a request outside a session.
+    public var session: String?
+    public init(name: String, session: String? = nil) {
+        self.name = name
+        self.session = session
+    }
 }
 
 /// Asks the user before a `write` tool runs.

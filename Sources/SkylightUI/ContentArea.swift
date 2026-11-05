@@ -17,10 +17,10 @@ struct ContentArea: View {
         let split = tab.flatMap { state.activeSpace.split(containing: $0.id) }
 
         GeometryReader { geo in
-            let layout = PaneLayout(split: split, focused: tab?.id, size: geo.size, gap: 1)
+            let layout = PaneLayout(split: split, focused: tab?.id, size: geo.size, gap: PaneStyle.gap)
             ZStack(alignment: .topLeading) {
-                // Shows through the gap between panes, as a split view's divider.
-                Color(nsColor: layout.isSplit ? .separatorColor : .windowBackgroundColor)
+                // A split's panes sit on the window's backdrop, which shows around them.
+                if !layout.isSplit { Color(nsColor: .windowBackgroundColor) }
                 PageHost(view: browser.pages.hostView)
 
                 if tab == nil {
@@ -54,7 +54,13 @@ struct ContentArea: View {
         .overlay(alignment: .topLeading) { SuggestionsList() }
         .overlay {
             let bar = browser.commandBar
-            if bar.isPresented, bar.mode != .editCurrent { CommandPalette() }
+            ZStack {
+                // A new tab opens on an empty page, not over the one you were reading.
+                if bar.isPresented, bar.mode == .newTab {
+                    Color(nsColor: .textBackgroundColor).transition(.opacity)
+                }
+                if bar.isPresented, bar.mode != .editCurrent { CommandPalette() }
+            }
         }
         .animation(browser.commandBar.isPresented ? Motion.resolved(Motion.arrive) : Motion.resolved(Motion.exit),
                    value: browser.commandBar.isPresented && browser.commandBar.mode != .editCurrent)
@@ -73,7 +79,7 @@ private struct PaneChrome: View {
         ZStack(alignment: .topLeading) {
             if browser.preferences.highlightFocusedPane {
                 let frame = layout.focusedFrame
-                Rectangle()
+                RoundedRectangle(cornerRadius: PaneStyle.radius, style: .continuous)
                     .strokeBorder(.tint.opacity(0.8), lineWidth: 2)
                     .frame(width: frame.width, height: frame.height)
                     .offset(x: frame.minX, y: frame.minY)
@@ -111,15 +117,17 @@ struct PaneLayout {
     /// The length along the split, less the gaps: what fractions are shares of.
     let length: CGFloat
     let gap: CGFloat
+    let size: CGSize
 
     init(split: TabSplit?, focused: TabID?, size: CGSize, gap: CGFloat) {
         self.focused = focused
         self.gap = gap
+        self.size = size
         axis = split?.axis ?? .horizontal
         if let split, split.tabs.count > 1 {
-            panes = zip(split.tabs, split.frames(in: size, gap: gap)).map(Pane.init)
+            panes = zip(split.tabs, PaneStyle.frames(of: split, in: size, gap: gap)).map(Pane.init)
             let extent = split.axis == .horizontal ? size.width : size.height
-            length = max(1, extent - gap * CGFloat(split.tabs.count - 1))
+            length = max(1, extent - PaneStyle.inset * 2 - gap * CGFloat(split.tabs.count - 1))
         } else {
             panes = focused.map { [Pane(tab: $0, frame: CGRect(origin: .zero, size: size))] } ?? []
             length = max(1, size.width)
@@ -146,33 +154,64 @@ struct PaneLayout {
     /// Where a tab dropped at `point` would go, if it can go there.
     func dropTarget(at point: CGPoint, dragging payload: TabDragSession.Payload, state: BrowserState) -> (tab: TabID, edge: SplitEdge)? {
         let id = payload.id
-        guard let pane = panes.first(where: { $0.frame.contains(point) }) ?? panes.first, pane.tab != id else { return nil }
-        let split = state.activeSpace.split(containing: pane.tab)
+        guard let pane = panes.first(where: { $0.frame.contains(point) }) ?? panes.first else { return nil }
+        var target = pane.tab
+        if target == id {
+            // The tab on screen dragged over its own page goes beside the tab you had before it.
+            guard panes.count == 1, let previous = Self.previousTab(before: id, in: state) else { return nil }
+            target = previous
+        }
+        let split = state.activeSpace.split(containing: target)
         let inSplit = split?.tabs.contains(id) == true
         // Built-in pages can't share the window.
-        if state.tabs[id]?.url.isSkylightPage == true || state.tabs[pane.tab]?.url.isSkylightPage == true { return nil }
+        if state.tabs[id]?.url.isSkylightPage == true || state.tabs[target]?.url.isSkylightPage == true { return nil }
         if let split, !inSplit, split.tabs.count >= TabSplit.maxPanes { return nil }
         // A sidebar row that is a whole split can't join another.
         if payload.source == .row, !inSplit, state.space(containing: id)?.group(of: id).count ?? 1 > 1 { return nil }
         let f = pane.frame
         let x = (point.x - f.minX) / max(f.width, 1), y = (point.y - f.minY) / max(f.height, 1)
         if let split {
-            return split.axis == .horizontal ? (pane.tab, x < 0.5 ? .leading : .trailing) : (pane.tab, y < 0.5 ? .top : .bottom)
+            return split.axis == .horizontal ? (target, x < 0.5 ? .leading : .trailing) : (target, y < 0.5 ? .top : .bottom)
         }
         // Side by side is the usual case: it wins unless the pointer is clearly near the top or bottom.
         let edges: [(SplitEdge, CGFloat)] = [(.leading, x), (.trailing, 1 - x), (.top, y * 1.6), (.bottom, (1 - y) * 1.6)]
-        return (pane.tab, edges.min { $0.1 < $1.1 }!.0)
+        return (target, edges.min { $0.1 < $1.1 }!.0)
     }
 
-    /// The part of the pane a tab dropped on `edge` will take.
-    func preview(tab: TabID, edge: SplitEdge) -> CGRect? {
-        guard let f = panes.first(where: { $0.tab == tab })?.frame else { return nil }
-        switch edge {
-        case .leading: return CGRect(x: f.minX, y: f.minY, width: f.width / 2, height: f.height)
-        case .trailing: return CGRect(x: f.midX, y: f.minY, width: f.width / 2, height: f.height)
-        case .top: return CGRect(x: f.minX, y: f.minY, width: f.width, height: f.height / 2)
-        case .bottom: return CGRect(x: f.minX, y: f.midY, width: f.width, height: f.height / 2)
+    /// The Space's most recently shown tab other than `id` that can share the window: not a
+    /// favorite (splitting would take it out of Favorites), in no split, and not a built-in page.
+    static func previousTab(before id: TabID, in state: BrowserState) -> TabID? {
+        let space = state.activeSpace
+        return (space.pinned + space.today)
+            .filter { $0 != id && space.split(containing: $0) == nil && state.tabs[$0]?.url.isSkylightPage == false }
+            .max { (state.tabs[$0]?.lastActiveAt ?? .distantPast) < (state.tabs[$1]?.lastActiveAt ?? .distantPast) }
+    }
+
+    /// The panes a drop would make, each where it would be: what goes where. Mirrors the reducer:
+    /// a new pane takes half of the one it lands beside; a pane moved within its split keeps its share.
+    func arrangement(placing id: TabID, beside target: TabID, edge: SplitEdge, state: BrowserState) -> [Pane] {
+        var split: TabSplit
+        if var current = state.activeSpace.split(containing: target) {
+            if let from = current.tabs.firstIndex(of: id) {
+                let fraction = current.fractions.remove(at: from)
+                current.tabs.remove(at: from)
+                let index = (current.tabs.firstIndex(of: target) ?? 0) + (edge.isAfter ? 1 : 0)
+                current.tabs.insert(id, at: index)
+                current.fractions.insert(fraction, at: index)
+            } else {
+                let pane = current.tabs.firstIndex(of: target) ?? 0
+                let half = current.fractions[pane] / 2
+                current.fractions[pane] = half
+                let index = edge.isAfter ? pane + 1 : pane
+                current.tabs.insert(id, at: index)
+                current.fractions.insert(half, at: index)
+            }
+            current.normalize()
+            split = current
+        } else {
+            split = TabSplit(tabs: edge.isAfter ? [target, id] : [id, target], axis: edge.axis)
         }
+        return zip(split.tabs, PaneStyle.frames(of: split, in: size)).map(Pane.init)
     }
 }
 
@@ -287,7 +326,7 @@ private struct PaneMenu: View {
     }
 }
 
-/// Takes a dragged tab over the page and shows where it will land.
+/// Takes a dragged tab over the page and shows the split it would make, updating as it moves.
 private struct PageDropTarget: View {
     let layout: PaneLayout
     @Environment(Browser.self) private var browser
@@ -297,18 +336,61 @@ private struct PageDropTarget: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.clear.contentShape(.rect)
-            if let target, let frame = layout.preview(tab: target.tab, edge: target.edge) {
-                Rectangle()
-                    .fill(.tint.opacity(0.18))
-                    .overlay(Rectangle().strokeBorder(.tint, lineWidth: 2))
-                    .frame(width: frame.width, height: frame.height)
-                    .offset(x: frame.minX, y: frame.minY)
-                    .animation(.easeOut(duration: 0.15), value: frame)
-                    .allowsHitTesting(false)
+            if let target, let moving = drag.active?.id {
+                ArrangementPreview(panes: layout.arrangement(placing: moving, beside: target.tab, edge: target.edge,
+                                                             state: browser.store.state),
+                                   moving: moving)
+                    .transition(.opacity)
             }
         }
         .onDrop(of: [.plainText, .utf8PlainText], delegate: SplitDropDelegate(
             layout: layout, browser: browser, session: drag, target: $target))
+    }
+}
+
+/// The page as it would be after the drop: a card for each pane, the arriving tab's lit up. The
+/// cards slide as the pointer moves from edge to edge.
+private struct ArrangementPreview: View {
+    let panes: [PaneLayout.Pane]
+    let moving: TabID
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            // The page stays faintly in view behind the plan.
+            Rectangle().fill(.ultraThinMaterial)
+            ForEach(panes, id: \.tab) { pane in
+                card(pane.tab)
+                    .frame(width: pane.frame.width, height: pane.frame.height)
+                    .offset(x: pane.frame.minX, y: pane.frame.minY)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private func card(_ id: TabID) -> some View {
+        let shape = RoundedRectangle(cornerRadius: PaneStyle.radius, style: .continuous)
+        let arriving = id == moving
+        VStack(spacing: 10) {
+            if let tab = browser.store.state.tabs[id] {
+                Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 32)
+                Text(tab.displayTitle)
+                    .font(.headline)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(arriving ? .primary : .secondary)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            if arriving {
+                shape.fill(.tint.opacity(0.22)).overlay(shape.strokeBorder(.tint, lineWidth: 2))
+            } else {
+                shape.fill(.background.opacity(0.75)).overlay(shape.strokeBorder(.separator, lineWidth: 1))
+            }
+        }
     }
 }
 
@@ -325,19 +407,24 @@ private struct SplitDropDelegate: DropDelegate {
     func dropUpdated(info: DropInfo) -> DropProposal? {
         guard let payload = session.active,
               let found = layout.dropTarget(at: info.location, dragging: payload, state: browser.store.state) else {
-            target = nil
+            show(nil)
             return DropProposal(operation: .forbidden)
         }
-        target = Target(tab: found.tab, edge: found.edge)
+        show(Target(tab: found.tab, edge: found.edge))
         return DropProposal(operation: .move)
     }
 
-    func dropExited(info: DropInfo) { target = nil }
+    func dropExited(info: DropInfo) { show(nil) }
 
     func performDrop(info: DropInfo) -> Bool {
         defer { target = nil; session.finish() }
         guard let payload = session.active, let target else { return false }
         return browser.drop(payload, on: .split(target.tab, target.edge))
+    }
+
+    private func show(_ next: Target?) {
+        guard next != target else { return }
+        animate(Motion.travel) { target = next }
     }
 }
 
@@ -368,7 +455,10 @@ private struct PromptAlerts: ViewModifier {
                     }
                 case let .approval(approval):
                     Button("Allow") { browser.prompts.answer(approval: approval, allow: true) }
-                    Button("Allow for This Session") { browser.prompts.answer(approval: approval, allow: true, trustClient: true) }
+                    // Only an agent in an MCP session can be told apart from others claiming its name.
+                    if approval.session != nil {
+                        Button("Allow for This Session") { browser.prompts.answer(approval: approval, allow: true, trustClient: true) }
+                    }
                     Button("Deny", role: .cancel) { browser.prompts.answer(approval: approval, allow: false) }
                 }
             } message: { prompt in
@@ -400,6 +490,8 @@ private struct PromptAlerts: ViewModifier {
 
     static func title(_ prompt: Prompt?) -> String {
         switch prompt {
+        case let .permission(_, request)? where request.isEmbedded:
+            "\(host(request.origin)), inside \(host(request.topOrigin)), wants to \(describe(request.kinds))"
         case let .permission(_, request)?: "\(host(request.origin)) wants to \(describe(request.kinds))"
         case let .dialog(_, request)?: "\(host(request.origin)) says"
         case let .approval(approval)?: "\(approval.client) wants to act in Skylight"

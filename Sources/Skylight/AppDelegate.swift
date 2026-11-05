@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private var settings: SettingsWindowController?
     private var quitting = false
+    /// Links that arrived before the engine was ready, as when a click in another app launches Skylight.
+    private var pendingURLs: [URL] = []
 
     init(paths: AppPaths) {
         self.paths = paths
@@ -69,7 +71,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         browser.start()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
-        if browser.store.state.selectedTab == nil { browser.presentCommandBar(.newTab) }
+        if !pendingURLs.isEmpty {
+            browser.openExternal(pendingURLs)
+            pendingURLs = []
+        } else if browser.store.state.selectedTab == nil {
+            browser.presentCommandBar(.newTab)
+        }
+    }
+
+    /// Links from other apps when Skylight is the default browser, and web pages opened with it.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let browser else { return pendingURLs.append(contentsOf: urls) }
+        browser.openExternal(urls)
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
     }
 
     /// Close every page, then stop the message loop. Chromium must not shut down with pages open.

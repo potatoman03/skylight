@@ -194,6 +194,11 @@ class BrowserApp : public CefApp, public CefBrowserProcessHandler {
     std::string features = command_line->GetSwitchValue("disable-features").ToString();
     features += std::string(features.empty() ? "" : ",") + "MediaRouter,DialMediaRouteProvider";
     command_line->AppendSwitchWithValue("disable-features", features);
+    // The DevTools pipe Skylight talks to itself over would mark every page as driven by
+    // automation (navigator.webdriver), and sites like Google answer that with CAPTCHAs.
+    std::string blink = command_line->GetSwitchValue("disable-blink-features").ToString();
+    blink += std::string(blink.empty() ? "" : ",") + "AutomationControlled";
+    command_line->AppendSwitchWithValue("disable-blink-features", blink);
   }
 
   CefRefPtr<CefClient> GetDefaultClient() override { return foreign_; }
@@ -258,7 +263,8 @@ void UnregisterBrowser(CefRefPtr<CefBrowser> browser) {
   CefMainArgs mainArgs(static_cast<int>(argv.size()), argv.data());
 
   CefSettings cef;
-  cef.no_sandbox = true;
+  // Each helper sandboxes itself as it starts (SKHelperMain).
+  cef.no_sandbox = false;
   cef.persist_session_cookies = true;
   cef.log_severity = LOGSEVERITY_WARNING;
   CefString(&cef.root_cache_path) = skylight::ToCef(settings.rootCachePath);
