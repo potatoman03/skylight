@@ -171,12 +171,20 @@ saved passwords and extension data, so Spaces on different profiles can be signe
 accounts, and switching Space shows only that Space's accounts. A favorite opens in whichever
 Space you're in, under that Space's profile.
 
-A new Space gets its own profile and starts signed out. To keep a Space's logins, use **Duplicate
-Space** in its menu, which copies its look and shares its profile (not its tabs), or right-click
-the **+** for a new Space with the same logins. **New Profile for This Space**, in a Space's menu
-under Profile, splits one off later. Settings → Profiles names them and gives each an icon and
-color; Settings → Spaces picks each Space's profile. Deleting a Space keeps its profile; deleting a
-profile moves its Spaces and saved passwords to Default.
+**New Space** asks what the Space keeps from the current one, and remembers your last choice, so
+Return is usually all it takes. **Everything** shares the current Space's profile, so its logins,
+saved passwords and extensions carry over. **Only these** gives it its own profile, signed out
+except for Google or GitHub if you tick them; those sign-ins are copied once, and an extension's
+data is copied the same way. Saved passwords stay shared both ways with the Space you started from,
+unless you untick them, and a shared password only offers to fill: it never signs that Space in.
+Some sites may still ask you to sign in again after a copy, and a password manager extension may
+ask you to unlock it.
+
+**Duplicate Space** in a Space's menu shares everything and also copies its look (not its tabs).
+**New Profile for This Space**, in a Space's menu under Profile, asks the same questions for a Space
+you already have. Settings → Profiles names profiles and gives each an icon and color; Settings →
+Spaces picks each Space's profile. Deleting a Space keeps its profile; deleting a profile moves its
+Spaces and saved passwords to Default.
 
 **Themes.** Pattern themes draw a live field of characters over the sky, with nothing to download.
 Playful ones include Deep Space, Pink Princess, Terminal, Synthwave and Golden Hour; quiet ones,

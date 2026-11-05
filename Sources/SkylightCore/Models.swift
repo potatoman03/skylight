@@ -57,12 +57,16 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var icon: String?
     /// 0...1, the badge's color; nil is neutral.
     public var hue: Double?
+    /// The profile whose saved passwords this one uses instead of its own; nil keeps its own.
+    public var passwordsFrom: ProfileID?
 
-    public init(id: ProfileID = ProfileID(), name: String, icon: String? = nil, hue: Double? = nil) {
+    public init(id: ProfileID = ProfileID(), name: String, icon: String? = nil, hue: Double? = nil,
+                passwordsFrom: ProfileID? = nil) {
         self.id = id
         self.name = name
         self.icon = icon
         self.hue = hue
+        self.passwordsFrom = passwordsFrom
     }
 }
 

@@ -24,6 +24,9 @@ public protocol WebEngine: AnyObject {
 
     /// Chrome extensions, when the engine can run them.
     var extensions: ExtensionHost? { get }
+    /// Copies what these extensions keep in `profile` into the profile folder `directory`. Do this
+    /// before that folder's profile is made, while nothing has it open.
+    func copyExtensionData(_ ids: [String], from profile: WebProfile, to directory: URL) async throws
 }
 
 /// One profile's pages, as its extensions see them.
@@ -66,6 +69,10 @@ public protocol ExtensionHost: AnyObject {
 @MainActor
 public protocol WebProfile: AnyObject {
     var directory: URL { get }
+    /// The names of the cookies set for these domains and their subdomains. Never their values.
+    func cookieNames(domains: [String]) async -> Set<String>
+    /// Copies the cookies for these domains and their subdomains. Returns how many were copied.
+    func copyCookies(domains: [String], to profile: WebProfile) async -> Int
 }
 
 @MainActor

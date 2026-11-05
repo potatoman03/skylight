@@ -270,15 +270,9 @@ public enum BrowserReducer {
             state.spaces[si].folders[k].tabs.insert(id, at: max(0, min(index, tabs.count)))
             return ReduceResult()
 
-        case let .createSpace(name, hue, sharing):
-            let profile: ProfileID
-            if let sharing {
-                guard let shared = state.spaces.first(where: { $0.id == sharing }) else { return .ignored }
-                profile = shared.profileID
-            } else {
-                profile = env.makeProfileID()
-                state.profiles.append(Profile(id: profile, name: name))
-            }
+        case let .createSpace(name, hue, profile):
+            guard profile.map({ state.profile($0) != nil }) ?? true else { return .ignored }
+            let profile = profile ?? state.activeSpace.profileID
             let hues = state.spaces.map(\.hue)
             let space = Space(id: env.makeSpaceID(), name: name, hue: hue ?? nextHue(after: hues), profileID: profile)
             state.spaces.append(space)
@@ -357,16 +351,11 @@ public enum BrowserReducer {
             }
             return ReduceResult(effects: effects)
 
-        case let .giveSpaceOwnProfile(id):
-            guard let space = state.spaces.first(where: { $0.id == id }) else { return .ignored }
-            let profile = Profile(id: env.makeProfileID(), name: space.name)
-            state.profiles.append(profile)
-            return reduce(&state, .assignProfile(id, profile.id), env: env)
-
-        case let .createProfile(name):
+        case let .createProfile(name, passwordsFrom):
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return .ignored }
-            state.profiles.append(Profile(id: env.makeProfileID(), name: trimmed))
+            state.profiles.append(Profile(id: env.makeProfileID(), name: trimmed,
+                                          passwordsFrom: passwordsFrom.map(state.passwordProfile(for:))))
             return ReduceResult()
 
         case let .renameProfile(id, name):
@@ -392,6 +381,10 @@ public enum BrowserReducer {
                 effects += reduce(&state, .assignProfile(state.spaces[i].id, .standard), env: env).effects
             }
             state.profiles.removeAll { $0.id == id }
+            // Its saved passwords have moved to the default profile.
+            for i in state.profiles.indices where state.profiles[i].passwordsFrom == id {
+                state.profiles[i].passwordsFrom = .standard
+            }
             effects.append(.releaseProfile(id))
             return ReduceResult(effects: effects)
 

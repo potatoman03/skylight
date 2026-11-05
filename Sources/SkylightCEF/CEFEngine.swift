@@ -93,6 +93,40 @@ public final class CEFEngine: WebEngine {
         return CEFProfile(directory: directory)
     }
 
+    public func copyExtensionData(_ ids: [String], from profile: WebProfile, to directory: URL) async throws {
+        let source = profile.directory
+        try await Task.detached {
+            for id in ids {
+                for folder in ["Local Extension Settings/\(id)", "Sync Extension Settings/\(id)",
+                               "IndexedDB/chrome-extension_\(id)_0.indexeddb.leveldb",
+                               "IndexedDB/chrome-extension_\(id)_0.indexeddb.blob"] {
+                    try Self.copyDatabase(from: source.appending(path: folder), to: directory.appending(path: folder))
+                }
+            }
+        }.value
+    }
+
+    /// Copies a folder the source profile may be using. Its LOCK stays behind, and a file the
+    /// database compacted away while we copied is no loss.
+    private nonisolated static func copyDatabase(from source: URL, to target: URL) throws {
+        let files = FileManager.default
+        guard let paths = try? files.subpathsOfDirectory(atPath: source.path) else { return }
+        try files.createDirectory(at: target, withIntermediateDirectories: true)
+        for path in paths where (path as NSString).lastPathComponent != "LOCK" {
+            let file = source.appending(path: path)
+            let copy = target.appending(path: path)
+            var isFolder: ObjCBool = false
+            guard files.fileExists(atPath: file.path, isDirectory: &isFolder) else { continue }
+            do {
+                if isFolder.boolValue {
+                    try files.createDirectory(at: copy, withIntermediateDirectories: true)
+                } else {
+                    try files.copyItem(at: file, to: copy)
+                }
+            } catch where !files.fileExists(atPath: file.path) {}
+        }
+    }
+
     public func makePage(url: URL, profile: WebProfile, delegate: WebPageDelegate) -> WebPage {
         guard let profile = profile as? CEFProfile else { preconditionFailure("CEFEngine pages need a CEFProfile") }
         return CEFPage(url: url, profile: profile, delegate: delegate)
@@ -197,6 +231,19 @@ final class CEFProfile: WebProfile {
     init(directory: URL) {
         self.directory = directory
         self.native = SKProfile(cachePath: directory.path)
+    }
+
+    func cookieNames(domains: [String]) async -> Set<String> {
+        await withCheckedContinuation { done in
+            native.cookieNames(forDomains: domains) { done.resume(returning: $0) }
+        }
+    }
+
+    func copyCookies(domains: [String], to profile: WebProfile) async -> Int {
+        guard let target = (profile as? CEFProfile)?.native else { return 0 }
+        return await withCheckedContinuation { done in
+            native.copyCookies(forDomains: domains, to: target) { done.resume(returning: $0) }
+        }
     }
 }
 

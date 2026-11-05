@@ -237,6 +237,21 @@ public final class PageCoordinator: BrowserEffectHandler {
         return profile
     }
 
+    /// The sites this profile is signed in to.
+    func signedInSites(in id: ProfileID) async -> [SignInSite] {
+        let names = await profile(for: id).cookieNames(domains: SignInSite.allCases.flatMap(\.domains))
+        return SignInSite.allCases.filter { !$0.signedInCookies.isDisjoint(with: names) }
+    }
+
+    /// Copies what these extensions keep. `target` must not have been opened yet.
+    func copyExtensionData(_ ids: [String], from source: ProfileID, to target: ProfileID) async throws {
+        try await engine.copyExtensionData(ids, from: profile(for: source), to: paths.profileDirectory(for: target))
+    }
+
+    func copyCookies(_ domains: [String], from source: ProfileID, to target: ProfileID) async -> Int {
+        await profile(for: source).copyCookies(domains: domains, to: profile(for: target))
+    }
+
     /// Sleeps idle pages and archives idle Today tabs.
     func sweep(now: Date = .now) {
         guard let store else { return }
