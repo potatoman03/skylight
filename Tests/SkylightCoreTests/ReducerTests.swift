@@ -272,7 +272,13 @@ private let c = URL(string: "https://c.example")!
         let persistence = InMemoryStateStore()
         let store = BrowserStore(persistence: persistence, saveDelay: .milliseconds(10))
         store.send(.openTab(a))
-        try await Task.sleep(for: .milliseconds(100))
+        // The save runs on the main actor, which other suites (the benchmarks) can hold for
+        // seconds, so wait for it rather than for a fixed time.
+        let deadline = ContinuousClock.now + .seconds(10)
+        while try persistence.load()?.tabs.count != 1, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        withExtendedLifetime(store) {}
         #expect(try persistence.load()?.tabs.count == 1)
     }
 }
