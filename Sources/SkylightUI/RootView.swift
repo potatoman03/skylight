@@ -142,9 +142,6 @@ private struct BrowserToolbar: ToolbarContent {
         }
         .sharedBackgroundVisibility(.hidden)
 
-        // Extension buttons keep to the window's right edge, however wide it is.
-        ToolbarSpacer(.flexible)
-
         // On an extension's page in the Chrome Web Store, whose own button only works in Chrome.
         // Not over a new tab's empty page, which isn't the store.
         if let id = browser.store.state.selectedTab.flatMap({ WebStore.extensionID(from: $0.url.absoluteString) }), browser.extensions.isAvailable,
