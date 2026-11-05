@@ -283,7 +283,7 @@ public enum BrowserReducer {
             guard let i = state.spaces.firstIndex(where: { $0.id == id }) else { return .ignored }
             let source = state.spaces[i]
             let copy = Space(id: env.makeSpaceID(), name: "\(source.name) Copy", hue: source.hue, icon: source.icon,
-                             profileID: source.profileID, themeID: source.themeID)
+                             profileID: source.profileID, themeID: source.themeID, tint: source.tint)
             state.spaces.insert(copy, at: i + 1)
             state.activeSpaceID = copy.id
             return ReduceResult(effects: [.showTab(nil)])
