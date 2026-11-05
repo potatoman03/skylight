@@ -169,6 +169,11 @@ Each Space has a color, an icon and a **profile**. A profile is a cookie jar: Sp
 profiles can be signed in to different accounts. Settings → Profiles names them and gives each an
 icon and color; Settings → Spaces picks each Space's profile.
 
+**Themes.** Pattern themes draw a live field of characters over the sky, with nothing to download:
+Ethereal, Deep Space, Pink Princess, Wildwood, Terminal, Sakura, Tide, Snowfall, Ember, Synthwave and
+Mono. Copy any theme to edit every color, in hex or with the picker, change its pattern, or give each
+look your own image or GIF.
+
 **Sidebar.** Each Space can have its own icon or emoji, color, sidebar tint and sky, from its ···
 menu or Tabs → Customize Space…. Settings → Appearance sets how favorites look (glass, tinted or
 icons only, their size, and how many fit in a row), the Space header (icon and name, large title or

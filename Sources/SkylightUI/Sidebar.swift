@@ -18,11 +18,18 @@ struct Sidebar: View {
 
     private static let coordinates = "sidebar.list"
 
+    /// No page in front of the theme's picture, which then fills the window.
+    private var showingScene: Bool {
+        let bar = browser.commandBar
+        return browser.preferences.sceneOnNewTab && (browser.store.state.selectedTab == nil || bar.isPresented && bar.mode == .newTab)
+    }
+
     var body: some View {
         let state = browser.store.state
         let space = state.activeSpace
         let prefs = browser.preferences
         let order = prefs.sidebarOrder
+        let palette = prefs.skyBackdrop ? prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue) : nil
         let lines = SidebarLines(space: space, showsNewTab: prefs.shows(.newTab), todayFirst: order.todayFirst,
                                  showsHints: prefs.showsDropHints || drag.active != nil)
 
@@ -44,11 +51,20 @@ struct Sidebar: View {
             if order.favoritesLast { favorites }
         }
         .background {
-            if prefs.skyBackdrop {
-                let palette = prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue)
-                SkyBackdrop(palette: palette, rays: prefs.godRays).ignoresSafeArea()
+            // The window's backdrop (RootView) shows through. With a page over the rest of it, the
+            // sidebar has the picture to itself and shows its subject, not its calm edge.
+            if let image = palette?.image, let url = prefs.url(for: image), !showingScene {
+                var art = image
+                let _ = art.focusX = image.sidebarFocusX
+                ThemeImageView(url: url, image: art).ignoresSafeArea().transition(.opacity)
             }
-            // Otherwise the window's translucent backdrop (RootView) shows through.
+            // Strongest behind the tabs, clearing toward the foot, where the art can breathe.
+            if let scrim = palette?.scrim {
+                let veil = Color(scrim.color)
+                LinearGradient(colors: [veil.opacity(min(scrim.opacity * 1.5, 1)), veil.opacity(scrim.opacity), veil.opacity(scrim.opacity * 0.1)],
+                               startPoint: .top, endPoint: .bottom)
+                    .ignoresSafeArea()
+            }
             if space.tint != .none {
                 // Weaker in dark mode, where the same amount turns warm colors muddy.
                 let wash = Theme.wash(space.hue, scheme)
@@ -57,16 +73,20 @@ struct Sidebar: View {
                     .ignoresSafeArea()
             }
         }
+        .animation(Motion.resolved(Motion.arrive), value: showingScene)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 6) {
                 if let update = browser.readyUpdate { UpdateCard(update: update) }
                 if prefs.shows(.agentActivity) { AgentActivityBadge() }
+                ForEach(Preferences.SidebarItem.actions.filter(prefs.shows)) { SidebarActionRow(item: $0) }
+                if !prefs.moreSidebarItems.isEmpty { SidebarMore(items: prefs.moreSidebarItems) }
                 if prefs.spaceBarStyle != .hidden { SpaceBar(style: prefs.spaceBarStyle) }
             }
             .motion(Motion.arrive, value: browser.readyUpdate?.version)
             .padding(.horizontal, 10)
             .padding(.bottom, 8)
         }
+        .modifier(ThemeInk(palette: palette))
         // A different Space is a different list: crossfade rather than morph one into the other.
         .id(space.id)
         .transition(.opacity)
@@ -157,6 +177,80 @@ struct Sidebar: View {
         case .newTab:
             NewTabRow()
         }
+    }
+}
+
+/// The colors a theme sets for what's on it. Anything it leaves on Automatic stays the system's.
+private struct ThemeInk: ViewModifier {
+    let palette: ThemePalette?
+
+    func body(content: Content) -> some View {
+        if let palette, let text = palette.text {
+            let secondary = palette.secondaryText.map { Color($0) } ?? Color(text).opacity(0.7)
+            content
+                .foregroundStyle(Color(text), secondary, secondary.opacity(0.75))
+                .environment(\.rowSelection, palette.selection.map { Color($0) })
+        } else {
+            content.environment(\.rowSelection, palette?.selection.map { Color($0) })
+        }
+    }
+}
+
+/// Things you can do, as rows at the foot of the sidebar.
+private struct SidebarActionRow: View {
+    let item: Preferences.SidebarItem
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        Button {
+            switch item {
+            case .settings: browser.openSettings()
+            default: browser.store.send(.reopenClosedTab)
+            }
+        } label: {
+            Label(item.name, systemImage: item == .settings ? "gearshape" : "arrow.uturn.backward")
+                .foregroundStyle(.secondary)
+                .sidebarRow()
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// What you've put away, one click from the foot of the sidebar.
+private struct SidebarMore: View {
+    let items: [Preferences.SidebarItem]
+    @State private var open = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if open {
+                ForEach(items) { item in
+                    switch item {
+                    case .favorites: MoreFavorites()
+                    case .newTab: NewTabRow()
+                    default: SidebarActionRow(item: item)
+                    }
+                }
+            }
+            Button {
+                animate(Motion.travel) { open.toggle() }
+            } label: {
+                Label(open ? "Less" : "More", systemImage: open ? "chevron.down" : "ellipsis")
+                    .foregroundStyle(.secondary)
+                    .sidebarRow()
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+private struct MoreFavorites: View {
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        let state = browser.store.state
+        FavoritesGrid(tabs: state.favoriteTabs, selected: state.selectedTabID)
+            .padding(.vertical, 4)
     }
 }
 
@@ -271,12 +365,13 @@ private struct TileSurface: ViewModifier {
     let hovering: Bool
     let color: Color
     let cornerRadius: CGFloat
+    @Environment(\.rowSelection) private var selection
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         switch style {
         case .glass:
-            content.glassEffect(selected ? .regular.tint(.accentColor.opacity(0.35)).interactive() : .regular.interactive(), in: shape)
+            content.glassEffect(selected ? .regular.tint((selection ?? .accentColor).opacity(0.35)).interactive() : .regular.interactive(), in: shape)
         case .tinted:
             content.glassEffect(.regular.tint(color.opacity(selected ? 0.55 : 0.25)).interactive(), in: shape)
         case .plain:

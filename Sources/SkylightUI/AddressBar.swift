@@ -294,6 +294,7 @@ struct WindowXProbe: NSViewRepresentable {
 }
 
 private struct SuggestionRow: View {
+    @Environment(\.onTint) private var onTint
     let item: CommandItem
     let highlighted: Bool
 
@@ -310,14 +311,14 @@ private struct SuggestionRow: View {
             Text(item.title).lineLimit(1).truncationMode(.middle)
             Spacer(minLength: 12)
             if let subtitle = item.subtitle {
-                Text(subtitle).font(.callout).foregroundStyle(highlighted ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.secondary))
+                Text(subtitle).font(.callout).foregroundStyle(highlighted ? AnyShapeStyle(onTint.opacity(0.85)) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
             }
         }
-        .foregroundStyle(highlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        .foregroundStyle(highlighted ? AnyShapeStyle(onTint) : AnyShapeStyle(.primary))
         .padding(.horizontal, 9)
         .frame(height: 28)
-        .background(highlighted ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 5))
+        .background(highlighted ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 5))
         .contentShape(.rect)
     }
 }
@@ -387,6 +388,7 @@ struct CommandPalette: View {
 }
 
 private struct PaletteRow: View {
+    @Environment(\.onTint) private var onTint
     let item: CommandItem
     let highlighted: Bool
 
@@ -404,17 +406,17 @@ private struct PaletteRow: View {
             Spacer(minLength: 12)
             if let subtitle = item.subtitle {
                 Text(subtitle).font(.callout)
-                    .foregroundStyle(highlighted ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(highlighted ? AnyShapeStyle(onTint.opacity(0.85)) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
             }
             if highlighted {
-                Image(systemName: "return").font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.85))
+                Image(systemName: "return").font(.caption.weight(.semibold)).foregroundStyle(onTint.opacity(0.85))
             }
         }
-        .foregroundStyle(highlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        .foregroundStyle(highlighted ? AnyShapeStyle(onTint) : AnyShapeStyle(.primary))
         .padding(.horizontal, 12)
         .frame(height: 36)
-        .background(highlighted ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 10))
+        .background(highlighted ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 10))
         .contentShape(.rect)
     }
 }

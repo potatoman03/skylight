@@ -12,6 +12,8 @@ public struct RootView: View {
     @State private var anchor = AddressAnchor()
     @State private var newName = ""
     @State private var leaving: Task<Void, Never>?
+    @State private var backdropFrame = CGRect.zero
+    @Environment(\.colorScheme) private var scheme
 
     public init() {}
 
@@ -25,6 +27,8 @@ public struct RootView: View {
         let state = browser.store.state
         // A fullscreen video gets the whole window, which goes full screen with it.
         let fullscreen = browser.pages.fullscreenTabID != nil
+        let space = state.activeSpace
+        let accent = prefs.skyBackdrop ? prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue).accent : nil
 
         // Our own sidebar column, flush with the page: the system's floating glass sidebar casts a
         // shadow on the page, and moves its toggle about.
@@ -56,8 +60,18 @@ public struct RootView: View {
         }
         // Showing or hiding it for good ends the peek.
         .onChange(of: prefs.sidebarCollapsed) { leaving?.cancel() }
-        // One translucent backdrop behind the toolbar and sidebar; only the page is opaque.
-        .background { WindowBackdrop().ignoresSafeArea() }
+        // One backdrop behind the toolbar and sidebar, translucent or the theme's; only the page is opaque.
+        .background {
+            WindowBackdrop().ignoresSafeArea()
+            if prefs.skyBackdrop {
+                ThemeBackdrop()
+                    .ignoresSafeArea()
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { backdropFrame = $0 }
+            }
+        }
+        .environment(\.backdropFrame, backdropFrame)
+        .tint(accent.map { Color($0) })
+        .environment(\.onTint, accent.map { Color($0.ink) } ?? .white)
         .toolbar { BrowserToolbar() }
         .toolbar(removing: .title)
         // The sidebar runs up behind the traffic lights; the page keeps the window's own background.

@@ -87,4 +87,61 @@ struct ThemeTests {
         #expect(try JSONDecoder().decode(Space.self, from: Data(old.utf8)).themeID == nil)
         #expect(try JSONDecoder().decode(Profile.self, from: Data(#"{"id":"p","name":"P"}"#.utf8)).icon == nil)
     }
+
+    @Test func everyAsciiThemeHasItsFieldAndInkInBothLooks() {
+        #expect(SkyTheme.asciiThemes.count == 11)
+        #expect(Set(SkyTheme.asciiThemes.map { $0.light.ascii?.pattern }).count == AsciiPattern.allCases.count)
+        for theme in SkyTheme.asciiThemes {
+            #expect(!theme.followsSpace && theme.light.ascii?.pattern == theme.dark.ascii?.pattern)
+            for look in [theme.light, theme.dark] {
+                #expect(look.ascii != nil && look.image == nil && look.rays == 0)
+                #expect(look.text != nil && look.secondaryText != nil && look.selection != nil && look.scrim != nil)
+            }
+        }
+        #expect(SkyTheme.presets == SkyTheme.skies + SkyTheme.asciiThemes)
+    }
+
+    @Test func everyPatternFillsTheGlyphAtlas() {
+        for pattern in AsciiPattern.allCases { #expect(pattern.glyphs.count == 8) }
+    }
+
+    @Test func eachAsciiThemesTextReadsOnItsOwnSky() {
+        for theme in SkyTheme.asciiThemes {
+            for look in [theme.light, theme.dark] {
+                let ground = look.sky.mixed(with: look.scrim!.color, look.scrim!.opacity)
+                #expect(look.text!.contrast(with: ground) >= 4.5, "\(theme.name)")
+                #expect(look.accent.ink.contrast(with: look.accent) >= 4.5, "\(theme.name)")
+            }
+        }
+    }
+
+    @Test func aThemeSavedBeforePicturesStillLoads() throws {
+        let look = ##"{"sky":"#112233","horizon":"#445566","glow":"#778899","accent":"#AABBCC","sunlight":"#DDEEFF","rays":0.5,"glass":1}"##
+        let old = ##"{"id":"mine","name":"Mine","followsSpace":false,"light":\##(look),"dark":\##(look)}"##
+        let theme = try JSONDecoder().decode(SkyTheme.self, from: Data(old.utf8))
+        #expect(theme.light.image == nil && theme.light.ascii == nil && theme.light.text == nil && theme.light.scrim == nil && theme.basedOn == nil)
+    }
+
+    @Test func picturesAndHandSetColorsSurviveFollowingASpace() {
+        var theme = SkyTheme.standard
+        theme.light.image = ThemeImage(file: "mine.gif", zoom: 1.5, blur: 8)
+        theme.light.text = RGB(hex: "#123456")
+        theme.light.ascii = AsciiLayer(pattern: .stars, color: RGB(hex: "#FF0000")!, opacity: 0.5)
+        let turned = theme.palette(dark: false, spaceHue: 0.1)
+        #expect(turned.image == theme.light.image && turned.text == theme.light.text)
+        #expect(turned.sky != theme.light.sky && turned.ascii?.color != theme.light.ascii?.color)
+        #expect(turned.image?.isAnimated == true)
+    }
+
+    @Test func aCopyResetsToWhatItCameFrom() throws {
+        var copy = SkyTheme.preset("wildwood")!
+        copy.id = "mine"
+        copy.name = "My Wildwood"
+        copy.basedOn = "wildwood"
+        copy.dark.accent = RGB(hex: "#000000")!
+        let reset = try #require(copy.reset)
+        #expect(reset.dark == SkyTheme.preset("wildwood")!.dark)
+        #expect(reset.id == "mine" && reset.name == "My Wildwood" && reset.basedOn == "wildwood")
+        #expect(SkyTheme.standard.reset == nil)
+    }
 }
