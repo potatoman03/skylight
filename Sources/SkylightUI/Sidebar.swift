@@ -86,7 +86,15 @@ struct Sidebar: View {
                 if prefs.shows(.agentActivity) { AgentActivityBadge() }
                 ForEach(Preferences.SidebarItem.actions.filter(prefs.shows)) { SidebarActionRow(item: $0) }
                 if !prefs.moreSidebarItems.isEmpty { SidebarMore(items: prefs.moreSidebarItems) }
-                if prefs.spaceBarStyle != .hidden { SpaceBar(style: prefs.spaceBarStyle) }
+                if prefs.spaceBarStyle != .hidden {
+                    SpaceBar(style: prefs.spaceBarStyle)
+                } else {
+                    // The menu's button stays when the Spaces don't.
+                    HStack {
+                        SkylightMenuButton()
+                        Spacer()
+                    }
+                }
             }
             .motion(Motion.arrive, value: browser.readyUpdate?.version)
             .padding(.horizontal, 10)
