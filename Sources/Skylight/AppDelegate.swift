@@ -35,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.browser = browser
         let info = Bundle.main.infoDictionary ?? [:]
         updater = Updater(development: ProcessInfo.processInfo.environment["SKYLIGHT_DEV"] != nil
-                          || info["SkylightDevBuild"] as? Bool ?? false)
+                          || info["SkylightDevBuild"] as? Bool ?? false, browser: browser)
         NSApp.mainMenu = MainMenu.build(target: self)
         ShortcutMap.apply(browser.preferences.shortcuts)
         CEFRuntime.onTerminate { [weak self] in self?.quit() }

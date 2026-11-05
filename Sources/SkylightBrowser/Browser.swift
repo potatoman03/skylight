@@ -30,6 +30,8 @@ public final class Browser {
     public var renameTab: TabID?
     /// Whether the keyboard shortcuts sheet is up.
     public var showShortcuts = false
+    /// A new version, downloaded and waiting for a restart. The app's updater sets it.
+    public var readyUpdate: ReadyUpdate?
     /// Opens the Settings window; the app provides it.
     @ObservationIgnored public var showSettings: @MainActor (String?) -> Void = { _ in }
 
@@ -477,5 +479,19 @@ extension Browser: CommandSource {
                 .map(\.1)
         }
         return rows
+    }
+}
+
+/// A downloaded update waiting to be installed. The app's updater fills it in, so nothing outside
+/// the app target knows how updates arrive.
+public struct ReadyUpdate {
+    /// What people call it, like "0.1.2".
+    public let version: String
+    /// Installs it and relaunches Skylight, through the normal quit. Call it on the main thread.
+    public let install: () -> Void
+
+    public init(version: String, install: @escaping () -> Void) {
+        self.version = version
+        self.install = install
     }
 }

@@ -77,6 +77,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>SUFeedURL</key><string>$FEED</string>
   <key>SUPublicEDKey</key><string>$UPDATE_KEY</string>
   <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUAutomaticallyUpdate</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>10800</integer>
   <key>NSCameraUsageDescription</key><string>Websites you allow can use your camera.</string>
   <key>NSMicrophoneUsageDescription</key><string>Websites you allow can use your microphone.</string>
   <key>NSLocationUsageDescription</key><string>Websites you allow can see your location.</string>
