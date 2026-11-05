@@ -232,6 +232,9 @@ private struct SpaceSettingsRow: View {
                 Divider()
                 ForEach(browser.preferences.themes) { Text($0.name).tag(Optional($0.id)) }
             }
+            Picker("Sidebar tint", selection: Binding(get: { space.tint }, set: { browser.store.send(.setSpaceTint(space.id, $0)) })) {
+                ForEach(SpaceTint.allCases) { Text($0.name).tag($0) }
+            }
         }
         .onAppear { name = space.name; hue = space.hue }
         .onChange(of: space.name) { _, new in name = new }

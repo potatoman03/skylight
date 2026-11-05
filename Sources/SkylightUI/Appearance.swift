@@ -139,6 +139,35 @@ struct WindowSketch: View {
     }
 }
 
+/// Three favorites, drawn small, in a tile style.
+private struct TileSketch: View {
+    let style: Preferences.FavoriteStyle
+    let hue: Double
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        let surface: Color = style == .tinted ? Theme.accent(hue, scheme).opacity(0.28) : .white.opacity(scheme == .dark ? 0.14 : 0.75)
+        ZStack {
+            Rectangle().fill(.quaternary.opacity(0.6))
+            HStack(spacing: 6) {
+                ForEach(0..<3) { i in
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill([Color.red, .blue, .green][i].opacity(0.8))
+                        .frame(width: 12, height: 12)
+                        .frame(width: 32, height: 28)
+                        .background {
+                            if style != .plain {
+                                shape.fill(surface)
+                                shape.strokeBorder(.primary.opacity(0.08), lineWidth: 0.5)
+                            }
+                        }
+                }
+            }
+        }
+    }
+}
+
 /// Shows `light` on the left and `dark` on the right, split down the middle.
 struct HalfAndHalf<Light: View, Dark: View>: View {
     @ViewBuilder let light: () -> Light
@@ -248,6 +277,15 @@ struct AppearanceSettings: View {
                 Picker("Tab rows", selection: $prefs.density) {
                     ForEach(Preferences.Density.allCases) { Text($0.name).tag($0) }
                 }
+                Picker("Space header", selection: $prefs.spaceHeaderStyle) {
+                    ForEach(Preferences.SpaceHeaderStyle.allCases) { Text($0.name).tag($0) }
+                }
+                Toggle("Show the Space's ··· button only on hover", isOn: $prefs.spaceMenuOnHover)
+                    .disabled(prefs.spaceHeaderStyle == .hidden)
+                Picker("Space switcher", selection: $prefs.spaceBarStyle) {
+                    ForEach(Preferences.SpaceBarStyle.allCases) { Text($0.name).tag($0) }
+                }
+                Toggle("Show hints in empty sections", isOn: $prefs.showsDropHints)
                 ForEach(Preferences.SidebarItem.choices, id: \.self) { item in
                     Toggle(item.name, isOn: Binding(get: { prefs.shows(item) }, set: { prefs.setShows(item, $0) }))
                 }
@@ -255,7 +293,32 @@ struct AppearanceSettings: View {
             } header: {
                 Text("Sidebar")
             } footer: {
-                Text("The Space's tabs and the Space switcher always show.")
+                Text(sidebarFooter(prefs))
+            }
+            if prefs.shows(.favorites) {
+                Section {
+                    VStack(alignment: .leading, spacing: 18) {
+                        labeled("Tiles") {
+                            HStack(spacing: 14) {
+                                ForEach(Preferences.FavoriteStyle.allCases) { style in
+                                    ChoiceCard(title: style.name, selected: prefs.favoriteStyle == style) {
+                                        TileSketch(style: style, hue: hue)
+                                    } action: { animate(Motion.travel) { prefs.favoriteStyle = style } }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    Picker("Size", selection: $prefs.favoriteSize) {
+                        ForEach(Preferences.FavoriteSize.allCases) { Text($0.name).tag($0) }
+                    }
+                    Picker("Tiles per row", selection: $prefs.favoritesPerRow) {
+                        Text("Automatic").tag(0)
+                        ForEach(3...6, id: \.self) { Text("\($0)").tag($0) }
+                    }
+                } header: {
+                    Text("Favorites")
+                }
             }
 
             Section {
@@ -291,6 +354,13 @@ struct AppearanceSettings: View {
             }
             .frame(width: 460, height: 520)
         }
+    }
+
+    private func sidebarFooter(_ prefs: Preferences) -> String {
+        var notes = ["Each Space's icon, color and tint are in its ··· menu."]
+        if prefs.spaceHeaderStyle == .hidden { notes.append("Customize Space… is also in the Tabs menu.") }
+        if prefs.spaceBarStyle == .hidden { notes.append("Switch Spaces with ⌃1–9 or ⌥⌘← and ⌥⌘→.") }
+        return notes.joined(separator: " ")
     }
 
     private func labeled(_ title: String, @ViewBuilder content: () -> some View) -> some View {

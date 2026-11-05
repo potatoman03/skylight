@@ -314,12 +314,19 @@ public enum BrowserReducer {
 
         case let .setSpaceIcon(id, icon):
             guard let i = state.spaces.firstIndex(where: { $0.id == id }) else { return .ignored }
-            state.spaces[i].icon = icon.flatMap { $0.isEmpty ? nil : $0 }
+            // Typed into a field, so it can arrive with spaces around it, or as nothing but spaces.
+            let trimmed = icon?.trimmingCharacters(in: .whitespacesAndNewlines)
+            state.spaces[i].icon = trimmed.flatMap { $0.isEmpty ? nil : $0 }
             return ReduceResult()
 
         case let .setSpaceTheme(id, theme):
             guard let i = state.spaces.firstIndex(where: { $0.id == id }) else { return .ignored }
             state.spaces[i].themeID = theme
+            return ReduceResult()
+
+        case let .setSpaceTint(id, tint):
+            guard let i = state.spaces.firstIndex(where: { $0.id == id }) else { return .ignored }
+            state.spaces[i].tint = tint
             return ReduceResult()
 
         case let .assignProfile(spaceID, profileID):

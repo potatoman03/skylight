@@ -88,6 +88,7 @@ enum MainMenu {
             .separator(),
             item("Next Space", #selector(AppDelegate.nextSpace(_:)), String(UnicodeScalar(NSRightArrowFunctionKey)!), [.command, .option], target: target),
             item("Previous Space", #selector(AppDelegate.previousSpace(_:)), String(UnicodeScalar(NSLeftArrowFunctionKey)!), [.command, .option], target: target),
+            item("Customize Space…", #selector(AppDelegate.customizeSpace(_:)), "", target: target),
         ]
         for n in 1...9 {
             let space = item("Space \(n)", #selector(AppDelegate.switchToSpace(_:)), "\(n)", [.control], target: target)

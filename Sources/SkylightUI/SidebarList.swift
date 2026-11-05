@@ -319,6 +319,41 @@ extension EnvironmentValues {
     @Entry var sidebarDensity: Preferences.Density = .comfortable
 }
 
+extension Preferences.FavoriteSize {
+    var tileHeight: CGFloat {
+        switch self {
+        case .small: 28
+        case .medium: 34
+        case .large: 44
+        }
+    }
+
+    var iconSize: CGFloat {
+        switch self {
+        case .small: 14
+        case .medium: 16
+        case .large: 22
+        }
+    }
+
+    var cornerRadius: CGFloat {
+        switch self {
+        case .small: 8
+        case .medium: 10
+        case .large: 13
+        }
+    }
+
+    /// How narrow and wide a tile gets when the sidebar's width decides how many fit in a row.
+    var widths: ClosedRange<CGFloat> {
+        switch self {
+        case .small: 32...52
+        case .medium: 40...64
+        case .large: 52...80
+        }
+    }
+}
+
 extension Preferences.Density {
     /// A row's height, without the point of space above and below it.
     var rowHeight: CGFloat {
@@ -347,12 +382,12 @@ extension View {
     }
 
     /// A section's title line: small and quiet, with room above it.
-    func sidebarHeader(top: CGFloat = 10) -> some View {
-        font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.secondary)
+    func sidebarHeader(top: CGFloat = 10, large: Bool = false) -> some View {
+        font(large ? .system(size: 16, weight: .bold, design: .rounded) : .system(size: 11, weight: .semibold))
+            .foregroundStyle(large ? .primary : .secondary)
             .padding(.leading, 8)
             .padding(.trailing, 2)
-            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: large ? 32 : 24, alignment: .leading)
             .padding(.top, top)
             .padding(.bottom, 2)
     }

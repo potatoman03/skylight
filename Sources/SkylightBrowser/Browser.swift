@@ -24,6 +24,8 @@ public final class Browser {
     public private(set) var mcpConnection: MCPConnection?
     /// The Space being renamed, if the rename alert is up.
     public var renameSpace: SpaceID?
+    /// The Space whose icon, color and tint are being chosen in the sidebar's popover.
+    public var customizingSpace: SpaceID?
     /// The folder whose name is being edited in the sidebar, as when it's just been made.
     public var renameFolder: String?
     /// The tab whose name is being edited in the sidebar.
@@ -302,6 +304,14 @@ public final class Browser {
 
     /// Shows the Settings window, at `section` (`"passwords"`, `"extensions"`…) if given.
     public func openSettings(_ section: String? = nil) { showSettings(section) }
+
+    /// Opens the popover for a Space's look. It hangs off the Space's header, so that Space has to
+    /// be the one showing, in a sidebar that's open.
+    public func customizeSpace(_ id: SpaceID) {
+        if id != store.state.activeSpaceID { store.send(.switchSpace(id)) }
+        preferences.sidebarCollapsed = false
+        customizingSpace = id
+    }
 
     /// Makes a folder in the active Space (holding `tabs`, if any) and starts naming it.
     public func newFolder(with tabs: [TabID] = []) {

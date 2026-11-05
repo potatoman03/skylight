@@ -52,12 +52,19 @@ struct Sidebar: View {
                 SkyBackdrop(palette: palette, rays: prefs.godRays).ignoresSafeArea()
             }
             // Otherwise the window's translucent backdrop (RootView) shows through.
+            if space.tint != .none {
+                // Weaker in dark mode, where the same amount turns warm colors muddy.
+                let wash = Theme.wash(space.hue, scheme)
+                let strength = space.tint == .strong ? (scheme == .dark ? 0.22 : 0.30) : (scheme == .dark ? 0.11 : 0.14)
+                LinearGradient(colors: [wash.opacity(strength), wash.opacity(strength * 0.6)], startPoint: .top, endPoint: .bottom)
+                    .ignoresSafeArea()
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 6) {
                 if let update = browser.readyUpdate { UpdateCard(update: update) }
                 if prefs.shows(.agentActivity) { AgentActivityBadge() }
-                SpaceBar()
+                if prefs.spaceBarStyle != .hidden { SpaceBar(style: prefs.spaceBarStyle) }
             }
             .motion(Motion.arrive, value: browser.readyUpdate?.version)
             .padding(.horizontal, 10)
@@ -113,7 +120,7 @@ struct Sidebar: View {
         let targeted = drop.isTargeting(line.id)
         switch line.kind {
         case .spaceHeader:
-            SpaceHeader(space: space).sidebarHeader(top: 4)
+            SpaceHeader(space: space)
         case let .folder(folder):
             FolderRow(folder: folder, targeted: targeted)
         case let .row(ids, box, _):
@@ -128,7 +135,12 @@ struct Sidebar: View {
             }
         case let .hint(text, target):
             let inFolder = if case .folder = target { true } else { false }
-            DropHint(text: text, targeted: targeted, indent: inFolder ? SidebarMetrics.indent : 0)
+            if browser.preferences.showsDropHints || drag.active != nil {
+                DropHint(text: text, targeted: targeted, indent: inFolder ? SidebarMetrics.indent : 0)
+            } else {
+                // Still a line, so a drag has somewhere to land once the hint comes back.
+                Color.clear.frame(height: 6)
+            }
         case .todayHeader:
             TodayHeader(space: space).sidebarHeader()
         case .newTab:
@@ -168,6 +180,15 @@ private struct FavoritesGrid: View {
     let selected: TabID?
     @Environment(Browser.self) private var browser
 
+    private var columns: [GridItem] {
+        let prefs = browser.preferences
+        if prefs.favoritesPerRow > 0 {
+            return Array(repeating: GridItem(.flexible(), spacing: 6), count: prefs.favoritesPerRow)
+        }
+        let widths = prefs.favoriteSize.widths
+        return [GridItem(.adaptive(minimum: widths.lowerBound, maximum: widths.upperBound), spacing: 6)]
+    }
+
     var body: some View {
         if tabs.isEmpty {
             Text("Drop a tab here to keep it in every Space")
@@ -177,7 +198,7 @@ private struct FavoritesGrid: View {
                 .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 8))
                 .dropDestination(for: String.self) { items, _ in browser.drop(items, on: .favorites(index: 0)) }
         } else {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 40, maximum: 64), spacing: 6)], spacing: 6) {
+            LazyVGrid(columns: columns, spacing: 6) {
                 ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                     FavoriteTile(tab: tab, selected: tab.id == selected)
                         .dropDestination(for: String.self) { items, _ in browser.drop(items, on: .favorites(index: index)) }
@@ -195,21 +216,22 @@ private struct FavoriteTile: View {
     let selected: Bool
     @Environment(Browser.self) private var browser
     @Environment(TabDragSession.self) private var drag
+    @Environment(\.colorScheme) private var scheme
     @State private var hovering = false
 
     var body: some View {
         let status = browser.store.status(of: tab.id)
+        let size = browser.preferences.favoriteSize
         ZStack {
             if status.isLoading {
                 ProgressView().controlSize(.small)
             } else {
-                Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 16)
+                Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: size.iconSize)
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 34)
-        .glassEffect(selected ? .regular.tint(.accentColor.opacity(0.35)).interactive() : .regular.interactive(),
-                     in: .rect(cornerRadius: 10, style: .continuous))
+        .frame(height: size.tileHeight)
+        .modifier(surface(style: browser.preferences.favoriteStyle, cornerRadius: size.cornerRadius))
         .overlay(alignment: .topTrailing) {
             MediaBadge(tab: tab.id).controlSize(.mini).padding(1)
         }
@@ -222,6 +244,33 @@ private struct FavoriteTile: View {
         .accessibilityElement()
         .accessibilityLabel(tab.displayTitle)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func surface(style: Preferences.FavoriteStyle, cornerRadius: CGFloat) -> TileSurface {
+        TileSurface(style: style, selected: selected, hovering: hovering,
+                    color: Theme.accent(browser.store.state.activeSpace.hue, scheme), cornerRadius: cornerRadius)
+    }
+}
+
+/// What a favorite sits on: a pane of glass, the same in the Space's color, or nothing until you
+/// point at it or open it.
+private struct TileSurface: ViewModifier {
+    let style: Preferences.FavoriteStyle
+    let selected: Bool
+    let hovering: Bool
+    let color: Color
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        switch style {
+        case .glass:
+            content.glassEffect(selected ? .regular.tint(.accentColor.opacity(0.35)).interactive() : .regular.interactive(), in: shape)
+        case .tinted:
+            content.glassEffect(.regular.tint(color.opacity(selected ? 0.55 : 0.25)).interactive(), in: shape)
+        case .plain:
+            content.background(.quaternary.opacity(selected ? 1 : hovering ? 0.5 : 0), in: shape)
+        }
     }
 }
 
@@ -328,20 +377,46 @@ private struct DropHint: View {
 
 // MARK: - Headers
 
-/// The Space's name (click it to rename) and profile, with its menu.
+/// The Space's name (click it to rename) and profile, with its menu. Hidden, it stays as a sliver:
+/// renaming still happens here, and the Space's popover hangs off it.
 private struct SpaceHeader: View {
     let space: Space
     @Environment(Browser.self) private var browser
+    @Environment(\.colorScheme) private var scheme
     @State private var editing = false
+    @State private var hovering = false
     @State private var name = ""
     @FocusState private var focused: Bool
 
     var body: some View {
+        let style = browser.preferences.spaceHeaderStyle
+        VStack(spacing: 0) {
+            if style == .hidden, !editing {
+                Color.clear.frame(height: 4)
+            } else {
+                row(large: style == .large).sidebarHeader(top: 4, large: style == .large)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .popover(isPresented: Binding(get: { browser.customizingSpace == space.id },
+                                      set: { if !$0 { browser.customizingSpace = nil } }), arrowEdge: .trailing) {
+            SpaceCustomizer(space: space)
+        }
+        .onChange(of: browser.renameSpace) { _, id in
+            // Renaming the Space on screen happens right here, not in an alert.
+            if id == space.id {
+                browser.renameSpace = nil
+                startEditing()
+            }
+        }
+    }
+
+    private func row(large: Bool) -> some View {
         let profile = browser.store.state.profile(space.profileID)
-        HStack(spacing: 6) {
-            SpaceIcon(icon: space.icon, name: space.name, size: 11)
-                .foregroundStyle(Theme.accent(space.hue))
-                .frame(width: 14)
+        return HStack(spacing: 6) {
+            SpaceIcon(icon: space.icon, name: space.name, size: large ? 15 : 11)
+                .foregroundStyle(Theme.accent(space.hue, scheme))
+                .frame(width: large ? 20 : 14)
             if editing {
                 TextField("Space name", text: $name)
                     .inlineName()
@@ -351,6 +426,7 @@ private struct SpaceHeader: View {
                     .onChange(of: focused) { _, now in if !now { commit() } }
             } else {
                 Text(space.name)
+                    .lineLimit(1)
                     .contentShape(.rect)
                     .onTapGesture(perform: startEditing)
                     .help("Click to rename")
@@ -367,22 +443,18 @@ private struct SpaceHeader: View {
             Menu {
                 SpaceMenu(space: space)
             } label: {
-                Image(systemName: "ellipsis")
+                Image(systemName: "ellipsis").font(.system(size: 11, weight: .semibold))
             }
             .menuStyle(.button)
             .buttonStyle(.borderless)
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Space options")
+            .opacity(browser.preferences.spaceMenuOnHover && !hovering ? 0 : 1)
         }
+        .contentShape(.rect)
+        .onHover { h in animate(Motion.feedback) { hovering = h } }
         .contextMenu { SpaceMenu(space: space) }
-        .onChange(of: browser.renameSpace) { _, id in
-            // Renaming the Space on screen happens right here, not in an alert.
-            if id == space.id {
-                browser.renameSpace = nil
-                startEditing()
-            }
-        }
     }
 
     private func startEditing() {
@@ -793,6 +865,7 @@ private struct SplitPaneChrome: ViewModifier {
 
 /// Every Space, as buttons. Hold a dragged tab over one to open it and drop the tab inside.
 private struct SpaceBar: View {
+    let style: Preferences.SpaceBarStyle
     @Environment(Browser.self) private var browser
     @Environment(\.colorScheme) private var scheme
 
@@ -802,11 +875,19 @@ private struct SpaceBar: View {
             ForEach(state.spaces) { space in
                 let active = space.id == state.activeSpaceID
                 Button { animate(Motion.swap) { _ = browser.store.send(.switchSpace(space.id)) } } label: {
-                    SpaceIcon(icon: space.icon, name: space.name, size: 13)
-                        .frame(width: 28, height: 24)
-                        .foregroundStyle(active ? AnyShapeStyle(Theme.accent(space.hue, scheme)) : AnyShapeStyle(.secondary))
-                        .background(active ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 6))
-                        .contentShape(.rect)
+                    if style == .dots {
+                        Circle()
+                            .fill(active ? AnyShapeStyle(Theme.accent(space.hue, scheme)) : AnyShapeStyle(.tertiary))
+                            .frame(width: 7, height: 7)
+                            .frame(width: 18, height: 24)
+                            .contentShape(.rect)
+                    } else {
+                        SpaceIcon(icon: space.icon, name: space.name, size: 13)
+                            .frame(width: 28, height: 24)
+                            .foregroundStyle(active ? AnyShapeStyle(Theme.accent(space.hue, scheme)) : AnyShapeStyle(.secondary))
+                            .background(active ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 6))
+                            .contentShape(.rect)
+                    }
                 }
                 .buttonStyle(.borderless)
                 .help(space.name)
@@ -926,10 +1007,11 @@ struct TabMenu: View {
     }
 }
 
-/// Rename, icon, profile, delete: the same menu on the header and the Space bar.
+/// Rename, look, profile, delete: the same menu on the header and the Space bar.
 struct SpaceMenu: View {
     let space: Space
     @Environment(Browser.self) private var browser
+    @Environment(\.colorScheme) private var scheme
 
     static let icons: [(symbol: String, name: String)] = [
         ("sun.max", "Sun"), ("moon", "Moon"), ("briefcase", "Work"), ("house", "Home"), ("book", "Reading"),
@@ -938,8 +1020,17 @@ struct SpaceMenu: View {
         ("paintpalette", "Art"), ("chevron.left.forwardslash.chevron.right", "Code"),
     ]
 
+    static let colors: [(hue: Double, name: String)] = [
+        (0.99, "Red"), (0.07, "Orange"), (0.13, "Yellow"), (0.35, "Green"), (0.47, "Teal"),
+        (0.58, "Blue"), (0.67, "Indigo"), (0.77, "Purple"), (0.90, "Pink"),
+    ]
+
+    /// Whether a Space's hue is close enough to a preset to call it that color.
+    static func matches(_ hue: Double, _ preset: Double) -> Bool { abs(hue - preset) < 0.005 }
+
     var body: some View {
         let state = browser.store.state
+        @Bindable var prefs = browser.preferences
         Button("Rename…") { browser.renameSpace = space.id }
         if space.id == state.activeSpaceID {
             Button("New Folder") { animate(Motion.travel) { browser.newFolder() } }
@@ -954,6 +1045,35 @@ struct SpaceMenu: View {
                     Label(icon.name, systemImage: icon.symbol)
                 }
             }
+            Divider()
+            Button("More Icons and Emoji…") { browser.customizeSpace(space.id) }
+        }
+        Menu("Color") {
+            ForEach(Self.colors, id: \.name) { color in
+                Toggle(isOn: Binding(get: { Self.matches(space.hue, color.hue) },
+                                     set: { if $0 { browser.store.send(.setSpaceHue(space.id, color.hue)) } })) {
+                    Label { Text(color.name) } icon: { Image(nsImage: Theme.swatch(color.hue, scheme)) }
+                }
+            }
+            Divider()
+            Button("Custom…") { browser.customizeSpace(space.id) }
+        }
+        Menu("Sidebar Tint") {
+            ForEach(SpaceTint.allCases) { tint in
+                Toggle(tint.name, isOn: Binding(get: { space.tint == tint },
+                                                set: { if $0 { browser.store.send(.setSpaceTint(space.id, tint)) } }))
+            }
+        }
+        Menu("Sky") {
+            Toggle("Same as the App", isOn: Binding(get: { space.themeID == nil },
+                                                    set: { if $0 { browser.store.send(.setSpaceTheme(space.id, nil)) } }))
+            Divider()
+            ForEach(prefs.themes) { theme in
+                Toggle(theme.name, isOn: Binding(get: { space.themeID == theme.id },
+                                                 set: { if $0 { browser.store.send(.setSpaceTheme(space.id, theme.id)) } }))
+            }
+            Divider()
+            Toggle("Show Sky Behind the Sidebar", isOn: $prefs.skyBackdrop)
         }
         Menu("Profile") {
             ForEach(state.profiles) { profile in
