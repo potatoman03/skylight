@@ -58,10 +58,14 @@ struct Sidebar: View {
                 let _ = art.focusX = image.sidebarFocusX
                 ThemeImageView(url: url, image: art).ignoresSafeArea().transition(.opacity)
             }
-            // Strongest behind the tabs, clearing toward the foot, where the art can breathe.
+            // Strongest behind the tabs, clearing below them so the art can breathe, and back
+            // again for the Space switcher.
             if let scrim = palette?.scrim {
                 let veil = Color(scrim.color)
-                LinearGradient(colors: [veil.opacity(min(scrim.opacity * 1.5, 1)), veil.opacity(scrim.opacity), veil.opacity(scrim.opacity * 0.1)],
+                LinearGradient(stops: [.init(color: veil.opacity(min(scrim.opacity * 1.5, 1)), location: 0),
+                                       .init(color: veil.opacity(scrim.opacity), location: 0.55),
+                                       .init(color: veil.opacity(scrim.opacity * 0.2), location: 0.8),
+                                       .init(color: veil.opacity(scrim.opacity * 0.9), location: 1)],
                                startPoint: .top, endPoint: .bottom)
                     .ignoresSafeArea()
             }
@@ -196,6 +200,21 @@ private struct ThemeInk: ViewModifier {
     }
 }
 
+/// A row at the foot of the sidebar. Symbols differ in width, so each gets the same slot.
+private struct SidebarFootLabel: View {
+    let title: String
+    let symbol: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol).frame(width: 16)
+            Text(title)
+        }
+        .foregroundStyle(.secondary)
+        .sidebarRow()
+    }
+}
+
 /// Things you can do, as rows at the foot of the sidebar.
 private struct SidebarActionRow: View {
     let item: Preferences.SidebarItem
@@ -208,9 +227,7 @@ private struct SidebarActionRow: View {
             default: browser.store.send(.reopenClosedTab)
             }
         } label: {
-            Label(item.name, systemImage: item == .settings ? "gearshape" : "arrow.uturn.backward")
-                .foregroundStyle(.secondary)
-                .sidebarRow()
+            SidebarFootLabel(title: item.name, symbol: item == .settings ? "gearshape" : "arrow.uturn.backward")
         }
         .buttonStyle(.plain)
     }
@@ -220,6 +237,7 @@ private struct SidebarActionRow: View {
 private struct SidebarMore: View {
     let items: [Preferences.SidebarItem]
     @State private var open = false
+    @Environment(Browser.self) private var browser
 
     var body: some View {
         VStack(spacing: 0) {
@@ -227,7 +245,11 @@ private struct SidebarMore: View {
                 ForEach(items) { item in
                     switch item {
                     case .favorites: MoreFavorites()
-                    case .newTab: NewTabRow()
+                    case .newTab:
+                        Button { browser.presentCommandBar(.newTab) } label: {
+                            SidebarFootLabel(title: item.name, symbol: "plus")
+                        }
+                        .buttonStyle(.plain)
                     default: SidebarActionRow(item: item)
                     }
                 }
@@ -235,9 +257,7 @@ private struct SidebarMore: View {
             Button {
                 animate(Motion.travel) { open.toggle() }
             } label: {
-                Label(open ? "Less" : "More", systemImage: open ? "chevron.down" : "ellipsis")
-                    .foregroundStyle(.secondary)
-                    .sidebarRow()
+                SidebarFootLabel(title: open ? "Less" : "More", symbol: open ? "chevron.down" : "ellipsis")
             }
             .buttonStyle(.plain)
         }
@@ -1175,7 +1195,7 @@ struct SpaceMenu: View {
                                                  set: { if $0 { browser.store.send(.setSpaceTheme(space.id, theme.id)) } }))
             }
             Divider()
-            Toggle("Show Sky Behind the Sidebar", isOn: $prefs.skyBackdrop)
+            Toggle("Show Theme Behind the Sidebar", isOn: $prefs.skyBackdrop)
         }
         Menu("Profile") {
             ForEach(state.profiles) { profile in

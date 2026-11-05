@@ -303,7 +303,7 @@ final class SkyView: NSView {
     private var pattern: AsciiPattern?
     private var atlas: MTLTexture?
     /// One character cell, in points.
-    private static let cell = SIMD2<Float>(8, 14)
+    private static let cell = SIMD2<Float>(9, 16)
     private var configured = false
 
     override init(frame: NSRect) {
@@ -589,7 +589,7 @@ final class SkyView: NSView {
             return float2(step(0.985 - fire * 0.07, r) * (0.25 + 0.75 * fire) * flicker, fire * 0.8 + r * 0.2);
         }
         if (pattern == 9) { // Retro grid: a floor racing toward you, under a banded sun.
-            float aspect = (grid.x * 8.0) / (grid.y * 14.0);
+            float aspect = (grid.x * 9.0) / (grid.y * 16.0);
             float horizon = 0.58;
             if (p.y > horizon) {
                 float z = 1.0 / (p.y - horizon + 0.03);
@@ -610,6 +610,21 @@ final class SkyView: NSView {
             float s = smoothstep(0.34, 0.72, n);
             return float2(on * (0.15 + 0.65 * s), s);
         }
+        if (pattern == 11) { // Dust: a few fine specks, barely drifting.
+            float2 drifted = float2(c.x + floor(t * 0.1 + hash(float2(c.y, 11.0)) * 40.0), c.y);
+            float r = hash(drifted);
+            return float2(step(0.95, r) * (0.3 + 0.7 * fract(r * 61.0)), fract(r * 29.0));
+        }
+        if (pattern == 12) { // Weave: a fine cloth, its grain showing in broad, slow patches.
+            float n = smoothstep(0.34, 0.74, clouds(p * float2(2.0, 1.4) + float2(t * 0.008, t * 0.005)));
+            float on = step(0.5, fmod(c.x + c.y, 2.0));
+            return float2(on * (0.1 + 0.55 * n) * step(fmod(c.y, 2.0), 0.5), n * 0.5 + 0.5 * h);
+        }
+        if (pattern == 13) { // Contour lines: the rings of a map, shifting very slowly.
+            float height = clouds(p * float2(1.6, 1.2) + float2(t * 0.005, -t * 0.003)) * 9.0;
+            float n = 1.0 - smoothstep(0.03, 0.1, abs(fract(height) - 0.5));
+            return float2(n * (0.6 + 0.4 * h), h);
+        }
         // Code rain: columns falling at their own speed, changing as they go.
         float speed = 0.05 + hash(float2(c.x, 2.0)) * 0.13;
         float head = fract(t * speed + hash(float2(c.x, 9.0)));
@@ -627,7 +642,9 @@ final class SkyView: NSView {
         float2 f = field(int(u.pattern), cell, grid, t);
         if (f.x < 0.01) return 0.0;
         float2 tile = float2(floor(clamp(f.y, 0.0, 0.999) * 8.0), u.pattern) + fract(position);
-        return atlas.sample(s, tile / float2(8.0, \(AsciiPattern.allCases.count).0)).r * f.x * u.ink.a;
+        // Quieter in the middle, where the search field sits on a new tab.
+        float calm = mix(0.2, 1.0, smoothstep(0.18, 0.5, length((uv - float2(0.58, 0.32)) * float2(1.0, 1.4))));
+        return atlas.sample(s, tile / float2(8.0, \(AsciiPattern.allCases.count).0)).r * f.x * u.ink.a * calm;
     }
 
     fragment float4 skyFragment(Out in [[stage_in]], constant Uniforms& u [[buffer(0)]], texture2d<float> atlas [[texture(0)]]) {
