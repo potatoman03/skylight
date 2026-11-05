@@ -272,6 +272,7 @@ private let c = URL(string: "https://c.example")!
         BrowserReducer.reduce(&state, .setSpaceIcon(source.id, "star"), env: env)
         BrowserReducer.reduce(&state, .setSpaceHue(source.id, 0.4), env: env)
         BrowserReducer.reduce(&state, .setSpaceTheme(source.id, "dusk"), env: env)
+        state.spaces[0].tint = .strong
         BrowserReducer.reduce(&state, .duplicateSpace(source.id), env: env)
         let copy = state.spaces[1]
         #expect(state.activeSpaceID == copy.id)
@@ -280,6 +281,7 @@ private let c = URL(string: "https://c.example")!
         #expect(copy.icon == "star")
         #expect(copy.hue == 0.4)
         #expect(copy.themeID == "dusk")
+        #expect(copy.tint == .strong)
         #expect(copy.profileID == source.profileID)
         #expect(copy.allTabIDs.isEmpty)
     }
