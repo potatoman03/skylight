@@ -32,6 +32,8 @@ public final class Browser {
     public var renameTab: TabID?
     /// Whether the keyboard shortcuts sheet is up.
     public var showShortcuts = false
+    /// Whether Skylight's menu, from the toolbar's ··· button, is open.
+    public var showsMainMenu = false
     /// A new version, downloaded and waiting for a restart. The app's updater sets it.
     public var readyUpdate: ReadyUpdate?
     /// Opens the Settings window; the app provides it.
@@ -330,6 +332,17 @@ public final class Browser {
 
     /// The sidebar is on screen: shown, or out for a peek.
     public var showsSidebar: Bool { !preferences.sidebarCollapsed || sidebarPeeking }
+
+    public func toggleMainMenu() {
+        if !showsMainMenu { dismissCommandBar() }
+        showsMainMenu.toggle()
+    }
+
+    /// Where downloads go: the engine saves them straight to this folder.
+    public func showDownloads() {
+        guard let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else { return }
+        NSWorkspace.shared.open(folder)
+    }
 
     public func showDeveloperTools() {
         guard let id = store.state.selectedTabID else { return }
