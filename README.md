@@ -172,7 +172,8 @@ icon and color; Settings → Spaces picks each Space's profile.
 **Sidebar.** Each Space can have its own icon or emoji, color, sidebar tint and sky, from its ···
 menu or Tabs → Customize Space…. Settings → Appearance sets how favorites look (glass, tinted or
 icons only, their size, and how many fit in a row), the Space header (icon and name, large title or
-hidden), the Space switcher (icons, dots or hidden), and whether empty sections show hints.
+hidden), the Space switcher (icons, dots or hidden), whether empty sections show hints, and the
+sidebar's order: Today above or below pinned tabs, favorites at the top or bottom.
 
 **Appearance.** Skylight follows the system's light or dark mode (Settings → Appearance can fix
 it to one). The same page sets tab row size and which parts of the sidebar show. For something less

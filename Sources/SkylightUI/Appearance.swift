@@ -295,6 +295,20 @@ struct AppearanceSettings: View {
             } footer: {
                 Text(sidebarFooter(prefs))
             }
+            Section {
+                ForEach(prefs.sidebarOrder) { section in
+                    LabeledContent(section.name) {
+                        HStack(spacing: 2) {
+                            moveButton(section, by: -1, label: "up", symbol: "chevron.up", prefs)
+                            moveButton(section, by: 1, label: "down", symbol: "chevron.down", prefs)
+                        }
+                    }
+                }
+            } header: {
+                Text("Sidebar order")
+            } footer: {
+                Text("Favorites go above or below your tabs.")
+            }
             if prefs.shows(.favorites) {
                 Section {
                     VStack(alignment: .leading, spacing: 18) {
@@ -354,6 +368,18 @@ struct AppearanceSettings: View {
             }
             .frame(width: 460, height: 520)
         }
+    }
+
+    private func moveButton(_ section: SidebarSection, by offset: Int, label: String, symbol: String, _ prefs: Preferences) -> some View {
+        let moved = prefs.sidebarOrder.moving(section, by: offset)
+        return Button {
+            animate(Motion.travel) { prefs.sidebarOrder = moved }
+        } label: {
+            Image(systemName: symbol).frame(width: 20, height: 20).contentShape(.rect)
+        }
+        .buttonStyle(.borderless)
+        .disabled(moved == prefs.sidebarOrder)
+        .accessibilityLabel("Move \(section.name) \(label)")
     }
 
     private func sidebarFooter(_ prefs: Preferences) -> String {

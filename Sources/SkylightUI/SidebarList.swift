@@ -24,6 +24,8 @@ struct SidebarLines {
             case row([TabID], box: Box, index: Int)
             /// An empty box's line: says what it's for and takes drops.
             case hint(String, TabDropTarget)
+            /// Only when Today comes first; otherwise the Space's header stands over pinned tabs.
+            case pinnedHeader
             case todayHeader
             case newTab
         }
@@ -35,9 +37,24 @@ struct SidebarLines {
     private(set) var lines: [Line] = []
     /// Where each box's rows are in `lines`.
     private(set) var boxes: [Box: Range<Int>] = [:]
+    /// The box that ends the list, where a drop below every line lands.
+    private let lastBox: Box
 
-    init(space: Space, showsNewTab: Bool) {
+    init(space: Space, showsNewTab: Bool, todayFirst: Bool = false, showsHints: Bool = true) {
+        lastBox = todayFirst ? .pinned : .today
         add("header.space", .spaceHeader)
+        if todayFirst {
+            addToday(space, showsNewTab: showsNewTab)
+            let empty = space.pinned.isEmpty && space.folders.isEmpty
+            if !empty || showsHints { add("header.pinned", .pinnedHeader) }
+            addPinned(space)
+        } else {
+            addPinned(space)
+            addToday(space, showsNewTab: showsNewTab)
+        }
+    }
+
+    private mutating func addPinned(_ space: Space) {
         for folder in space.folders {
             add("folder.\(folder.id)", .folder(folder))
             addRows(folder.isOpen ? folder.tabs.map { [$0] } : [], in: .folder(folder.id), space: space)
@@ -50,6 +67,9 @@ struct SidebarLines {
         if space.pinned.isEmpty, space.folders.isEmpty {
             add("hint.pinned", .hint("Drag tabs here to pin them", .section(.pinned, row: 0)))
         }
+    }
+
+    private mutating func addToday(_ space: Space, showsNewTab: Bool) {
         add("header.today", .todayHeader)
         if showsNewTab { add("new-tab", .newTab) }
         addRows(SidebarRows.make(space.today, space: space), in: .today, space: space)
@@ -90,8 +110,8 @@ struct SidebarLines {
                 return hover(on: index, at: (y - frame.minY) / max(frame.height, 1), dragging: tab, splits: splits)
             }
         }
-        // Below everything: the end of today's tabs.
-        return gap(.today, at: boxes[.today]?.count ?? 0)
+        // Below everything: the end of the last box.
+        return gap(lastBox, at: boxes[lastBox]?.count ?? 0)
     }
 
     private func hover(on index: Int, at fraction: CGFloat, dragging tab: TabID?, splits: Bool) -> SidebarHover? {
@@ -99,6 +119,8 @@ struct SidebarLines {
         switch line.kind {
         case .spaceHeader:
             return nil
+        case .pinnedHeader:
+            return gap(.pinned, at: 0)
         case .todayHeader, .newTab:
             return gap(.today, at: 0)
         case let .hint(_, target):

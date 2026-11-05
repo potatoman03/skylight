@@ -22,16 +22,12 @@ struct Sidebar: View {
         let state = browser.store.state
         let space = state.activeSpace
         let prefs = browser.preferences
-        let lines = SidebarLines(space: space, showsNewTab: prefs.shows(.newTab))
+        let order = prefs.sidebarOrder
+        let lines = SidebarLines(space: space, showsNewTab: prefs.shows(.newTab), todayFirst: order.todayFirst,
+                                 showsHints: prefs.showsDropHints || drag.active != nil)
 
         VStack(spacing: 0) {
-            // Favorites sit on top as a grid of tiles, as in Arc, shared by every Space.
-            if prefs.shows(.favorites), !state.favorites.isEmpty || drag.active != nil {
-                FavoritesGrid(tabs: state.favoriteTabs, selected: state.selectedTabID)
-                    .padding(.horizontal, 10)
-                    .padding(.top, 4)
-                    .padding(.bottom, 6)
-            }
+            if !order.favoritesLast { favorites }
             ScrollView {
                 list(lines, space: space)
                     // Down to the bottom, so a tab dropped below the rows lands at the end.
@@ -45,6 +41,7 @@ struct Sidebar: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewport = $0 }
             .environment(\.sidebarDensity, prefs.density)
             .font(prefs.density.rowFont)
+            if order.favoritesLast { favorites }
         }
         .background {
             if prefs.skyBackdrop {
@@ -73,6 +70,18 @@ struct Sidebar: View {
         // A different Space is a different list: crossfade rather than morph one into the other.
         .id(space.id)
         .transition(.opacity)
+    }
+
+    /// A grid of tiles, as in Arc, shared by every Space, at the top or bottom of the sidebar.
+    @ViewBuilder
+    private var favorites: some View {
+        let state = browser.store.state
+        if browser.preferences.shows(.favorites), !state.favorites.isEmpty || drag.active != nil {
+            FavoritesGrid(tabs: state.favoriteTabs, selected: state.selectedTabID)
+                .padding(.horizontal, 10)
+                .padding(.top, 4)
+                .padding(.bottom, 6)
+        }
     }
 
     /// Every line, each moved aside as a drag needs. Frames are measured before the move, so the
@@ -141,6 +150,8 @@ struct Sidebar: View {
                 // Still a line, so a drag has somewhere to land once the hint comes back.
                 Color.clear.frame(height: 6)
             }
+        case .pinnedHeader:
+            Text("Pinned").sidebarHeader()
         case .todayHeader:
             TodayHeader(space: space).sidebarHeader()
         case .newTab:
@@ -1013,12 +1024,8 @@ struct SpaceMenu: View {
     @Environment(Browser.self) private var browser
     @Environment(\.colorScheme) private var scheme
 
-    static let icons: [(symbol: String, name: String)] = [
-        ("sun.max", "Sun"), ("moon", "Moon"), ("briefcase", "Work"), ("house", "Home"), ("book", "Reading"),
-        ("star", "Star"), ("heart", "Heart"), ("leaf", "Leaf"), ("bolt", "Bolt"), ("flame", "Flame"),
-        ("globe.americas", "Globe"), ("music.note", "Music"), ("graduationcap", "School"), ("cart", "Shopping"),
-        ("paintpalette", "Art"), ("chevron.left.forwardslash.chevron.right", "Code"),
-    ]
+    /// The ones short enough for a menu. The popover has them all.
+    static let icons = Array(IconSearch.symbols.prefix(16))
 
     static let colors: [(hue: Double, name: String)] = [
         (0.99, "Red"), (0.07, "Orange"), (0.13, "Yellow"), (0.35, "Green"), (0.47, "Teal"),
