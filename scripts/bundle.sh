@@ -22,8 +22,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CEF="$ROOT/Vendor/cef"
 APP="$ROOT/build/Skylight.app"
 VERSION="${SKYLIGHT_VERSION:-0.1.0}"
-# Counts up with every release; what updaters compare.
-BUILD="${SKYLIGHT_BUILD:-1}"
+# What updates compare: the commit count, so a build from a later commit is newer.
+BUILD="${SKYLIGHT_BUILD:-$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)}"
+# Where updates come from (scripts/publish.sh puts them there), and the key they're signed with.
+FEED="https://github.com/potatoman03/skylight/releases/latest/download/appcast.xml"
+UPDATE_KEY="MZEEASeQo9BloEsZVxVOKxWW+SxlzcsdyApewIsQz/k="
 BUNDLE_ID="app.skylight.Skylight"
 # A build signed differently from the last re-keys Chromium's cookies, so keep to one identity.
 if [[ -z "${SKYLIGHT_SIGN_IDENTITY:-}" && -f "$ROOT/.signing" ]]; then source "$ROOT/.signing"; fi
@@ -44,6 +47,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 cp "$BIN/Skylight" "$APP/Contents/MacOS/Skylight"
 ditto "$CEF/Release/Chromium Embedded Framework.framework" "$APP/Contents/Frameworks/Chromium Embedded Framework.framework"
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+ditto "$BIN/Sparkle.framework" "$SPARKLE"
 # The icon is drawn by scripts/make-icon.swift.
 [[ -f "$ROOT/Resources/AppIcon.icns" ]] || swift "$ROOT/scripts/make-icon.swift"
 cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
@@ -69,6 +74,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>SkylightDevBuild</key>$DEV_BUILD
+  <key>SUFeedURL</key><string>$FEED</string>
+  <key>SUPublicEDKey</key><string>$UPDATE_KEY</string>
+  <key>SUEnableAutomaticChecks</key><true/>
   <key>NSCameraUsageDescription</key><string>Websites you allow can use your camera.</string>
   <key>NSMicrophoneUsageDescription</key><string>Websites you allow can use your microphone.</string>
   <key>NSLocationUsageDescription</key><string>Websites you allow can see your location.</string>
@@ -132,6 +140,7 @@ done
 # Signed inside out. Distribution builds also need notarization.
 if [[ "$IDENTITY" == "-" ]]; then
   codesign --force --sign - "$APP/Contents/Frameworks/Chromium Embedded Framework.framework" >/dev/null
+  codesign --force --deep --sign - "$SPARKLE" >/dev/null
   for helper in "$APP/Contents/Frameworks/"*Helper*.app; do codesign --force --sign - "$helper" >/dev/null; done
   codesign --force --sign - "$APP" >/dev/null
 else
@@ -165,6 +174,12 @@ else
   # won't load code signed by another team.
   for lib in "$APP/Contents/Frameworks/Chromium Embedded Framework.framework/Libraries/"*.dylib; do sign "$lib"; done
   sign "$APP/Contents/Frameworks/Chromium Embedded Framework.framework"
+  # Sparkle's helpers before Sparkle, as its documentation lays out.
+  sign "$SPARKLE/Versions/B/XPCServices/Installer.xpc"
+  sign --preserve-metadata=entitlements "$SPARKLE/Versions/B/XPCServices/Downloader.xpc"
+  sign "$SPARKLE/Versions/B/Autoupdate"
+  sign "$SPARKLE/Versions/B/Updater.app"
+  sign "$SPARKLE"
   for helper in "$APP/Contents/Frameworks/"*Helper*.app; do
     case "$helper" in *"(Renderer)"*|*"(GPU)"*) sign --entitlements "$ENT/jit.plist" "$helper" ;; *) sign --entitlements "$ENT/plain.plist" "$helper" ;; esac
   done

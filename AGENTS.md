@@ -67,7 +67,8 @@ Rules the map implies:
 | A prompt (permission, dialog, approval) | A `Prompt` case in `PromptCenter`, shown by the alert host in `ContentArea.swift`. |
 | A view, Settings page, sidebar row, toolbar item | `SkylightUI`. Motion tokens are in `Motion.swift`, colors in `Theme.swift`. |
 | A menu item or keyboard shortcut | `Sources/Skylight/MainMenu.swift` (the action is an `@objc` method on `AppDelegate`). The shortcuts sheet reads the menu bar, so it picks the item up. |
-| Build, bundle, signing | `scripts/bundle.sh`. Notarized DMGs: `scripts/release.sh`. CEF version: `scripts/fetch-cef.sh`. |
+| Build, bundle, signing | `scripts/bundle.sh`. Releases that installed copies update to: `scripts/publish.sh`. Notarized DMGs: `scripts/release.sh`. CEF version: `scripts/fetch-cef.sh`. |
+| Updates | `Sources/Skylight/Updater.swift` (Sparkle, app target only). The feed URL and public key are in `bundle.sh`. |
 
 ## Invariants and gotchas
 
@@ -101,6 +102,10 @@ Rules the map implies:
   `NativeMessagingHosts.adopt(from:into:)` takes them) rather than reading
   `AppPaths.standard()` or another browser's folders. Parse extension manifests from fixtures,
   never from the Chrome Web Store.
+- **The update key never leaves the keychain.** Sparkle's private key (`generate_keys --account
+  skylight`) signs every release; installed copies refuse anything else. Never commit or print
+  it, and don't change `SUPublicEDKey` in `bundle.sh` without it, or installed copies stop
+  updating.
 - **Never read or print secrets.** Password fields and card fields stay out of agent reads. When
   debugging the password code, use demo mode, never your own Keychain items. Never commit
   `.signing`.

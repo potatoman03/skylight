@@ -10,6 +10,7 @@ enum MainMenu {
 
         main.addItem(submenu("Skylight", [
             item("About Skylight", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "", target: nil),
+            item("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:)), "", target: target),
             .separator(),
             item("Settings…", #selector(AppDelegate.showSettings(_:)), ",", target: target),
             .separator(),
