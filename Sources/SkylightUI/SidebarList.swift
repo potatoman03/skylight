@@ -108,9 +108,10 @@ struct SidebarLines {
             if folder.isOpen, !folder.tabs.isEmpty, fraction > 0.6 { return gap(.folder(folder.id), at: 0) }
             return .onto(line.id, .folder(folder.id, index: .max))
         case let .row(ids, box, row):
-            // A row's middle puts the tab beside it in a split; its edges make room above or below.
+            // A row's middle half puts the tab beside it in a split; its edges make room above or
+            // below. Wide enough to hold the split preview steady while you look at it.
             if splits, let last = ids.last, ids.count < TabSplit.maxPanes, !ids.contains(where: { $0 == tab }),
-               (0.3...0.7).contains(fraction) {
+               (0.25...0.75).contains(fraction) {
                 return .onto(line.id, .split(last, .trailing))
             }
             return gap(box, at: fraction < 0.5 ? row : row + 1)
@@ -158,6 +159,8 @@ final class SidebarDropState {
     private(set) var hidden: String?
     private(set) var hiddenHeight: CGFloat = 0
     private(set) var gapHeight: CGFloat = 0
+    /// Where the pointer is over the list, so the dragged tab can follow it.
+    private(set) var pointer: CGPoint?
     /// Every line's frame as laid out, before any gap: what drags are hit-tested against.
     @ObservationIgnored var frames: [String: CGRect] = [:]
 
@@ -169,9 +172,42 @@ final class SidebarDropState {
     }
 
     func clear() {
+        settle(nil)
         hover = nil
         hidden = nil
         hiddenHeight = 0
+        pointer = nil
+    }
+
+    /// How long the pointer rests on a tab before the row shows the split it would make.
+    static let dwell = Duration.milliseconds(450)
+    @ObservationIgnored private var settling: SidebarHover?
+    @ObservationIgnored private var wait: Task<Void, Never>?
+
+    /// Runs `then` once the pointer has stayed on `hover` for `dwell`; nil gives up waiting.
+    func settle(_ hover: SidebarHover?, then: @escaping @MainActor () -> Void = {}) {
+        guard hover != settling else { return }
+        wait?.cancel()
+        settling = hover
+        guard hover != nil else { return }
+        wait = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.dwell)
+            guard let self, !Task.isCancelled, self.settling == hover else { return }
+            self.settling = nil
+            then()
+        }
+    }
+
+    /// The pointer moves on its own, never animated: the dragged tab keeps up with it.
+    func follow(_ point: CGPoint) {
+        var still = Transaction()
+        still.disablesAnimations = true
+        withTransaction(still) { pointer = point }
+    }
+
+    /// Held over a tab, the row shows the split it would make; the dragged tab steps aside for it.
+    var isSplitting: Bool {
+        if case .onto(_, .split)? = hover { true } else { false }
     }
 
     func isTargeting(_ line: String) -> Bool {
@@ -258,13 +294,22 @@ struct SidebarDropDelegate: DropDelegate {
 
     private func follow(_ info: DropInfo) {
         let payload = drag.active
+        if payload != nil { state.follow(info.location) }
         // A row dragged from the list leaves it; a pane leaving its split doesn't take the row.
         let hidden = payload.flatMap { $0.source == .row ? lines.line(holding: $0.id) : nil }
         let hover = lines.hover(at: info.location.y, frames: state.frames, hidden: hidden, dragging: payload?.id)
         let hiddenID = hidden.map { lines.lines[$0].id }
-        guard hover != state.hover || hiddenID != state.hidden else { return }
+        guard hover != state.hover || hiddenID != state.hidden else { return state.settle(nil) }
         let height = hiddenID.flatMap { state.frames[$0]?.height } ?? rowHeight
-        animate(Motion.travel) { state.show(hover, hiding: hiddenID, height: height) }
+        let show = { [state] in state.show(hover, hiding: hiddenID, height: height) }
+        // A split waits until the pointer rests on the tab, so passing over tabs while reordering
+        // carries on as a reorder instead of flickering into splits.
+        if case .onto(_, .split)? = hover {
+            state.settle(hover) { animate(Motion.flow, show) }
+        } else {
+            state.settle(nil)
+            animate(Motion.travel, show)
+        }
     }
 }
 
@@ -295,9 +340,10 @@ extension Preferences.Density {
 
 extension View {
     /// A sidebar row's look: its height, and a rounded highlight when it's selected, hovered, or
-    /// about to take a dropped tab.
-    func sidebarRow(selected: Bool = false, targeted: Bool = false, indent: CGFloat = 0) -> some View {
-        modifier(SidebarRowChrome(selected: selected, targeted: targeted, indent: indent))
+    /// about to take a dropped tab. A row of split panes highlights each pane instead, so it
+    /// passes `highlights: false`.
+    func sidebarRow(selected: Bool = false, targeted: Bool = false, highlights: Bool = true, indent: CGFloat = 0) -> some View {
+        modifier(SidebarRowChrome(selected: selected, targeted: targeted, highlights: highlights, indent: indent))
     }
 
     /// A section's title line: small and quiet, with room above it.
@@ -315,6 +361,7 @@ extension View {
 private struct SidebarRowChrome: ViewModifier {
     let selected: Bool
     let targeted: Bool
+    let highlights: Bool
     let indent: CGFloat
     @Environment(\.sidebarDensity) private var density
     @Environment(\.colorScheme) private var scheme
@@ -338,6 +385,7 @@ private struct SidebarRowChrome: ViewModifier {
 
     private var fill: AnyShapeStyle {
         if targeted { return AnyShapeStyle(.tint.opacity(0.18)) }
+        guard highlights else { return AnyShapeStyle(.clear) }
         let dark = scheme == .dark
         let ink = dark ? Color.white : Color.black
         return AnyShapeStyle(ink.opacity(selected ? (dark ? 0.14 : 0.09) : hovering ? (dark ? 0.06 : 0.045) : 0))

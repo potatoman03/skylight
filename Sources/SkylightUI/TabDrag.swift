@@ -161,15 +161,9 @@ extension View {
         onDrag {
             session.provider(for: tab.id, source: source)
         } preview: {
-            Label {
-                Text(tab.displayTitle).lineLimit(1)
-            } icon: {
-                Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .frame(maxWidth: 220, alignment: .leading)
-            .background(.regularMaterial, in: .rect(cornerRadius: 7))
+            // Nothing: the system can't change a drag's image midway, so the sidebar draws the
+            // tab itself (hiding it over a split it's previewing), and the page shows its plan.
+            Color.clear.frame(width: 1, height: 1)
         }
     }
 }

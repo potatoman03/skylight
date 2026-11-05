@@ -190,6 +190,7 @@ class BrowserClient : public CefClient,
                       public CefPermissionHandler,
                       public CefJSDialogHandler,
                       public CefDownloadHandler,
+                      public CefContextMenuHandler,
                       public CefMessageRouterBrowserSide::Handler {
  public:
   explicit BrowserClient(SKBrowser* owner) : owner_(owner) {
@@ -205,6 +206,28 @@ class BrowserClient : public CefClient,
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
   CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+  CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
+
+  // MARK: Context menu
+
+  static constexpr int kInspect = MENU_ID_USER_FIRST;
+
+  // Chromium's menu, plus Inspect at the end as in Chrome.
+  void OnBeforeContextMenu(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> frame, CefRefPtr<CefContextMenuParams> params,
+                           CefRefPtr<CefMenuModel> model) override {
+    if (model->GetCount() > 0) model->AddSeparator();
+    model->AddItem(kInspect, "Inspect");
+  }
+
+  bool OnContextMenuCommand(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> frame, CefRefPtr<CefContextMenuParams> params,
+                            int command_id, EventFlags event_flags) override {
+    if (command_id != kInspect) return false;
+    CefWindowInfo info;
+    CefBrowserSettings settings;
+    // Opens on the element you clicked.
+    b->GetHost()->ShowDevTools(info, nullptr, settings, CefPoint(params->GetXCoord(), params->GetYCoord()));
+    return true;
+  }
 
   bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                 CefProcessId source, CefRefPtr<CefProcessMessage> message) override {

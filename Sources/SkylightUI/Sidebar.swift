@@ -92,6 +92,16 @@ struct Sidebar: View {
                     .allowsHitTesting(false)
             }
         }
+        .overlay(alignment: .topLeading) {
+            // The tab being dragged, lifted and following the pointer while you reorder. Over
+            // another tab it steps aside, so the split that row shows can be seen.
+            if let id = drag.active?.id, let pointer = drop.pointer, let tab = browser.store.state.tabs[id] {
+                DraggedRow(tab: tab, showing: !drop.isSplitting)
+                    .offset(y: pointer.y - DraggedRow.height / 2)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
+        }
         .padding(.horizontal, 10)
         .padding(.bottom, drop.extraRoom + 6)
     }
@@ -105,14 +115,14 @@ struct Sidebar: View {
         case let .folder(folder):
             FolderRow(folder: folder, targeted: targeted)
         case let .row(ids, box, _):
-            if targeted, let joining = drag.active?.id {
-                // What the row would become: the dragged tab beside it in a split.
-                SplitPreviewRow(tabs: ids, joining: joining, indent: box.isFolder ? SidebarMetrics.indent : 0)
-            } else if ids.count > 1, let split = space.split(containing: ids[0]) {
-                SplitRow(split: split, targeted: targeted)
+            // A tab held over the row's middle shows beside it, as the split the row would become.
+            // The same row view parts in two, so its glass flows apart instead of swapping rows.
+            let joining = targeted ? drag.active?.id : nil
+            let indent = box.isFolder ? SidebarMetrics.indent : 0
+            if ids.count > 1, let split = space.split(containing: ids[0]) {
+                SplitRow(split: split, joining: joining, indent: indent)
             } else if let tab = browser.store.state.tabs[ids[0]] {
-                TabRow(tab: tab, kind: box == .today ? .today : .pinned, targeted: targeted,
-                       indent: box.isFolder ? SidebarMetrics.indent : 0)
+                TabRow(tab: tab, kind: box == .today ? .today : .pinned, joining: joining, indent: indent)
             }
         case let .hint(text, target):
             let inFolder = if case .folder = target { true } else { false }
@@ -122,6 +132,30 @@ struct Sidebar: View {
         case .newTab:
             NewTabRow()
         }
+    }
+}
+
+/// A dragged tab over the sidebar: its row, lifted off the list as a pane of glass.
+private struct DraggedRow: View {
+    static let height: CGFloat = 30
+
+    let tab: BrowserTab
+    let showing: Bool
+
+    var body: some View {
+        Label {
+            Text(tab.shortTitle).lineLimit(1)
+        } icon: {
+            Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle)
+        }
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: Self.height)
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 7, style: .continuous))
+        .scaleEffect(showing ? 1 : 0.96)
+        .opacity(showing ? 1 : 0)
+        // Steps aside gently, comes back at once.
+        .motion(showing ? Motion.feedback : .easeInOut(duration: 0.3), value: showing)
     }
 }
 
@@ -502,19 +536,56 @@ private struct TabRow: View {
 
     let tab: BrowserTab
     let kind: Kind
-    /// A dragged tab would split beside this one.
-    var targeted = false
+    /// A dragged tab held over this one, which would split beside it.
+    var joining: TabID?
     var indent: CGFloat = 0
     @Environment(Browser.self) private var browser
     @Environment(TabDragSession.self) private var drag
+    @Environment(\.sidebarDensity) private var density
     @State private var hovering = false
     @State private var editing = false
     @State private var name = ""
     @FocusState private var focused: Bool
+    @Namespace private var glass
 
     var body: some View {
+        let arriving = joining.flatMap { browser.store.state.tabs[$0] }
+        let parted = arriving != nil
+        // Held over, the row parts into two panes of glass: this tab's, and the arriving one's.
+        GlassEffectContainer(spacing: SplitPane.blend) {
+            HStack(spacing: SplitPane.gap) {
+                content
+                    .padding(.horizontal, parted ? SplitPane.inset : 0)
+                    .frame(height: density.rowHeight - SplitPane.margin)
+                    .glassEffect(parted ? .regular : .identity, in: SplitPane.shape)
+                    .glassEffectID(tab.id, in: glass)
+                if let arriving {
+                    SplitPaneLabel(tab: arriving)
+                        .splitPane(arriving.id, in: glass, height: density.rowHeight - SplitPane.margin, arriving: true)
+                        .transition(Emerge())
+                }
+            }
+        }
+        // The pane's edge moves out, its name stays put.
+        .padding(.leading, parted ? -SplitPane.inset : 0)
+        .motion(Motion.flow, value: joining)
+        .sidebarRow(selected: browser.store.state.selectedTabID == tab.id, highlights: !parted, indent: indent)
+        .onHover { hovering = $0 }
+        .onTapGesture {
+            if browser.store.state.selectedTabID != tab.id { browser.store.send(.selectTab(tab.id)) }
+        }
+        // Double-click the name to rename it. Alongside the click, so selecting doesn't wait.
+        .simultaneousGesture(TapGesture(count: 2).onEnded { if !editing, canRename { startEditing() } })
+        .help("\(tab.displayTitle)\n\(tab.url.absoluteString)")
+        .contextMenu { TabMenu(tab: tab) }
+        .tabDrag(tab, source: .row, session: drag)
+        .onAppear { if browser.renameTab == tab.id { startEditing() } }
+        .onChange(of: browser.renameTab) { _, id in if id == tab.id { startEditing() } }
+    }
+
+    private var content: some View {
         let status = browser.store.status(of: tab.id)
-        HStack(spacing: 4) {
+        return HStack(spacing: 4) {
             Label {
                 if editing {
                     TextField("Tab name", text: $name)
@@ -540,7 +611,7 @@ private struct TabRow: View {
             Spacer(minLength: 0)
             MediaBadge(tab: tab.id)
             // Not while renaming, and not on a pinned tab that's already asleep: there'd be nothing to do.
-            if hovering, !editing, kind == .today || status.isAwake {
+            if hovering, !editing, joining == nil, kind == .today || status.isAwake {
                 Button {
                     animate(Motion.travel) { _ = browser.store.send(.closeTab(tab.id)) }
                 } label: {
@@ -556,18 +627,6 @@ private struct TabRow: View {
         .animation(Motion.resolved(Motion.feedback), value: hovering)
         // Unloading a pinned tab: its row quiets down, and the button goes.
         .animation(Motion.resolved(Motion.travel), value: status.isAwake)
-        .sidebarRow(selected: browser.store.state.selectedTabID == tab.id, targeted: targeted, indent: indent)
-        .onHover { hovering = $0 }
-        .onTapGesture {
-            if browser.store.state.selectedTabID != tab.id { browser.store.send(.selectTab(tab.id)) }
-        }
-        // Double-click the name to rename it. Alongside the click, so selecting doesn't wait.
-        .simultaneousGesture(TapGesture(count: 2).onEnded { if !editing, canRename { startEditing() } })
-        .help("\(tab.displayTitle)\n\(tab.url.absoluteString)")
-        .contextMenu { TabMenu(tab: tab) }
-        .tabDrag(tab, source: .row, session: drag)
-        .onAppear { if browser.renameTab == tab.id { startEditing() } }
-        .onChange(of: browser.renameTab) { _, id in if id == tab.id { startEditing() } }
     }
 
     /// Favorites and split panes have no name in their row to edit.
@@ -618,68 +677,113 @@ struct MediaBadge: View {
     }
 }
 
-/// A split as one row: its panes side by side, the focused one emphasized.
+/// A split as one row: each pane its own pill of glass, a gap between them, the focused one's name
+/// in bold. The page already outlines the focused pane, so the row doesn't light it up as well.
 private struct SplitRow: View {
     let split: TabSplit
-    /// A dragged tab would join the split.
-    var targeted = false
+    /// A dragged tab held over the row, which would join the split.
+    var joining: TabID?
+    var indent: CGFloat = 0
     @Environment(Browser.self) private var browser
     @Environment(TabDragSession.self) private var drag
+    @Environment(\.sidebarDensity) private var density
+    @Namespace private var glass
 
     var body: some View {
         let state = browser.store.state
         let focused = state.selectedTabID
-        HStack(spacing: 6) {
-            ForEach(split.tabs, id: \.self) { id in
-                if let tab = state.tabs[id] {
-                    HStack(spacing: 4) {
-                        Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 14)
-                        Text(tab.shortTitle)
-                            .fadingTail()
-                            .fontWeight(focused == id ? .semibold : .regular)
-                        MediaBadge(tab: id)
+        let selected = split.tabs.contains { $0 == focused }
+        let panes = split.tabs + (joining.map { [$0] } ?? [])
+        GlassEffectContainer(spacing: SplitPane.blend) {
+            HStack(spacing: SplitPane.gap) {
+                ForEach(panes, id: \.self) { id in
+                    if let tab = state.tabs[id] {
+                        let arriving = id == joining
+                        let lit = selected && focused == id
+                        SplitPaneLabel(tab: tab, emphasized: lit)
+                            .splitPane(id, in: glass, height: density.rowHeight - SplitPane.margin,
+                                       arriving: arriving)
+                            .contentShape(.rect)
+                            .onTapGesture { browser.store.send(.selectTab(id)) }
+                            .help(tab.displayTitle)
+                            .tabDrag(tab, source: .row, session: drag)
+                            .transition(Emerge())
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(.rect)
-                    .onTapGesture { browser.store.send(.selectTab(id)) }
-                    .help(tab.displayTitle)
-                    .tabDrag(tab, source: .row, session: drag)
                 }
             }
         }
-        .sidebarRow(selected: split.tabs.contains { $0 == focused }, targeted: targeted)
+        .padding(.leading, -SplitPane.inset)
+        .motion(Motion.flow, value: joining)
+        .motion(Motion.travel, value: focused)
+        .sidebarRow(highlights: false, indent: indent)
         .contextMenu { SplitMenu(tab: split.tabs[0]) }
     }
 }
 
-/// A row with a tab held over it: the split it would become, the arriving tab lit up.
-private struct SplitPreviewRow: View {
-    let tabs: [TabID]
-    let joining: TabID
-    let indent: CGFloat
-    @Environment(Browser.self) private var browser
+/// A pane's icon and name in a split row.
+private struct SplitPaneLabel: View {
+    let tab: BrowserTab
+    var emphasized = false
 
     var body: some View {
-        let state = browser.store.state
         HStack(spacing: 4) {
-            ForEach(tabs + [joining], id: \.self) { id in
-                if let tab = state.tabs[id] {
-                    let arriving = id == joining
-                    HStack(spacing: 4) {
-                        Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 14)
-                        Text(tab.shortTitle).fadingTail()
-                    }
-                    .padding(.horizontal, 5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(height: 22)
-                    .background(arriving ? AnyShapeStyle(.tint.opacity(0.25)) : AnyShapeStyle(.clear),
-                                in: .rect(cornerRadius: 5, style: .continuous))
-                    .transition(.scale(scale: 0.6, anchor: .leading).combined(with: .opacity))
-                }
-            }
+            Favicon(url: tab.faviconURL, page: tab.url, title: tab.displayTitle, size: 14)
+            Text(tab.shortTitle)
+                .fadingTail()
+                .fontWeight(emphasized ? .semibold : .regular)
+            Spacer(minLength: 0)
+            MediaBadge(tab: tab.id)
         }
-        .padding(.leading, -5)
-        .sidebarRow(targeted: true, indent: indent)
+    }
+}
+
+/// How a split's panes sit in their row.
+enum SplitPane {
+    /// Room between panes: enough that they read as two, close enough to read as one row.
+    static let gap: CGFloat = 4
+    /// Glass this close flows together, so a pane parting from another is pulled out of it.
+    /// Under the gap, so panes at rest stay apart.
+    static let blend: CGFloat = 3
+    /// Space between a pane's edge and its icon.
+    static let inset: CGFloat = 6
+    /// How much shorter a pane is than its row.
+    static let margin: CGFloat = 6
+    static let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+
+    /// A tab held over a row is the one thing tinted, and outlined, so the split it would make is
+    /// plain to see.
+    static func glass(arriving: Bool) -> Glass {
+        arriving ? .regular.tint(.accentColor.opacity(0.45)) : .regular.interactive()
+    }
+}
+
+extension View {
+    /// One pane of a split in a sidebar row, as a pill of glass that morphs with its neighbours.
+    fileprivate func splitPane(_ id: TabID, in space: Namespace.ID, height: CGFloat, arriving: Bool = false) -> some View {
+        modifier(SplitPaneChrome(id: id, space: space, height: height, arriving: arriving))
+    }
+}
+
+/// A pane's glass, its own hover, and the outline on one that's arriving.
+private struct SplitPaneChrome: ViewModifier {
+    let id: TabID
+    let space: Namespace.ID
+    let height: CGFloat
+    let arriving: Bool
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, SplitPane.inset)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: height)
+            .background { SplitPane.shape.fill(.primary.opacity(hovering && !arriving ? 0.06 : 0)) }
+            .overlay { SplitPane.shape.strokeBorder(.tint, lineWidth: 1.5).opacity(arriving ? 1 : 0) }
+            .glassEffect(SplitPane.glass(arriving: arriving), in: SplitPane.shape)
+            .glassEffectID(id, in: space)
+            .glassEffectTransition(.matchedGeometry)
+            .animation(Motion.resolved(Motion.feedback), value: hovering)
+            .onHover { hovering = $0 }
     }
 }
 
