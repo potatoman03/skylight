@@ -50,7 +50,7 @@ struct ContentArea: View {
             }
             .coordinateSpace(.named(PaneLayout.space))
         }
-        .background { ViewProbe { anchor.page = $0 } }
+        .background { ViewProbe(found: { anchor.page = $0 }, moved: { anchor.moved() }) }
         .overlay(alignment: .topLeading) { SuggestionsList() }
         .overlay {
             let bar = browser.commandBar

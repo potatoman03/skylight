@@ -56,7 +56,7 @@ struct AddressField: View {
         .font(.system(size: 13))
         .padding(.horizontal, 8)
         .frame(height: 28)
-        .frame(minWidth: 220, idealWidth: 520, maxWidth: 640, alignment: .leading)
+        .frame(minWidth: 220, idealWidth: 220, maxWidth: .infinity, alignment: .leading)
         .background(editing ? AnyShapeStyle(.quinary) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 8))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
@@ -75,7 +75,7 @@ struct AddressField: View {
             }
             .allowsHitTesting(false)
         }
-        .background { ViewProbe { anchor.addField($0) } }
+        .background { ViewProbe(found: { anchor.addField($0) }, moved: { anchor.moved() }) }
         .contentShape(.rect)
         .onTapGesture { if !editing { browser.presentCommandBar(.editCurrent) } }
         .onChange(of: editing) { _, now in
@@ -161,8 +161,26 @@ final class AddressAnchor {
     @ObservationIgnored weak var page: NSView?
     /// Where the address field's toolbar item starts, in the window.
     var itemX: CGFloat?
+    /// Makes whoever reads the field's frame read it again.
+    private var moves = 0
 
-    func addField(_ view: NSView) { fields.add(view) }
+    func addField(_ view: NSView) {
+        fields.add(view)
+        // A toolbar item keeps to its ideal width unless it hugs its content this loosely. Then the
+        // toolbar gives it the room left over, and it never crowds the buttons out. The item
+        // arrives after its view, and a rebuilt toolbar makes a new one.
+        DispatchQueue.main.async { [weak view] in
+            guard let view else { return }
+            let item = view.window?.toolbar?.items.first { $0.view.map(view.isDescendant(of:)) ?? false }
+            item?.view?.setContentHuggingPriority(.init(1), for: .horizontal)
+        }
+    }
+
+    /// The field or the page moved, which they do on every frame of an animation. AppKit has the
+    /// whole new layout once this pass is over.
+    func moved() {
+        DispatchQueue.main.async { self.moves += 1 }
+    }
 
     /// The field on screen: the one you're typing in, else the newest one showing.
     private var field: NSView? {
@@ -177,6 +195,7 @@ final class AddressAnchor {
 
     /// The field's frame in the page's coordinates, y down; `size` is the page's.
     func fieldFrame(size: CGSize) -> CGRect? {
+        _ = moves
         guard let field, let page else { return nil }
         let r = page.convert(field.bounds, from: field)
         return page.isFlipped ? r : CGRect(x: r.minX, y: size.height - r.maxY, width: r.width, height: r.height)
@@ -188,15 +207,22 @@ final class AddressAnchor {
 /// and a copy made for a layout that's gone would otherwise be the one remembered.
 struct ViewProbe: NSViewRepresentable {
     let found: (NSView) -> Void
+    let moved: () -> Void
 
-    func makeNSView(context: Context) -> Probe { Probe(found: found) }
-    func updateNSView(_ view: Probe, context: Context) { view.found = found }
+    func makeNSView(context: Context) -> Probe { Probe(found: found, moved: moved) }
+
+    func updateNSView(_ view: Probe, context: Context) {
+        view.found = found
+        view.moved = moved
+    }
 
     final class Probe: NSView {
         var found: (NSView) -> Void
+        var moved: () -> Void
 
-        init(found: @escaping (NSView) -> Void) {
+        init(found: @escaping (NSView) -> Void, moved: @escaping () -> Void) {
             self.found = found
+            self.moved = moved
             super.init(frame: .zero)
         }
 
@@ -205,6 +231,16 @@ struct ViewProbe: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if window != nil { found(self) }
+        }
+
+        override func setFrameOrigin(_ newOrigin: NSPoint) {
+            super.setFrameOrigin(newOrigin)
+            moved()
+        }
+
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            moved()
         }
     }
 }
