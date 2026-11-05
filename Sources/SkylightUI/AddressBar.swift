@@ -159,17 +159,30 @@ final class AddressAnchor {
     }
 }
 
-/// An empty AppKit view, to find where a SwiftUI view is in the window.
+/// An empty AppKit view, to find where a SwiftUI view is in the window. It reports itself each time
+/// it joins a window, not when it's made: the toolbar rebuilds its items (hiding the sidebar does),
+/// and a copy made for a layout that's gone would otherwise be the one remembered.
 struct ViewProbe: NSViewRepresentable {
     let found: (NSView) -> Void
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        found(view)
-        return view
-    }
+    func makeNSView(context: Context) -> Probe { Probe(found: found) }
+    func updateNSView(_ view: Probe, context: Context) { view.found = found }
 
-    func updateNSView(_ view: NSView, context: Context) {}
+    final class Probe: NSView {
+        var found: (NSView) -> Void
+
+        init(found: @escaping (NSView) -> Void) {
+            self.found = found
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window != nil { found(self) }
+        }
+    }
 }
 
 /// Reports where a view starts in its window, again whenever the window resizes or goes full screen.
