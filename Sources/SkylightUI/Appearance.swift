@@ -278,6 +278,11 @@ struct AppearanceSettings: View {
                             .help("A picture, a GIF or a .\(ThemeFile.fileExtension) file")
                         }
                     }
+                    labeled("Pictures") {
+                        LazyVGrid(columns: Self.galleryColumns, alignment: .leading, spacing: 14) {
+                            ForEach(SkyTheme.pictureThemes) { card($0, current: current, hue: hue, prefs) }
+                        }
+                    }
                     labeled("Quiet") {
                         LazyVGrid(columns: Self.galleryColumns, alignment: .leading, spacing: 14) {
                             ForEach(SkyTheme.quietThemes) { card($0, current: current, hue: hue, prefs) }

@@ -42,7 +42,8 @@ extension ThemePalette {
         let brightness = pixels.sorted { $0.luminance < $1.luminance }
         let hardest = brightness[dark ? (brightness.count - 1) * 9 / 10 : (brightness.count - 1) / 10]
         let veil = dark ? RGB(h: hue, s: 0.4 * color, v: 0.08) : RGB(h: hue, s: 0.03 * color, v: 1)
-        var opacity = 0.3
+        // Pictures are busier than any sample shows, so the veil starts well above nothing.
+        var opacity = 0.5
         while opacity < 0.9, palette.text!.contrast(with: hardest.mixed(with: veil, opacity)) < 4.5 { opacity += 0.05 }
         palette.scrim = ThemeScrim(color: veil, opacity: opacity)
         return palette

@@ -383,11 +383,14 @@ public final class Preferences {
 
     /// Saves a theme and its pictures to one file, to keep or to share.
     public func exportTheme(_ id: String, to destination: URL) -> Bool {
-        guard let theme = theme(id) else { return false }
+        guard var theme = theme(id) else { return false }
         var pictures: [String: Data] = [:]
         for image in [theme.light.image, theme.dark.image].compactMap({ $0 }) {
             if let url = url(for: image), let data = try? Data(contentsOf: url) { pictures[image.file] = data }
         }
+        // In the file, the app's own pictures are like any other.
+        theme.light.image?.builtIn = false
+        theme.dark.image?.builtIn = false
         guard let data = try? ThemeFile(theme: theme, pictures: pictures).encoded() else { return false }
         return (try? data.write(to: destination, options: .atomic)) != nil
     }
