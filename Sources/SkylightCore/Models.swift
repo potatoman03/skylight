@@ -161,6 +161,14 @@ public enum TabSection: String, Codable, Sendable, CaseIterable {
 }
 
 /// A Space: its own tabs, color and icon, browsing as one profile.
+/// How strongly a Space's color washes through the sidebar.
+public enum SpaceTint: String, Codable, CaseIterable, Identifiable, Sendable {
+    case none, subtle, strong
+
+    public var id: String { rawValue }
+    public var name: String { rawValue.capitalized }
+}
+
 public struct Space: Identifiable, Codable, Equatable, Sendable {
     public let id: SpaceID
     public var name: String
@@ -171,6 +179,8 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
     public var profileID: ProfileID
     /// A theme just for this Space; nil uses the app's theme.
     public var themeID: String?
+    /// How strongly the Space's color washes through the sidebar.
+    public var tint: SpaceTint
     public var pinned: [TabID]
     public var today: [TabID]
     public var selectedTabID: TabID?
@@ -180,14 +190,15 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
     public var folders: [TabFolder]
 
     public init(id: SpaceID = SpaceID(), name: String, hue: Double, icon: String? = nil, profileID: ProfileID = .standard,
-                themeID: String? = nil, pinned: [TabID] = [], today: [TabID] = [], selectedTabID: TabID? = nil,
-                splits: [TabSplit] = [], folders: [TabFolder] = []) {
+                themeID: String? = nil, tint: SpaceTint = .none, pinned: [TabID] = [], today: [TabID] = [],
+                selectedTabID: TabID? = nil, splits: [TabSplit] = [], folders: [TabFolder] = []) {
         self.id = id
         self.name = name
         self.hue = hue
         self.icon = icon
         self.profileID = profileID
         self.themeID = themeID
+        self.tint = tint
         self.pinned = pinned
         self.today = today
         self.selectedTabID = selectedTabID
@@ -195,7 +206,7 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         self.folders = folders
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, hue, icon, profileID, themeID, pinned, today, selectedTabID, splits, folders }
+    enum CodingKeys: String, CodingKey { case id, name, hue, icon, profileID, themeID, tint, pinned, today, selectedTabID, splits, folders }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -205,6 +216,8 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         profileID = try c.decodeIfPresent(ProfileID.self, forKey: .profileID) ?? .standard
         themeID = try c.decodeIfPresent(String.self, forKey: .themeID)
+        // A tint from a newer build shouldn't cost you your Spaces.
+        tint = (try? c.decodeIfPresent(SpaceTint.self, forKey: .tint)) ?? .none
         pinned = try c.decodeIfPresent([TabID].self, forKey: .pinned) ?? []
         today = try c.decodeIfPresent([TabID].self, forKey: .today) ?? []
         selectedTabID = try c.decodeIfPresent(TabID.self, forKey: .selectedTabID)

@@ -67,6 +67,7 @@ public enum BrowserAction: Equatable, Sendable {
     case setSpaceIcon(SpaceID, String?)
     /// nil goes back to the app's theme.
     case setSpaceTheme(SpaceID, String?)
+    case setSpaceTint(SpaceID, SpaceTint)
     /// Changing a Space's profile reloads its pages in the new cookie jar.
     case assignProfile(SpaceID, ProfileID)
 

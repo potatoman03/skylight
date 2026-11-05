@@ -93,6 +93,52 @@ public final class Preferences {
         }
     }
 
+    /// What a favorite looks like.
+    public enum FavoriteStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+        /// A clear pane of glass.
+        case glass
+        /// Glass in the Space's color.
+        case tinted
+        /// Just the site's icon, with no tile behind it.
+        case plain
+        public var id: String { rawValue }
+
+        public var name: String {
+            switch self {
+            case .glass: "Glass"
+            case .tinted: "Tinted"
+            case .plain: "Icons only"
+            }
+        }
+    }
+
+    public enum FavoriteSize: String, Codable, CaseIterable, Identifiable, Sendable {
+        case small, medium, large
+        public var id: String { rawValue }
+        public var name: String { rawValue.capitalized }
+    }
+
+    /// How the Space's name shows at the top of its tabs.
+    public enum SpaceHeaderStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+        case standard, large, hidden
+        public var id: String { rawValue }
+
+        public var name: String {
+            switch self {
+            case .standard: "Icon and name"
+            case .large: "Large title"
+            case .hidden: "Hidden"
+            }
+        }
+    }
+
+    /// How the Space switcher at the bottom of the sidebar shows.
+    public enum SpaceBarStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+        case icons, dots, hidden
+        public var id: String { rawValue }
+        public var name: String { rawValue.capitalized }
+    }
+
     /// Where extension buttons go.
     public enum ExtensionPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
         /// Pinned extensions get their own toolbar buttons.
@@ -127,6 +173,13 @@ public final class Preferences {
         var customThemes: [SkyTheme]?
         var hiddenSidebarItems: Set<SidebarItem>?
         var density: Density?
+        var favoriteStyle: FavoriteStyle?
+        var favoriteSize: FavoriteSize?
+        var favoritesPerRow: Int?
+        var spaceHeaderStyle: SpaceHeaderStyle?
+        var spaceMenuOnHover: Bool?
+        var spaceBarStyle: SpaceBarStyle?
+        var showsDropHints: Bool?
         var extensionPlacement: ExtensionPlacement?
         var skyBackdrop: Bool?
         var highlightFocusedPane: Bool?
@@ -169,6 +222,16 @@ public final class Preferences {
     public var customThemes: [SkyTheme] = [] { didSet { save() } }
     public var hiddenSidebarItems: Set<SidebarItem> = [] { didSet { save() } }
     public var density: Density = .comfortable { didSet { save() } }
+    public var favoriteStyle: FavoriteStyle = .glass { didSet { save() } }
+    public var favoriteSize: FavoriteSize = .medium { didSet { save() } }
+    /// Tiles in a row of favorites; 0 fits as many as the sidebar's width allows.
+    public var favoritesPerRow = 0 { didSet { save() } }
+    public var spaceHeaderStyle: SpaceHeaderStyle = .standard { didSet { save() } }
+    /// Keep the Space header's ··· button out of sight until the pointer is over the header.
+    public var spaceMenuOnHover = false { didSet { save() } }
+    public var spaceBarStyle: SpaceBarStyle = .icons { didSet { save() } }
+    /// Hints like "Drag tabs here to pin them" in empty sections. Off, they show only during a drag.
+    public var showsDropHints = true { didSet { save() } }
     public var extensionPlacement: ExtensionPlacement = .addressBar { didSet { save() } }
     /// Ring the pane that has focus in a split.
     public var highlightFocusedPane = true { didSet { save() } }
@@ -246,6 +309,13 @@ public final class Preferences {
         customThemes = stored.customThemes ?? []
         hiddenSidebarItems = stored.hiddenSidebarItems ?? []
         density = stored.density ?? density
+        favoriteStyle = stored.favoriteStyle ?? favoriteStyle
+        favoriteSize = stored.favoriteSize ?? favoriteSize
+        favoritesPerRow = stored.favoritesPerRow ?? favoritesPerRow
+        spaceHeaderStyle = stored.spaceHeaderStyle ?? spaceHeaderStyle
+        spaceMenuOnHover = stored.spaceMenuOnHover ?? spaceMenuOnHover
+        spaceBarStyle = stored.spaceBarStyle ?? spaceBarStyle
+        showsDropHints = stored.showsDropHints ?? showsDropHints
         extensionPlacement = stored.extensionPlacement ?? extensionPlacement
         skyBackdrop = stored.skyBackdrop ?? skyBackdrop
         highlightFocusedPane = stored.highlightFocusedPane ?? highlightFocusedPane
@@ -269,6 +339,9 @@ public final class Preferences {
         let stored = Stored(searchEngine: searchEngine, customSearchTemplate: customSearchTemplate, appearance: appearance, godRays: godRays,
                             archiveAfterHours: archiveAfterHours, sidebarCollapsed: sidebarCollapsed, themeID: themeID,
                             customThemes: customThemes, hiddenSidebarItems: hiddenSidebarItems, density: density,
+                            favoriteStyle: favoriteStyle, favoriteSize: favoriteSize, favoritesPerRow: favoritesPerRow,
+                            spaceHeaderStyle: spaceHeaderStyle, spaceMenuOnHover: spaceMenuOnHover,
+                            spaceBarStyle: spaceBarStyle, showsDropHints: showsDropHints,
                             extensionPlacement: extensionPlacement, skyBackdrop: skyBackdrop,
                             highlightFocusedPane: highlightFocusedPane, autoPictureInPicture: autoPictureInPicture,
                             showMediaControls: showMediaControls, tidyInstruction: tidyInstruction, sidebarWidth: sidebarWidth,

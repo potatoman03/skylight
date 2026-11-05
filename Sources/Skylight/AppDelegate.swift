@@ -189,6 +189,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func nextSpace(_ sender: Any?) { store?.send(.switchSpaceByOffset(1)) }
     @objc func previousSpace(_ sender: Any?) { store?.send(.switchSpaceByOffset(-1)) }
     @objc func newSpace(_ sender: Any?) { store?.send(.createSpace(name: "Space \((store?.state.spaces.count ?? 0) + 1)")) }
+    @objc func customizeSpace(_ sender: Any?) {
+        if let id = store?.state.activeSpaceID { browser?.customizeSpace(id) }
+    }
     @objc func newFolder(_ sender: Any?) {
         withAnimation(.smooth(duration: 0.28)) { browser?.newFolder() }
     }

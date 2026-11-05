@@ -19,6 +19,25 @@ enum Theme {
         return scheme == .dark ? Color(hue: h, saturation: 0.45, brightness: 1) : Color(hue: h, saturation: 0.75, brightness: 0.62)
     }
 
+    /// A Space's color washed through the sidebar: brighter than its accent, so it reads as light
+    /// falling on the glass rather than paint.
+    static func wash(_ hue: Double, _ scheme: ColorScheme) -> Color {
+        let h = hue - floor(hue)
+        return scheme == .dark ? Color(hue: h, saturation: 0.6, brightness: 0.75) : Color(hue: h, saturation: 0.65, brightness: 0.95)
+    }
+
+    /// A round swatch for menus, which draw only images in color, not SwiftUI shapes.
+    @MainActor
+    static func swatch(_ hue: Double, _ scheme: ColorScheme) -> NSImage {
+        let color = NSColor(accent(hue, scheme))
+        let image = NSImage(size: NSSize(width: 14, height: 14), flipped: false) { rect in
+            color.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 1.5, dy: 1.5)).fill()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
 }
 
 extension Color {
