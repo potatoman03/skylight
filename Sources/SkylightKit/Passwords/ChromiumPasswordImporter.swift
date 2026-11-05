@@ -1,6 +1,7 @@
 import CommonCrypto
 import Foundation
 import Security
+import SkylightCore
 import SQLite3
 
 /// A Chromium-based browser installed on this Mac, and where its default profile keeps things.
@@ -22,6 +23,11 @@ public struct ChromiumBrowser: Sendable, Identifiable, Equatable {
 
     public var loginData: URL { profileDirectory.appending(path: "Login Data") }
     public var bookmarks: URL { profileDirectory.appending(path: "Bookmarks") }
+    /// Newer versions moved this file into `Network`.
+    public var cookies: URL {
+        let moved = profileDirectory.appending(path: "Network/Cookies")
+        return FileManager.default.fileExists(atPath: moved.path) ? moved : profileDirectory.appending(path: "Cookies")
+    }
     public var isInstalled: Bool { FileManager.default.fileExists(atPath: profileDirectory.path) }
 
     public static let all: [ChromiumBrowser] = {
@@ -69,30 +75,10 @@ public enum ChromiumImportError: Error, LocalizedError, Equatable {
 public enum ChromiumPasswordImporter {
     /// Reads and decrypts every saved login. Rows that fail to decrypt are skipped.
     public static func read(loginData: URL, safeStorageKey: String, source: String? = nil) throws -> [Credential] {
-        guard FileManager.default.fileExists(atPath: loginData.path) else {
-            throw ChromiumImportError.missingFile(loginData.path)
-        }
-        // The browser may hold a lock on the live file, so work on a copy.
-        let folder = FileManager.default.temporaryDirectory.appending(path: "skylight-import-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let copy = folder.appending(path: "Login Data")
-        try FileManager.default.copyItem(at: loginData, to: copy)
-        for suffix in ["-journal", "-wal", "-shm"] {
-            let side = URL(fileURLWithPath: loginData.path + suffix)
-            if FileManager.default.fileExists(atPath: side.path) {
-                try? FileManager.default.copyItem(at: side, to: URL(fileURLWithPath: copy.path + suffix))
-            }
-        }
+        try withCopy(of: loginData) { db in try logins(in: db, safeStorageKey: safeStorageKey, source: source) }
+    }
 
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(copy.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
-            let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed"
-            sqlite3_close(db)
-            throw ChromiumImportError.database(message)
-        }
-        defer { sqlite3_close(db) }
-
+    private static func logins(in db: OpaquePointer?, safeStorageKey: String, source: String?) throws -> [Credential] {
         let version = Int(try scalar(db, "SELECT value FROM meta WHERE key = 'version'") ?? "0") ?? 0
         let key = derivedKey(safeStorageKey)
 
@@ -134,19 +120,30 @@ public enum ChromiumPasswordImporter {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// Tries each of the browser's Keychain services, then reads its passwords.
-    public static func read(_ browser: ChromiumBrowser) throws -> [Credential] {
-        var key: String?
+    /// Tries each of the browser's Keychain services.
+    public static func safeStorageKey(for browser: ChromiumBrowser) throws -> String {
         for service in browser.safeStorageServices {
             do {
-                key = try safeStorageKey(service: service)
-                break
+                return try safeStorageKey(service: service)
             } catch ChromiumImportError.noSafeStorageKey {
                 continue
             }
         }
-        guard let key else { throw ChromiumImportError.noSafeStorageKey(browser.name) }
-        return try read(loginData: browser.loginData, safeStorageKey: key, source: browser.name)
+        throw ChromiumImportError.noSafeStorageKey(browser.name)
+    }
+
+    /// Reads the browser's passwords.
+    public static func read(_ browser: ChromiumBrowser) throws -> [Credential] {
+        try read(loginData: browser.loginData, safeStorageKey: safeStorageKey(for: browser), source: browser.name)
+    }
+
+    /// Reads the browser's passwords and cookies, with one Keychain prompt for both. Either can be
+    /// missing: a browser that has never saved a password has no `Login Data`.
+    public static func readSignIns(_ browser: ChromiumBrowser) throws -> (credentials: [Credential], cookies: [WebCookie]) {
+        let key = try safeStorageKey(for: browser)
+        let files = FileManager.default
+        return (files.fileExists(atPath: browser.loginData.path) ? try read(loginData: browser.loginData, safeStorageKey: key, source: browser.name) : [],
+                files.fileExists(atPath: browser.cookies.path) ? try ChromiumCookieImporter.read(cookies: browser.cookies, safeStorageKey: key) : [])
     }
 
     // MARK: - Crypto
@@ -196,18 +193,45 @@ public enum ChromiumPasswordImporter {
 
     // MARK: - SQLite
 
-    private static func scalar(_ db: OpaquePointer?, _ sql: String) throws -> String? {
+    /// Opens a copy of a Chromium database: the browser may hold a lock on the live file.
+    static func withCopy<T>(of file: URL, _ body: (OpaquePointer?) throws -> T) throws -> T {
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            throw ChromiumImportError.missingFile(file.path)
+        }
+        let folder = FileManager.default.temporaryDirectory.appending(path: "skylight-import-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let copy = folder.appending(path: file.lastPathComponent)
+        try FileManager.default.copyItem(at: file, to: copy)
+        for suffix in ["-journal", "-wal", "-shm"] {
+            let side = URL(fileURLWithPath: file.path + suffix)
+            if FileManager.default.fileExists(atPath: side.path) {
+                try? FileManager.default.copyItem(at: side, to: URL(fileURLWithPath: copy.path + suffix))
+            }
+        }
+
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(copy.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
+            let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed"
+            sqlite3_close(db)
+            throw ChromiumImportError.database(message)
+        }
+        defer { sqlite3_close(db) }
+        return try body(db)
+    }
+
+    static func scalar(_ db: OpaquePointer?, _ sql: String) throws -> String? {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(statement) }
         return sqlite3_step(statement) == SQLITE_ROW ? text(statement, 0) : nil
     }
 
-    private static func text(_ statement: OpaquePointer?, _ column: Int32) -> String? {
+    static func text(_ statement: OpaquePointer?, _ column: Int32) -> String? {
         sqlite3_column_text(statement, column).map { String(cString: $0) }
     }
 
-    private static func data(_ statement: OpaquePointer?, _ column: Int32) -> [UInt8] {
+    static func data(_ statement: OpaquePointer?, _ column: Int32) -> [UInt8] {
         let count = Int(sqlite3_column_bytes(statement, column))
         guard count > 0, let bytes = sqlite3_column_blob(statement, column) else { return [] }
         return Array(UnsafeRawBufferPointer(start: bytes, count: count))

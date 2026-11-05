@@ -259,6 +259,13 @@ public final class PasswordService {
         }
     }
 
+    /// A browser's saved logins and cookies, read together so macOS asks only once. Demo mode's
+    /// store is in memory, and a development run stays out of the login Keychain.
+    func signIns(from browser: ChromiumBrowser) async throws -> (credentials: [Credential], cookies: [WebCookie]) {
+        if store is MemoryCredentialStore { return ([], []) }
+        return try await Task.detached { try ChromiumPasswordImporter.readSignIns(browser) }.value
+    }
+
     /// Imports a CSV export from Chrome, Safari, 1Password, Bitwarden and the like.
     public func importCSV(into profile: ProfileID) -> String? {
         let panel = NSOpenPanel()
@@ -296,6 +303,16 @@ public final class PasswordService {
     /// Adds logins you don't have yet; ones you already saved keep their password.
     @discardableResult
     public func add(_ credentials: [Credential], from source: String, into profile: ProfileID) -> String {
+        let (added, failed) = save(credentials, into: profile)
+        let message = added == 0 && failed == 0 ? "Every password from \(source) is already here"
+            : "Imported \(added) password\(added == 1 ? "" : "s") from \(source)" + (failed > 0 ? " (\(failed) failed)" : "")
+        toasts.show(message, symbol: "key.fill")
+        return message
+    }
+
+    /// Saves the logins that aren't here yet. Returns how many were saved and how many failed.
+    @discardableResult
+    func save(_ credentials: [Credential], into profile: ProfileID) -> (added: Int, failed: Int) {
         let credentials = credentials.map { credential -> Credential in
             var credential = credential
             credential.profile = profile
@@ -313,10 +330,7 @@ public final class PasswordService {
             }
         }
         reload()
-        let message = added == 0 && failed == 0 ? "Every password from \(source) is already here"
-            : "Imported \(added) password\(added == 1 ? "" : "s") from \(source)" + (failed > 0 ? " (\(failed) failed)" : "")
-        toasts.show(message, symbol: "key.fill")
-        return message
+        return (added, failed)
     }
 
     private func report(_ error: Error, from source: String) -> String {

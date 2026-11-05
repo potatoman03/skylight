@@ -69,6 +69,18 @@ NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark - Profiles
 
+/// A cookie to set. `sameSite` is 0 unspecified, 1 none, 2 lax, 3 strict, as CEF counts them.
+@interface SKCookie : NSObject
+- (instancetype)initWithName:(NSString *)name
+                       value:(NSString *)value
+                      domain:(NSString *)domain
+                        path:(NSString *)path
+                      secure:(BOOL)secure
+                    httpOnly:(BOOL)httpOnly
+                     expires:(nullable NSDate *)expires
+                    sameSite:(NSInteger)sameSite;
+@end
+
 /// A cookie jar and cache (a CEF request context).
 @interface SKProfile : NSObject
 - (instancetype)initWithCachePath:(NSString *)path;
@@ -81,6 +93,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)copyCookiesForDomains:(NSArray<NSString *> *)domains
                     toProfile:(SKProfile *)profile
                    completion:(void (^)(NSInteger copied))completion;
+/// Sets cookies, skipping any this profile already has for that name, domain and path. Completion
+/// gets how many were added.
+- (void)addCookies:(NSArray<SKCookie *> *)cookies completion:(void (^)(NSInteger added))completion;
 @end
 
 #pragma mark - Requests from pages

@@ -215,9 +215,11 @@ Aside, Arc, Chrome, Dia, Brave, Edge and other Chromium browsers on this Mac (ma
 Skylight can read that browser's key), or from a CSV export (Chrome, Safari, 1Password, Bitwarden).
 Copying and exporting ask for Touch ID or your password.
 
-**Import** (File → Import From, or Settings → Import) brings over Arc's Spaces, pinned tabs and
-favorites, or a Chromium browser's bookmarks: the bookmarks bar becomes favorites and each folder a
-Space, which is how Aside's sidebar folders come across.
+**Import** (File → Import From, or Settings → Import) brings a browser's saved passwords and
+sign-ins into the Space on screen, after macOS asks to let Skylight read that browser's key. It also
+brings over Arc's Spaces, pinned tabs and favorites, or a Chromium browser's bookmarks: the bookmarks
+bar becomes favorites and each folder a Space, which is how Aside's sidebar folders come across.
+Safari and Apple Passwords keep logins from other apps, so those come from a CSV export.
 
 The sky is a small Metal shader: light falls through it, slowly, in the theme's colors. It runs at
 30 fps only while it's showing and the window is in front, and stops with Reduce Motion or when

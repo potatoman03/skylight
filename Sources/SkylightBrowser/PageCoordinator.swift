@@ -252,6 +252,10 @@ public final class PageCoordinator: BrowserEffectHandler {
         await profile(for: source).copyCookies(domains: domains, to: profile(for: target))
     }
 
+    func addCookies(_ cookies: [WebCookie], to target: ProfileID) async -> Int {
+        await profile(for: target).addCookies(cookies)
+    }
+
     /// Sleeps idle pages and archives idle Today tabs.
     func sweep(now: Date = .now) {
         guard let store else { return }

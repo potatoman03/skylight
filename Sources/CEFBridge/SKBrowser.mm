@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <set>
 
 #include "Internal.h"
 #include "include/cef_client.h"
@@ -59,6 +60,9 @@ class CookieCollector : public CefCookieVisitor {
   CookieCollector(std::vector<std::string> domains, std::function<void(Cookies)> done)
       : domains_(std::move(domains)), done_(std::move(done)) {}
 
+  /// Every cookie in the store.
+  explicit CookieCollector(std::function<void(Cookies)> done) : all_(true), done_(std::move(done)) {}
+
   ~CookieCollector() override {
     auto done = done_;
     auto cookies = cookies_;
@@ -68,13 +72,14 @@ class CookieCollector : public CefCookieVisitor {
   }
 
   bool Visit(const CefCookie& cookie, int, int, bool&) override {
-    if (IsWithin(CefString(&cookie.domain).ToString(), domains_)) {
+    if (all_ || IsWithin(CefString(&cookie.domain).ToString(), domains_)) {
       cookies_.push_back(cookie);
     }
     return true;
   }
 
  private:
+  bool all_ = false;
   std::vector<std::string> domains_;
   std::function<void(Cookies)> done_;
   Cookies cookies_;
@@ -99,6 +104,14 @@ void CollectCookies(CefRefPtr<CefRequestContext> context, std::vector<std::strin
     }
   });
 }
+
+std::string CookieKey(const CefCookie& cookie) {
+  return CefString(&cookie.domain).ToString() + "\n" + CefString(&cookie.path).ToString() + "\n" +
+         CefString(&cookie.name).ToString();
+}
+
+/// Seconds from Chromium's epoch, 1601, to a date's, 1970.
+constexpr double kChromiumEpochOffset = 11644473600.0;
 
 void WriteCookies(CefRefPtr<CefCookieManager> manager, const Cookies& cookies,
                   std::function<void(NSInteger)> done) {
@@ -132,6 +145,37 @@ void WriteCookies(CefRefPtr<CefCookieManager> manager, const Cookies& cookies,
 }
 
 }  // namespace
+
+@implementation SKCookie {
+ @public
+  CefCookie _cookie;
+}
+
+- (instancetype)initWithName:(NSString*)name
+                       value:(NSString*)value
+                      domain:(NSString*)domain
+                        path:(NSString*)path
+                      secure:(BOOL)secure
+                    httpOnly:(BOOL)httpOnly
+                     expires:(NSDate*)expires
+                    sameSite:(NSInteger)sameSite {
+  if ((self = [super init])) {
+    CefString(&_cookie.name) = skylight::ToCef(name);
+    CefString(&_cookie.value) = skylight::ToCef(value);
+    CefString(&_cookie.domain) = skylight::ToCef(domain);
+    CefString(&_cookie.path) = skylight::ToCef(path);
+    _cookie.secure = secure;
+    _cookie.httponly = httpOnly;
+    _cookie.has_expires = expires != nil;
+    if (expires) {
+      _cookie.expires.val = static_cast<int64_t>((expires.timeIntervalSince1970 + kChromiumEpochOffset) * 1000000);
+    }
+    _cookie.same_site = static_cast<cef_cookie_same_site_t>(sameSite);
+  }
+  return self;
+}
+
+@end
 
 @interface SKProfile ()
 @property (nonatomic, readonly) CefRefPtr<CefRequestContext> context;
@@ -175,6 +219,33 @@ void WriteCookies(CefRefPtr<CefCookieManager> manager, const Cookies& cookies,
     WithCookieManager(target, [cookies, completion](CefRefPtr<CefCookieManager> manager) {
       WriteCookies(manager, cookies, [completion](NSInteger copied) { completion(copied); });
     });
+  });
+}
+
+- (void)addCookies:(NSArray<SKCookie*>*)cookies completion:(void (^)(NSInteger))completion {
+  auto incoming = std::make_shared<Cookies>();
+  for (SKCookie* cookie in cookies) {
+    incoming->push_back(cookie->_cookie);
+  }
+  WithCookieManager(_context, [incoming, completion](CefRefPtr<CefCookieManager> manager) {
+    auto write = [manager, incoming, completion](Cookies existing) {
+      std::set<std::string> have;
+      for (const CefCookie& cookie : existing) {
+        have.insert(CookieKey(cookie));
+      }
+      Cookies fresh;
+      for (const CefCookie& cookie : *incoming) {
+        if (!have.contains(CookieKey(cookie))) {
+          fresh.push_back(cookie);
+        }
+      }
+      WriteCookies(manager, fresh, [completion](NSInteger added) { completion(added); });
+    };
+    if (!manager) {
+      return write({});
+    }
+    // The collector calls back when it's released, whether or not the walk ran.
+    manager->VisitAllCookies(new CookieCollector(write));
   });
 }
 

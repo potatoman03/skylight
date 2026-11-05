@@ -230,7 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc func importFrom(_ sender: NSMenuItem) {
         if let source = (sender.representedObject as? String).flatMap(Browser.ImportSource.init(rawValue:)) {
-            browser?.importBrowser(source)
+            Task { await browser?.importBrowser(source) }
         }
     }
     @objc func importPasswordsCSV(_ sender: Any?) { browser?.openSettings("passwords") }
