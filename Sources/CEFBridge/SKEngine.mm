@@ -257,6 +257,11 @@ void UnregisterBrowser(CefRefPtr<CefBrowser> browser) {
     storage.emplace_back("--remote-debugging-pipe");
     // Lets the pipe install and remove extensions (Extensions.loadUnpacked).
     storage.emplace_back("--enable-unsafe-extension-debugging");
+    // The only way in for profiles other than the default: Extensions.loadUnpacked ignores them.
+    if (settings.extensionPaths.count > 0) {
+      NSString* paths = [settings.extensionPaths componentsJoinedByString:@","];
+      storage.emplace_back(std::string("--load-extension=") + paths.UTF8String);
+    }
   }
   std::vector<char*> argv;
   for (auto& s : storage) argv.push_back(s.data());

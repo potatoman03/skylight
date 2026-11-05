@@ -7,8 +7,9 @@ import SkylightKit
 /// Chrome extensions: what's installed, their toolbar buttons, and their popups.
 ///
 /// Extensions run in Chromium; this keeps the list (`extensions.json`), installs from the Chrome
-/// Web Store or a folder, and hosts popups. Extensions run in the default profile, so Spaces on
-/// other profiles don't get them.
+/// Web Store or a folder, and hosts popups. Every profile runs them, each with its own storage, so
+/// signing in to one in a Space doesn't sign in the others. Chromium takes the list for all profiles
+/// only at launch: one added while running reaches the default profile now and the rest next time.
 @MainActor
 @Observable
 public final class ExtensionService {
@@ -45,6 +46,14 @@ public final class ExtensionService {
     @ObservationIgnored var makePage: ((URL, WebPageDelegate) -> WebPage?)?
     @ObservationIgnored var openTab: ((URL) -> Void)?
     @ObservationIgnored var currentTabs: () -> (pages: [WebPage], active: WebPage?) = { ([], nil) }
+    @ObservationIgnored var tabGroups: () -> [ExtensionTabs] = { [] }
+    /// Whether the Space on screen uses the default profile, and whether any profile doesn't.
+    @ObservationIgnored var showingDefaultProfile: () -> Bool = { true }
+    @ObservationIgnored var hasOtherProfiles: () -> Bool = { false }
+    /// Folders Chromium loaded at launch, in every profile.
+    @ObservationIgnored private var launched: Set<String> = []
+    /// Added since launch, so only the default profile has them so far.
+    @ObservationIgnored private var addedSinceLaunch: Set<String> = []
 
     static let chromeVersion = "156.0.8078.80"
     static let popupMin = CGSize(width: 25, height: 25)
@@ -59,14 +68,23 @@ public final class ExtensionService {
             installed = list
         }
         for ext in installed { manifests[ext.id] = try? ExtensionManifest.load(from: ext.folder) }
+        launched = Set(ExtensionFolders.launchable(enabled.map(\.folder)).map(\.path))
         host?.openTab = { [weak self] url in self?.openTab?(url) }
     }
 
-    /// Loads every enabled extension, all at once.
+    /// What Chromium should load at launch, read before there's a service to ask.
+    public nonisolated static func launchFolders(root: URL) -> [URL] {
+        guard let data = try? Data(contentsOf: root.appending(path: "extensions.json")),
+              let list = try? JSONDecoder().decode([Installed].self, from: data) else { return [] }
+        return ExtensionFolders.launchable(list.filter(\.enabled).map(\.folder))
+    }
+
+    /// Picks up the extensions Chromium started with, and loads any it couldn't.
     func start() async {
-        guard host != nil else { return }
+        guard let host else { return }
+        await host.start()
         await withTaskGroup(of: Void.self) { group in
-            for ext in installed where ext.enabled { group.addTask { await self.load(ext) } }
+            for ext in installed where ext.enabled && !launched.contains(ext.folder.path) { group.addTask { await self.load(ext) } }
         }
     }
 
@@ -163,7 +181,9 @@ public final class ExtensionService {
         installed.removeAll { $0.id == ext.id }
         installed.append(ext)
         save()
-        toasts.show("Added \(manifests[ext.id]?.name ?? "the extension")", symbol: "puzzlepiece.extension")
+        addedSinceLaunch.insert(ext.id)
+        let name = manifests[ext.id]?.name ?? "the extension"
+        toasts.show(hasOtherProfiles() ? "Added \(name). Relaunch to use it in every Space." : "Added \(name)", symbol: "puzzlepiece.extension")
     }
 
     /// Unzips a package beside `folder`, to look at before `replace(_:with:)` moves it in.
@@ -276,6 +296,13 @@ public final class ExtensionService {
         save()
         let ext = installed[i]
         if popup?.id == id { closePopup() }
+        // Chromium can't unload what it started with: that stays running until the next launch.
+        let running = launched.contains(ext.folder.path)
+        if on, !running { addedSinceLaunch.insert(id) }
+        if running ? !on : hasOtherProfiles() {
+            toasts.show("Relaunch to \(on ? "turn it on" : "turn it off") in every Space", symbol: "puzzlepiece.extension")
+        }
+        guard !running else { return }
         Task {
             if on { await load(ext) } else { try? await host?.unload(id) }
         }
@@ -301,8 +328,11 @@ public final class ExtensionService {
         if popup?.id == id { closePopup() }
         installed.removeAll { $0.id == id }
         manifests[id] = nil
+        addedSinceLaunch.remove(id)
         save()
-        Task { try? await host?.unload(id) }
+        let running = launched.contains(ext.folder.path)
+        if running || hasOtherProfiles() { toasts.show("Relaunch to remove it from every Space", symbol: "puzzlepiece.extension") }
+        if !running { Task { try? await host?.unload(id) } }
         if ext.source == .store { try? FileManager.default.removeItem(at: ext.folder) }
     }
 
@@ -351,6 +381,9 @@ public final class ExtensionService {
     public func click(_ id: String) {
         if popup?.id == id { return closePopup() }
         closePopup()
+        guard showingDefaultProfile() || !addedSinceLaunch.contains(id) else {
+            return toasts.show("Relaunch Skylight to use \(manifests[id]?.name ?? "it") in this Space", symbol: "puzzlepiece.extension")
+        }
         syncTabs()
         if let path = manifests[id]?.action?.popup, let url = URL(string: "chrome-extension://\(id)/\(path)"),
            let page = makePage?(url, self) {
@@ -370,8 +403,7 @@ public final class ExtensionService {
 
     /// Tells the extensions which pages exist and which is in front.
     public func syncTabs() {
-        let tabs = currentTabs()
-        host?.setTabs(tabs.pages, active: tabs.active)
+        host?.setTabs(tabGroups())
     }
 
     /// Messages from extension pages (popups, options tabs) and their shim.

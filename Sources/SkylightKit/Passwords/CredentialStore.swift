@@ -1,15 +1,16 @@
 import Foundation
 import Security
+import SkylightCore
 
 /// Where passwords live. Listing never returns secrets; ask for one password at a time.
 @MainActor
 public protocol CredentialStore: AnyObject {
-    /// Every saved credential, without passwords.
-    func all() throws -> [Credential]
-    /// Credentials for one normalized origin, without passwords.
-    func credentials(forOrigin origin: String) throws -> [Credential]
+    /// Every credential saved in a profile, without passwords.
+    func all(in profile: ProfileID) throws -> [Credential]
+    /// A profile's credentials for one normalized origin, without passwords.
+    func credentials(forOrigin origin: String, in profile: ProfileID) throws -> [Credential]
     func password(for credential: Credential) throws -> String
-    /// Adds the credential, or replaces the one with the same origin and username.
+    /// Adds the credential, or replaces the one with the same profile, origin and username.
     func save(_ credential: Credential) throws
     func delete(_ credential: Credential) throws
 }
@@ -32,19 +33,22 @@ public enum CredentialStoreError: Error, LocalizedError, Equatable {
 /// Passwords in the login Keychain, as internet passwords Safari's Passwords app can also see.
 ///
 /// Items are tagged with a fixed description so Skylight only ever lists its own, never the
-/// rest of the user's Keychain.
+/// rest of the user's Keychain. Each profile has its own description, and the default profile's
+/// is the one Skylight has always used, so passwords saved before profiles had any stay with it.
+/// Other profiles also set a security domain: the Keychain ignores the description when it decides
+/// two items are the same, and the same login may be saved in two profiles.
 @MainActor
 public final class KeychainCredentialStore: CredentialStore {
     static let marker = "Skylight web password"
 
     public init() {}
 
-    public func all() throws -> [Credential] {
-        try list(extra: [:])
+    public func all(in profile: ProfileID) throws -> [Credential] {
+        try list(profile, extra: [:])
     }
 
-    public func credentials(forOrigin origin: String) throws -> [Credential] {
-        try list(extra: Self.location(origin)).filter { $0.origin == origin }
+    public func credentials(forOrigin origin: String, in profile: ProfileID) throws -> [Credential] {
+        try list(profile, extra: Self.location(origin)).filter { $0.origin == origin }
     }
 
     public func password(for credential: Credential) throws -> String {
@@ -77,10 +81,10 @@ public final class KeychainCredentialStore: CredentialStore {
         guard status == errSecSuccess || status == errSecItemNotFound else { throw CredentialStoreError.keychain(status) }
     }
 
-    private func list(extra: [String: Any]) throws -> [Credential] {
+    private func list(_ profile: ProfileID, extra: [String: Any]) throws -> [Credential] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
-            kSecAttrDescription as String: Self.marker,
+            kSecAttrDescription as String: Self.marker(for: profile),
             kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
@@ -89,7 +93,12 @@ public final class KeychainCredentialStore: CredentialStore {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return [] }
         guard status == errSecSuccess, let items = result as? [[String: Any]] else { throw CredentialStoreError.keychain(status) }
-        return items.compactMap(Self.credential(from:)).sorted { ($0.displayHost, $0.username) < ($1.displayHost, $1.username) }
+        return items.compactMap { Self.credential(from: $0, profile: profile) }
+            .sorted { ($0.displayHost, $0.username) < ($1.displayHost, $1.username) }
+    }
+
+    static func marker(for profile: ProfileID) -> String {
+        profile == .standard ? marker : "\(marker): \(profile)"
     }
 
     /// Attributes that pick out one origin.
@@ -107,12 +116,13 @@ public final class KeychainCredentialStore: CredentialStore {
     static func identity(_ credential: Credential) throws -> [String: Any] {
         var query = try location(credential.origin)
         query[kSecClass as String] = kSecClassInternetPassword
-        query[kSecAttrDescription as String] = marker
+        query[kSecAttrDescription as String] = marker(for: credential.profile)
         query[kSecAttrAccount as String] = credential.username
+        if credential.profile != .standard { query[kSecAttrSecurityDomain as String] = credential.profile.rawValue }
         return query
     }
 
-    static func credential(from item: [String: Any]) -> Credential? {
+    static func credential(from item: [String: Any], profile: ProfileID) -> Credential? {
         guard let host = item[kSecAttrServer as String] as? String else { return nil }
         let proto = item[kSecAttrProtocol as String] as? String
         let scheme = proto == (kSecAttrProtocolHTTP as String) ? "http" : "https"
@@ -121,7 +131,8 @@ public final class KeychainCredentialStore: CredentialStore {
             origin: "\(scheme)://\(host)\(port)",
             username: item[kSecAttrAccount as String] as? String ?? "",
             createdAt: item[kSecAttrCreationDate as String] as? Date,
-            source: item[kSecAttrComment as String] as? String
+            source: item[kSecAttrComment as String] as? String,
+            profile: profile
         )
     }
 }
@@ -135,12 +146,13 @@ public final class MemoryCredentialStore: CredentialStore {
         for credential in credentials { items[credential.id] = credential }
     }
 
-    public func all() throws -> [Credential] {
-        items.values.map(\.redacted).sorted { ($0.displayHost, $0.username) < ($1.displayHost, $1.username) }
+    public func all(in profile: ProfileID) throws -> [Credential] {
+        items.values.filter { $0.profile == profile }.map(\.redacted)
+            .sorted { ($0.displayHost, $0.username) < ($1.displayHost, $1.username) }
     }
 
-    public func credentials(forOrigin origin: String) throws -> [Credential] {
-        try all().filter { $0.origin == origin }
+    public func credentials(forOrigin origin: String, in profile: ProfileID) throws -> [Credential] {
+        try all(in: profile).filter { $0.origin == origin }
     }
 
     public func password(for credential: Credential) throws -> String {

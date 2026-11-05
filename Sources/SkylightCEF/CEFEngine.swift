@@ -11,18 +11,24 @@ public enum CEFRuntime {
         /// Avoids the login-keychain prompt for unsigned development builds.
         public var useMockKeychain: Bool
         public var remoteDebuggingPort: Int
-        /// The profile Chromium starts in, where extensions run.
+        /// The profile Chromium starts in.
         public var defaultProfile: URL?
         public var extensions: Bool
+        /// Unpacked extensions every profile loads. Chromium reads the list once, at launch.
+        public var extensionFolders: [URL]
+        /// Where to keep the extension that tells Skylight each page's tab id.
+        public var extensionHelper: URL?
 
         public init(cacheRoot: URL, logFile: URL? = nil, useMockKeychain: Bool = false, remoteDebuggingPort: Int = 0,
-                    defaultProfile: URL? = nil, extensions: Bool = true) {
+                    defaultProfile: URL? = nil, extensions: Bool = true, extensionFolders: [URL] = [], extensionHelper: URL? = nil) {
             self.cacheRoot = cacheRoot
             self.logFile = logFile
             self.useMockKeychain = useMockKeychain
             self.remoteDebuggingPort = remoteDebuggingPort
             self.defaultProfile = defaultProfile
             self.extensions = extensions
+            self.extensionFolders = extensionFolders
+            self.extensionHelper = extensionHelper
         }
     }
 
@@ -46,6 +52,12 @@ public enum CEFRuntime {
             settings.defaultProfilePath = profile.path
         }
         settings.enableDevToolsPipe = config.extensions
+        var folders = config.extensionFolders
+        if let helper = config.extensionHelper {
+            CEFExtensionHost.writeHelper(to: helper)
+            folders.insert(helper, at: 0)
+        }
+        settings.extensionPaths = folders.map(\.path)
         // CEF calls back on the main thread.
         guard SKEngine.initialize(with: settings, ready: { MainActor.assumeIsolated { ready() } }) else {
             throw Failure.initializationFailed
@@ -68,9 +80,8 @@ public enum CEFRuntime {
 public final class CEFEngine: WebEngine {
     public let extensions: ExtensionHost?
 
-    /// `support` is where the engine keeps files of its own (the tab-id helper extension).
-    public init(support: URL? = nil) {
-        extensions = SKEngine.hasDevToolsPipe() ? CEFExtensionHost(helperFolder: support?.appending(path: "Tabs Helper")) : nil
+    public init() {
+        extensions = SKEngine.hasDevToolsPipe() ? CEFExtensionHost() : nil
         SKEngine.setPageScripts(Self.engineScripts)
         PictureInPictureWindows.roundCorners()
     }

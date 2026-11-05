@@ -48,6 +48,8 @@ public final class PageCoordinator: BrowserEffectHandler {
     @ObservationIgnored private let paths: AppPaths
     @ObservationIgnored private weak var store: BrowserStore?
     @ObservationIgnored private var pages: [TabID: WebPage] = [:]
+    /// The profile each page was made in, which a favorite's next Space may not use.
+    @ObservationIgnored private var pageProfiles: [TabID: ProfileID] = [:]
     @ObservationIgnored private var tabForPage: [ObjectIdentifier: TabID] = [:]
     @ObservationIgnored private var profiles: [ProfileID: WebProfile] = [:]
     @ObservationIgnored private var lastSeen: [TabID: Date] = [:]
@@ -125,7 +127,7 @@ public final class PageCoordinator: BrowserEffectHandler {
         visibleTabID = id
         var views: [NSView] = []
         for pane in panes {
-            guard let page = pages[pane] ?? wake(pane) else { continue }
+            guard let page = wake(pane) else { continue }
             page.view.isHidden = false
             page.setVisible(true)
             lastSeen[pane] = .now
@@ -179,10 +181,17 @@ public final class PageCoordinator: BrowserEffectHandler {
     /// The tab's page, created (in the background if the tab isn't visible) when it's asleep.
     @discardableResult
     public func wake(_ id: TabID) -> WebPage? {
-        if let page = pages[id] { return page }
+        if let page = pages[id] {
+            // A favorite belongs to every Space, but a page stays signed in to the profile it was
+            // made in, so it can't follow you into a Space on another one.
+            guard let store, store.state.profileID(forTab: id) != pageProfiles[id] else { return page }
+            sleep(id)
+        }
         guard let store, let tab = store.state.tabs[id], !tab.url.isSkylightPage else { return nil }
-        let page = engine.makePage(url: tab.url, profile: profile(for: store.state.profileID(forTab: id)), delegate: self)
+        let profileID = store.state.profileID(forTab: id)
+        let page = engine.makePage(url: tab.url, profile: profile(for: profileID), delegate: self)
         pages[id] = page
+        pageProfiles[id] = profileID
         tabForPage[ObjectIdentifier(page)] = id
         lastSeen[id] = .now
         page.view.isHidden = !visibleTabIDs.contains(id)
@@ -197,7 +206,9 @@ public final class PageCoordinator: BrowserEffectHandler {
     public var awakePages: [WebPage] { Array(pages.values) }
 
     /// Awake pages with their tabs.
-    public var awake: [(tab: TabID, page: WebPage)] { pages.map { ($0.key, $0.value) } }
+    public var awake: [(tab: TabID, page: WebPage, profile: ProfileID)] {
+        pages.compactMap { id, page in pageProfiles[id].map { (id, page, $0) } }
+    }
 
     /// Gives keyboard focus back to the visible page.
     public func focusVisiblePage() {
@@ -210,6 +221,7 @@ public final class PageCoordinator: BrowserEffectHandler {
         defer { onPageGone?(id, store?.state.tabs[id] == nil) }
         if fullscreenTabID == id { setFullscreen(nil, relayout: false) }
         guard let page = pages.removeValue(forKey: id) else { return }
+        pageProfiles[id] = nil
         closing.insert(ObjectIdentifier(page))
         page.view.removeFromSuperview()
         page.close()
@@ -306,6 +318,7 @@ extension PageCoordinator: WebPageDelegate {
         // The page closed itself (window.close()): close its tab too.
         guard let id else { return }
         pages[id] = nil
+        pageProfiles[id] = nil
         page.view.removeFromSuperview()
         store?.send(.closeTab(id))
         onPageGone?(id, true)

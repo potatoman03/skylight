@@ -188,3 +188,15 @@ import Testing
         #expect(throws: CRXPackage.Failure.unsupportedVersion(2)) { try CRXPackage(Data(v2)) }
     }
 }
+
+@Suite struct ExtensionFoldersTests {
+    @Test func onlyFoldersChromiumCanLoadAtLaunch() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let good = root.appending(path: "good"), comma = root.appending(path: "a,b"), empty = root.appending(path: "empty")
+        for folder in [good, comma, empty] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        try Data("{}".utf8).write(to: good.appending(path: "manifest.json"))
+        try Data("{}".utf8).write(to: comma.appending(path: "manifest.json"))
+        #expect(ExtensionFolders.launchable([good, comma, empty, root.appending(path: "gone")]) == [good])
+    }
+}

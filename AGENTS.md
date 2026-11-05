@@ -111,7 +111,16 @@ Rules the map implies:
   debugging the password code, use demo mode, never your own Keychain items. Never commit
   `.signing`.
 - **Chromium profile folders sit directly inside `Engine/`** (`Default`, `Profile-<id>`).
-  Chromium rejects nested ones. Extensions run only in `Default`.
+  Chromium rejects nested ones.
+- **Every profile runs every extension, but only what Chromium got at launch.**
+  `--load-extension` reaches all profiles and can't be undone while running; the DevTools pipe's
+  `Extensions.loadUnpacked` reaches `Default` only, and `Extensions.uninstall` refuses anything
+  Chromium started with. So an extension added while running needs a relaunch to reach other
+  profiles, and turning one off or removing it finishes at the next launch.
+- **Keychain items for a profile differ in two attributes on purpose.** The description is how
+  Skylight finds them, and the default profile's never changes, so older passwords stay with it.
+  Other profiles also set a security domain, because the description isn't part of what makes a
+  Keychain item unique and the same login may be saved in two profiles.
 - **Run against a throwaway data folder.** `SKYLIGHT_DATA_DIR` resolves symlinks because Chromium
   compares cache paths literally (`/var` vs `/private/var`). If Skylight is installed and running,
   `open build/Skylight.app` activates that copy instead (same bundle id). Start the executable
@@ -125,7 +134,7 @@ Rules the map implies:
 ## Verifying a change
 
 1. `swift build`. It must finish without errors.
-2. `swift test`: every test passes (116 at the time of writing). Without CEF, run
+2. `swift test`: every test passes (125 at the time of writing). Without CEF, run
    `swift build --product SkylightPackageTests` and then `swift test --skip-build`.
 3. For anything that runs in the app: `scripts/bundle.sh`, then
    `SKYLIGHT_DEV=1 SKYLIGHT_DATA_DIR="$(mktemp -d)" build/Skylight.app/Contents/MacOS/Skylight`,

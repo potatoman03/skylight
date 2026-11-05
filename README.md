@@ -166,9 +166,17 @@ pinned tab or favorite only unloads it; Delete in its menu removes it. Today tab
 hours are archived (⌘⇧T brings them back; the time is in Settings). Pages you haven't looked at in
 20 minutes go to sleep and reload when you return.
 
-Each Space has a color, an icon and a **profile**. A profile is a cookie jar: Spaces on different
-profiles can be signed in to different accounts. Settings → Profiles names them and gives each an
-icon and color; Settings → Spaces picks each Space's profile.
+Each Space has a color, an icon and a **profile**. A profile keeps its own cookies, site logins,
+saved passwords and extension data, so Spaces on different profiles can be signed in to different
+accounts, and switching Space shows only that Space's accounts. A favorite opens in whichever
+Space you're in, under that Space's profile.
+
+A new Space gets its own profile and starts signed out. To keep a Space's logins, use **Duplicate
+Space** in its menu, which copies its look and shares its profile (not its tabs), or right-click
+the **+** for a new Space with the same logins. **New Profile for This Space**, in a Space's menu
+under Profile, splits one off later. Settings → Profiles names them and gives each an icon and
+color; Settings → Spaces picks each Space's profile. Deleting a Space keeps its profile; deleting a
+profile moves its Spaces and saved passwords to Default.
 
 **Themes.** Pattern themes draw a live field of characters over the sky, with nothing to download.
 Playful ones include Deep Space, Pink Princess, Terminal, Synthwave and Golden Hour; quiet ones,
@@ -191,9 +199,11 @@ follow each Space's color; Paper, Graphite, Dusk, Forest, Ocean, Rosé and Auror
 and you can make your own (sky, horizon and accent for light and dark, plus glow, sunlight, light
 strength and glass under More colors). A Space can have its own sky in Settings → Spaces.
 
-**Passwords** live in your login Keychain. After you sign in somewhere new, Skylight offers to save
-the login; a key in the address field fills a saved one when you pick it. Filling only happens from
-Skylight's own UI, and only into a page on the login's site. Settings → Passwords imports from
+**Passwords** live in your login Keychain, separately for each profile. After you sign in somewhere
+new, Skylight offers to save the login; a key in the address field fills a saved one when you pick
+it, and only offers the current Space's. Filling only happens from Skylight's own UI, and only into
+a page on the login's site. Passkeys in iCloud Keychain aren't available in Skylight yet, and would
+follow your Apple ID rather than a Space. Settings → Passwords imports from
 Aside, Arc, Chrome, Dia, Brave, Edge and other Chromium browsers on this Mac (macOS asks before
 Skylight can read that browser's key), or from a CSV export (Chrome, Safari, 1Password, Bitwarden).
 Copying and exporting ask for Touch ID or your password.
@@ -223,8 +233,11 @@ Store button) or from an unpacked folder. Pinned extensions get a button in the 
 are in the Extensions menu (puzzle piece) next to them, where you pin and unpin. Settings can put
 them all in the menu. Right-click a button to open its options or remove it. Popups open as bubbles sized to
 their content. Extensions get Chrome's tabs and windows API (`tabs.query`, `tabs.update`,
-`tabs.create`, `windows.getCurrent` and the rest), backed by Skylight's own tabs. They run in the
-default profile only, and badges and tab events (`tabs.onActivated`) aren't supported yet.
+`tabs.create`, `windows.getCurrent` and the rest), backed by Skylight's own tabs. Every profile
+runs them, each with its own storage and its own tabs, so a password manager extension signs in
+separately in each. One you add while Skylight is open reaches the Spaces on Default straight away
+and the rest after a relaunch; turning one off or removing it finishes at the next launch. Badges,
+tab events (`tabs.onActivated`) and buttons with no popup (`action.onClicked`) don't work yet.
 
 ## Packages
 
@@ -339,7 +352,7 @@ SkylightHelper: Chromium's sub-process executable.
 1. **Now:** stock CEF 156 in Alloy style (embedded in our window).
 2. **Self-built CEF** with ungoogled-chromium's privacy patches and proprietary codecs.
 3. **Small patches toward full Chrome:** Chrome-style browsers inside a native parent view, so
-   extensions get Chrome's own tab model (badges, tab events, per-profile extensions) instead of
+   extensions get Chrome's own tab model (badges, tab events, adding one without a relaunch) instead of
    Skylight's shim. Today they're loaded over a private DevTools pipe (no port is opened) and a
    small shim maps Chrome's tabs and windows API onto Skylight's tabs. Passkeys.
 4. Tab sync between machines, easels, notes and highlights as built-in packages, an in-app agent.

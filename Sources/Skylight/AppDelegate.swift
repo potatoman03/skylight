@@ -34,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Development runs (SKYLIGHT_DEV) keep passwords in memory, away from your Keychain.
         let credentials: CredentialStore = ProcessInfo.processInfo.environment["SKYLIGHT_DEV"] != nil
             ? MemoryCredentialStore.demo() : KeychainCredentialStore()
-        let browser = Browser(engine: CEFEngine(support: paths.engineRoot.appending(path: "Skylight")), paths: paths, version: version, credentials: credentials)
+        let browser = Browser(engine: CEFEngine(), paths: paths, version: version, credentials: credentials)
         self.browser = browser
         let info = Bundle.main.infoDictionary ?? [:]
         updater = Updater(development: ProcessInfo.processInfo.environment["SKYLIGHT_DEV"] != nil
@@ -188,6 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func previousTab(_ sender: Any?) { store?.send(.selectAdjacentTab(offset: -1)) }
     @objc func nextSpace(_ sender: Any?) { store?.send(.switchSpaceByOffset(1)) }
     @objc func previousSpace(_ sender: Any?) { store?.send(.switchSpaceByOffset(-1)) }
+    @objc func duplicateSpace(_ sender: Any?) { browser?.duplicateSpace() }
     @objc func newSpace(_ sender: Any?) { store?.send(.createSpace(name: "Space \((store?.state.spaces.count ?? 0) + 1)")) }
     @objc func customizeSpace(_ sender: Any?) {
         if let id = store?.state.activeSpaceID { browser?.customizeSpace(id) }

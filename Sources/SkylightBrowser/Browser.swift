@@ -72,17 +72,27 @@ public final class Browser {
         commandBar.source = self
         extensions.makePage = { [weak self] url, delegate in
             guard let self else { return nil }
-            return self.engine.makePage(url: url, profile: self.pages.profile(for: .standard), delegate: delegate)
+            return self.engine.makePage(url: url, profile: self.pages.profile(for: self.store.state.activeSpace.profileID), delegate: delegate)
         }
         extensions.openTab = { [weak self] url in self?.store.send(.openTab(url)) }
         extensions.currentTabs = { [weak self] in
             guard let self else { return ([], nil) }
-            let state = self.store.state
-            // Extensions run in the default profile, so they only see its pages.
-            let visible = self.pages.awake.filter { state.profileID(forTab: $0.tab) == .standard }
+            let profile = self.store.state.activeSpace.profileID
+            let visible = self.pages.awake.filter { $0.profile == profile }
             let active = self.pages.visibleTabID.flatMap { id in visible.first { $0.tab == id }?.page }
             return (visible.map(\.page), active)
         }
+        extensions.tabGroups = { [weak self] in
+            guard let self else { return [] }
+            return Dictionary(grouping: self.pages.awake, by: \.profile).map { profile, awake in
+                ExtensionTabs(profile: self.pages.profile(for: profile), pages: awake.map(\.page),
+                              active: awake.first { $0.tab == self.pages.visibleTabID }?.page)
+            }
+        }
+        passwords.profiles = { [weak self] in self?.store.state.profiles.map(\.id) ?? [.standard] }
+        passwords.reload()
+        extensions.showingDefaultProfile = { [weak self] in self?.store.state.activeSpace.profileID == .standard }
+        extensions.hasOtherProfiles = { [weak self] in (self?.store.state.profiles.count ?? 0) > 1 }
         media.page = { [weak self] id in self?.pages.page(for: id) }
         media.autoPictureInPicture = { preferences.autoPictureInPicture }
         var shown: [TabID] = []
@@ -250,7 +260,19 @@ public final class Browser {
     /// Types a saved login into the selected tab.
     public func fillLogin(_ credential: Credential) {
         guard let id = store.state.selectedTabID, let page = pages.page(for: id) ?? pages.wake(id) else { return }
+        guard credential.profile == store.state.profileID(forTab: id) else { return }
         passwords.fill(credential, in: page, url: store.state.tabs[id]?.url)
+    }
+
+    /// Deletes a profile. Its Spaces and saved passwords move to the default one.
+    public func deleteProfile(_ id: ProfileID) {
+        guard id != .standard else { return }
+        passwords.moveLogins(from: id)
+        store.send(.deleteProfile(id))
+    }
+
+    public func duplicateSpace() {
+        store.send(.duplicateSpace(store.state.activeSpaceID))
     }
 
     public enum ImportSource: String, CaseIterable, Sendable {
@@ -359,7 +381,7 @@ extension Browser: PageEventSink {
             agents.updateSiteTools(WebMCP.parseTools(message), tab: id)
             return .null
         case let type? where type.hasPrefix("passwords."):
-            return passwords.handle(message, tab: id, url: store.state.tabs[id]?.url)
+            return passwords.handle(message, tab: id, url: store.state.tabs[id]?.url, profile: store.state.profileID(forTab: id))
         case let type? where type.hasPrefix("media."):
             return media.handle(message, tab: id)
         case "extensions.storeStatus", "extensions.storeInstall":
@@ -460,6 +482,7 @@ extension Browser: CommandSource {
         command("new-space", "New Space", "plus.square.on.square") { [weak self] in
             self?.store.send(.createSpace(name: "Space \((self?.store.state.spaces.count ?? 0) + 1)"))
         }
+        command("duplicate-space", "Duplicate Space", "plus.square.on.square") { [weak self] in self?.duplicateSpace() }
         command("mcp", "Copy Claude Code connection command", "point.3.connected.trianglepath.dotted") { [weak self] in
             self?.copyMCPCommand()
         }
@@ -482,7 +505,7 @@ extension Browser: CommandSource {
                 self?.store.send(.toggleFavorite(selected))
             }
         }
-        for login in passwords.logins(for: state.selectedTab?.url) {
+        for login in passwords.logins(for: state.selectedTab?.url, in: state.activeSpace.profileID) {
             commands.append(CommandItem(id: "fill-\(login.id)", kind: .command, title: "Fill password",
                                         subtitle: login.username.isEmpty ? login.displayHost : login.username, symbol: "key.fill") { [weak self] in
                 self?.fillLogin(login)
