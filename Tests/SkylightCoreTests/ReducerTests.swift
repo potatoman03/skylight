@@ -153,17 +153,21 @@ private let c = URL(string: "https://c.example")!
         #expect(result.effects.contains(.discardPage(id)))
     }
 
-    @Test func favoritesFollowTheActiveSpace() {
+    @Test func favoritesBelongToTheirSpace() {
         var state = BrowserState.initial()
         let id = open(&state, a)[0]
         BrowserReducer.reduce(&state, .toggleFavorite(id), env: env)
         #expect(state.favorites == [id])
         #expect(state.activeSpace.today.isEmpty)
+        let personal = state.activeSpaceID
 
-        let work = state.spaces[1].id
-        BrowserReducer.reduce(&state, .switchSpace(work), env: env)
+        BrowserReducer.reduce(&state, .switchSpace(state.spaces[1].id), env: env)
+        #expect(state.favorites.isEmpty)
+        #expect(state.isFavorite(id))
+
+        // Opening one from elsewhere goes back to its Space.
         BrowserReducer.reduce(&state, .selectTab(id), env: env)
-        #expect(state.activeSpaceID == work)
+        #expect(state.activeSpaceID == personal)
         #expect(state.selectedTabID == id)
 
         // Closing a favorite unloads it but keeps it.
@@ -263,6 +267,49 @@ private let c = URL(string: "https://c.example")!
     @Test func signInSitesCoverTheirAccountDomains() {
         #expect(SignInSite.google.domains.contains("youtube.com"))
         #expect(SignInSite.github.domains == ["github.com"])
+    }
+
+    @Test func aFavoriteOpensInItsSpacesProfile() {
+        var state = BrowserState.initial()
+        BrowserReducer.reduce(&state, .createProfile(name: "Work", passwordsFrom: nil), env: env)
+        let work = state.spaces[1].id
+        let profile = state.profiles[1].id
+        BrowserReducer.reduce(&state, .assignProfile(work, profile), env: env)
+        BrowserReducer.reduce(&state, .switchSpace(work), env: env)
+        let id = open(&state, a)[0]
+        BrowserReducer.reduce(&state, .toggleFavorite(id), env: env)
+        BrowserReducer.reduce(&state, .switchSpace(state.spaces[0].id), env: env)
+        #expect(state.profileID(forTab: id) == profile)
+    }
+
+    @Test func movingAFavoriteToAnotherSpaceLeavesOneTab() {
+        var state = BrowserState.initial()
+        let id = open(&state, a)[0]
+        BrowserReducer.reduce(&state, .toggleFavorite(id), env: env)
+        let work = state.spaces[1]
+        BrowserReducer.reduce(&state, .moveTabToSpace(id, work.id), env: env)
+        #expect(state.spaces[0].favorites.isEmpty)
+        #expect(state.spaces[0].today.isEmpty)
+        #expect(state.activeSpace.today == [id])
+        #expect(state.tabs[id] != nil)
+    }
+
+    @Test func deletingASpaceTakesItsFavorites() {
+        var state = BrowserState.initial()
+        let id = open(&state, a)[0]
+        BrowserReducer.reduce(&state, .toggleFavorite(id), env: env)
+        let result = BrowserReducer.reduce(&state, .deleteSpace(state.activeSpaceID), env: env)
+        #expect(state.tabs[id] == nil)
+        #expect(result.effects.contains(.discardPage(id)))
+    }
+
+    @Test func closingATabDoesNotFallToAFavorite() {
+        var state = BrowserState.initial()
+        let ids = open(&state, a, b)
+        BrowserReducer.reduce(&state, .toggleFavorite(ids[0]), env: env)
+        BrowserReducer.reduce(&state, .selectTab(ids[1]), env: env)
+        BrowserReducer.reduce(&state, .closeTab(ids[1]), env: env)
+        #expect(state.selectedTabID == nil)
     }
 
     @Test func duplicateSpaceCopiesLookAndLoginsButNotTabs() {
@@ -406,6 +453,16 @@ private let c = URL(string: "https://c.example")!
         #expect(state.profiles.map(\.id) == [.standard])
         #expect(state.spaces[0].profileID == .standard)
         #expect(state.favorites.isEmpty)
+    }
+
+    @Test func sharedFavoritesLandInTheActiveSpace() throws {
+        let old = #"{"version":1,"spaces":[{"id":"s","name":"Home","hue":0.5},{"id":"w","name":"Work","hue":0.1,"selectedTabID":"t"}],"favorites":["t"],"tabs":{"t":{"id":"t","url":"https://a.example","title":"A","createdAt":0,"lastActiveAt":0}},"activeSpaceID":"s"}"#
+        var state = try JSONDecoder().decode(BrowserState.self, from: Data(old.utf8))
+        state.normalize()
+        #expect(state.spaces[0].favorites == [TabID("t")])
+        #expect(state.spaces[1].favorites.isEmpty)
+        #expect(state.spaces[1].selectedTabID == nil)
+        #expect(state.tabs[TabID("t")] != nil)
     }
 
     @Test func missingFileLoadsNil() throws {

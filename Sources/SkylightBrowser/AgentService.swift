@@ -108,7 +108,7 @@ public final class AgentService {
         [
             AgentTool(ToolDefinition(
                 name: "list_tabs",
-                description: "Lists the tabs in every Space, with ids, titles, URLs and which one is selected. Favorites are shared by all Spaces.",
+                description: "Lists the tabs in every Space, with ids, titles, URLs, sections (favorite, pinned or today) and which one is selected.",
                 risk: .read)) { [unowned self] _ in
                 let state = self.store.state
                 let spaces: [JSONValue] = state.spaces.map { space in
@@ -119,10 +119,7 @@ public final class AgentService {
                         "tabs": .array(space.allTabIDs.compactMap { state.tabs[$0] }.map { self.describe($0, in: space) }),
                     ]
                 }
-                return [
-                    "favorites": .array(state.favoriteTabs.map { self.describe($0, in: state.activeSpace) }),
-                    "spaces": .array(spaces),
-                ]
+                return ["spaces": .array(spaces)]
             },
             AgentTool(ToolDefinition(
                 name: "open_tab",

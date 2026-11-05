@@ -38,10 +38,7 @@ public enum BrowserReducer {
 
         case let .removeTab(id):
             leaveSplits(&state, id)
-            if state.isFavorite(id) {
-                state.favorites.removeAll { $0 == id }
-                state.spaces[state.activeSpaceIndex].today.insert(id, at: 0)
-            }
+            if let si = takeFavorite(&state, id) { state.spaces[si].today.insert(id, at: 0) }
             return closeTab(&state, id, unloadPinned: false, now: env.now())
 
         case .reopenClosedTab:
@@ -57,16 +54,14 @@ public enum BrowserReducer {
             return ReduceResult(effects: [.showTab(tab.id)], openedTabID: tab.id)
 
         case let .selectTab(id):
-            // A favorite opens in whichever Space is active.
-            let spaceIndex = state.isFavorite(id) ? state.activeSpaceIndex : state.spaceIndex(containing: id)
-            guard let spaceIndex else { return .ignored }
+            guard let spaceIndex = state.spaceIndex(containing: id) else { return .ignored }
             state.spaces[spaceIndex].selectedTabID = id
             state.activeSpaceID = state.spaces[spaceIndex].id
             state.tabs[id]?.lastActiveAt = env.now()
             return ReduceResult(effects: [.showTab(id)])
 
         case let .selectAdjacentTab(offset):
-            let ids = state.favorites + state.activeSpace.allTabIDs
+            let ids = state.activeSpace.allTabIDs
             guard !ids.isEmpty else { return .ignored }
             let current = state.selectedTabID.flatMap { ids.firstIndex(of: $0) } ?? 0
             let next = ((current + offset) % ids.count + ids.count) % ids.count
@@ -89,9 +84,8 @@ public enum BrowserReducer {
 
         case let .togglePin(id):
             leaveSplits(&state, id)
-            if state.isFavorite(id) {
-                state.favorites.removeAll { $0 == id }
-                state.spaces[state.activeSpaceIndex].pinned.append(id)
+            if let si = takeFavorite(&state, id) {
+                state.spaces[si].pinned.append(id)
                 return ReduceResult()
             }
             guard let si = state.spaceIndex(containing: id), let section = state.spaces[si].section(of: id) else { return .ignored }
@@ -106,15 +100,12 @@ public enum BrowserReducer {
         case let .toggleFavorite(id):
             guard state.tabs[id] != nil else { return .ignored }
             leaveSplits(&state, id)
-            if state.isFavorite(id) {
-                state.favorites.removeAll { $0 == id }
-                state.spaces[state.activeSpaceIndex].today.insert(id, at: 0)
+            if let si = takeFavorite(&state, id) {
+                state.spaces[si].today.insert(id, at: 0)
             } else {
                 guard let si = state.spaceIndex(containing: id), let section = state.spaces[si].section(of: id) else { return .ignored }
                 state.spaces[si][section].removeAll { $0 == id }
-                state.favorites.append(id)
-                // Keep it selected where the user is looking.
-                if state.spaces[si].selectedTabID == id, si != state.activeSpaceIndex { state.spaces[si].selectedTabID = nil }
+                state.spaces[si].favorites.append(id)
             }
             return ReduceResult()
 
@@ -128,9 +119,7 @@ public enum BrowserReducer {
             return ReduceResult(effects: effects, applied: !effects.isEmpty)
 
         case let .moveTab(id, section, index):
-            if state.isFavorite(id) {
-                state.favorites.removeAll { $0 == id }
-                let si = state.activeSpaceIndex
+            if let si = takeFavorite(&state, id) {
                 state.spaces[si][section].insert(id, at: max(0, min(index, state.spaces[si][section].count)))
                 return ReduceResult()
             }
@@ -145,12 +134,13 @@ public enum BrowserReducer {
         case let .moveToFavorites(id, index):
             guard state.tabs[id] != nil else { return .ignored }
             leaveSplits(&state, id)
+            let active = state.activeSpaceIndex
             if let si = state.spaceIndex(containing: id) {
+                state.spaces[si].favorites.removeAll { $0 == id }
                 for section in TabSection.allCases { state.spaces[si][section].removeAll { $0 == id } }
-                if state.spaces[si].selectedTabID == id, si != state.activeSpaceIndex { state.spaces[si].selectedTabID = nil }
+                if state.spaces[si].selectedTabID == id, si != active { state.spaces[si].selectedTabID = nil }
             }
-            state.favorites.removeAll { $0 == id }
-            state.favorites.insert(id, at: max(0, min(index, state.favorites.count)))
+            state.spaces[active].favorites.insert(id, at: max(0, min(index, state.spaces[active].favorites.count)))
             return ReduceResult()
 
         case let .splitTab(id, target, edge):
@@ -196,6 +186,8 @@ public enum BrowserReducer {
                   let tab = state.tabs[id] else { return .ignored }
             let sameProfile = state.spaces[from].profileID == state.spaces[to].profileID
             leaveSplits(&state, id)
+            // A favorite only sleeps when closed, so it has to stop being one to leave.
+            if let si = takeFavorite(&state, id) { state.spaces[si].today.insert(id, at: 0) }
             var result = closeTab(&state, id, remember: false, unloadPinned: false, now: env.now())
             state.tabs[id] = tab
             state.spaces[to].today.insert(id, at: 0)
@@ -256,9 +248,8 @@ public enum BrowserReducer {
             guard let (si, _) = folderIndex(state, folderID) else { return .ignored }
             // Folders hold pinned tabs of their own Space, one pane at a time.
             leaveSplits(&state, id)
-            if state.isFavorite(id) {
-                state.favorites.removeAll { $0 == id }
-            } else if let from = state.spaceIndex(containing: id) {
+            if let from = state.spaceIndex(containing: id) {
+                state.spaces[from].favorites.removeAll { $0 == id }
                 state.spaces[from].pinned.removeAll { $0 == id }
                 state.spaces[from].today.removeAll { $0 == id }
                 if state.spaces[from].selectedTabID == id, from != si { state.spaces[from].selectedTabID = nil }
@@ -345,10 +336,7 @@ public enum BrowserReducer {
                   state.spaces[i].profileID != profileID else { return .ignored }
             state.spaces[i].profileID = profileID
             var effects = state.spaces[i].allTabIDs.map(BrowserEffect.discardPage)
-            if i == state.activeSpaceIndex {
-                if let sel = state.selectedTabID, state.isFavorite(sel) { effects.append(.discardPage(sel)) }
-                effects.append(.showTab(state.selectedTabID))
-            }
+            if i == state.activeSpaceIndex { effects.append(.showTab(state.selectedTabID)) }
             return ReduceResult(effects: effects)
 
         case let .createProfile(name, passwordsFrom):
@@ -398,7 +386,7 @@ public enum BrowserReducer {
                 state.tabs[tab.id] = tab
                 return tab.id
             }
-            state.favorites += data.favorites.compactMap(add)
+            state.spaces[state.activeSpaceIndex].favorites += data.favorites.compactMap(add)
             for imported in data.spaces where !imported.pinned.isEmpty {
                 let pinned = imported.pinned.compactMap(add)
                 guard !pinned.isEmpty else { continue }
@@ -460,6 +448,14 @@ public enum BrowserReducer {
         return ReduceResult(effects: effects, openedTabID: tab.id)
     }
 
+    /// Takes a tab out of its Space's favorites, and returns which Space that was.
+    @discardableResult
+    private static func takeFavorite(_ state: inout BrowserState, _ id: TabID) -> Int? {
+        guard let si = state.spaces.firstIndex(where: { $0.favorites.contains(id) }) else { return nil }
+        state.spaces[si].favorites.removeAll { $0 == id }
+        return si
+    }
+
     private static func closeTab(_ state: inout BrowserState, _ id: TabID, remember: Bool = true, unloadPinned: Bool = true,
                                  now: Date = .now) -> ReduceResult {
         // Closing a pane leaves its split; focus stays in what's left of it.
@@ -481,7 +477,7 @@ public enum BrowserReducer {
               let section = state.spaces[si].section(of: id),
               let tab = state.tabs[id] else { return .ignored }
 
-        let order = state.spaces[si].allTabIDs
+        let order = state.spaces[si].pinned + state.spaces[si].today
         let index = state.spaces[si][section].firstIndex(of: id) ?? 0
         state.spaces[si][section].remove(at: index)
         state.tabs[id] = nil
@@ -509,11 +505,8 @@ public enum BrowserReducer {
     private static func splitTab(_ state: inout BrowserState, _ id: TabID, beside target: TabID, edge: SplitEdge,
                                  env: ReducerEnvironment) -> ReduceResult {
         guard id != target, state.tabs[id] != nil, state.tabs[target] != nil else { return .ignored }
-        // A favorite target joins the active Space, where it's showing.
-        if state.isFavorite(target) {
-            state.favorites.removeAll { $0 == target }
-            state.spaces[state.activeSpaceIndex].today.insert(target, at: 0)
-        }
+        // A favorite target joins its Space's tabs.
+        if let si = takeFavorite(&state, target) { state.spaces[si].today.insert(target, at: 0) }
         guard let si = state.spaceIndex(containing: target), let section = state.spaces[si].section(of: target) else { return .ignored }
         if let k = state.spaces[si].splitIndex(containing: target), !state.spaces[si].splits[k].tabs.contains(id) {
             let split = state.spaces[si].splits[k]
@@ -524,7 +517,7 @@ public enum BrowserReducer {
         let fromSpace = state.spaceIndex(containing: id)
         if let from = fromSpace, state.spaces[from].profileID != state.spaces[si].profileID { effects.append(.discardPage(id)) }
         leaveSplits(&state, id)
-        state.favorites.removeAll { $0 == id }
+        takeFavorite(&state, id)
         if let from = fromSpace {
             for s in TabSection.allCases { state.spaces[from][s].removeAll { $0 == id } }
             if from != si, state.spaces[from].selectedTabID == id { state.spaces[from].selectedTabID = nil }

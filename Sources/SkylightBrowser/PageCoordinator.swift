@@ -48,7 +48,7 @@ public final class PageCoordinator: BrowserEffectHandler {
     @ObservationIgnored private let paths: AppPaths
     @ObservationIgnored private weak var store: BrowserStore?
     @ObservationIgnored private var pages: [TabID: WebPage] = [:]
-    /// The profile each page was made in, which a favorite's next Space may not use.
+    /// The profile each page was made in, which its tab's Space may have left since.
     @ObservationIgnored private var pageProfiles: [TabID: ProfileID] = [:]
     @ObservationIgnored private var tabForPage: [ObjectIdentifier: TabID] = [:]
     @ObservationIgnored private var profiles: [ProfileID: WebProfile] = [:]
@@ -182,8 +182,8 @@ public final class PageCoordinator: BrowserEffectHandler {
     @discardableResult
     public func wake(_ id: TabID) -> WebPage? {
         if let page = pages[id] {
-            // A favorite belongs to every Space, but a page stays signed in to the profile it was
-            // made in, so it can't follow you into a Space on another one.
+            // A page stays signed in to the profile it was made in, so it can't carry on in a
+            // Space on another one.
             guard let store, store.state.profileID(forTab: id) != pageProfiles[id] else { return page }
             sleep(id)
         }

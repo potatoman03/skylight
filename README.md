@@ -156,8 +156,8 @@ working. [CONTRIBUTING.md](CONTRIBUTING.md) covers branches, commits and pull re
 | ⌘⇧B | Boost this site |
 | ⌥⌘I | Developer tools |
 
-The sidebar works like Arc's. **Favorites** at the top belong to every Space. Each Space has
-**pinned** tabs, then **Today** (with **Clear**). Drag tabs between sections; the list shows an
+The sidebar works like Arc's. Each Space has its own **favorites** at the top, its **pinned** tabs,
+then **Today** (with **Clear**). Drag tabs between sections; the list shows an
 insertion line where a tab will land, and holding a tab over a Space's button at the bottom
 switches to that Space so you can drop it there. Swipe two fingers sideways over the sidebar to go
 to the next or previous Space; it stops at the first and last. Links dragged in from a page or
@@ -168,8 +168,7 @@ hours are archived (⌘⇧T brings them back; the time is in Settings). Pages yo
 
 Each Space has a color, an icon and a **profile**. A profile keeps its own cookies, site logins,
 saved passwords and extension data, so Spaces on different profiles can be signed in to different
-accounts, and switching Space shows only that Space's accounts. A favorite opens in whichever
-Space you're in, under that Space's profile.
+accounts, and switching Space shows only that Space's accounts.
 
 **New Space** asks what the Space keeps from the current one, and remembers your last choice, so
 Return is usually all it takes. **Everything** shares the current Space's profile, so its logins,
