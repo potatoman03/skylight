@@ -220,7 +220,8 @@ enum PictureInPictureWindows {
     }
 
     private static func round(_ window: NSWindow) {
-        guard let view = window.contentView, view.layer?.cornerRadius != radius else { return }
+        // The window's frame view, so the clip takes in everything Chromium draws in the window.
+        guard let view = window.contentView?.superview ?? window.contentView, view.layer?.cornerRadius != radius else { return }
         window.isOpaque = false
         window.backgroundColor = .clear
         view.wantsLayer = true
