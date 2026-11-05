@@ -40,9 +40,10 @@ public struct RootView: View {
                 .ignoresSafeArea(.container, edges: fullscreen ? .top : [])
                 // A split's rounded panes sit on the window's backdrop, like the sidebar.
                 .background(showsSplit ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
-                .overlay(alignment: .leading) {
-                    if prefs.sidebarCollapsed, !fullscreen { SidebarPeek() }
-                }
+        }
+        // Over the page and the toolbar's backdrop, as the sidebar itself sits.
+        .overlay(alignment: .leading) {
+            if prefs.sidebarCollapsed, !fullscreen { SidebarPeek() }
         }
         // One translucent backdrop behind the toolbar and sidebar; only the page is opaque.
         .background { WindowBackdrop().ignoresSafeArea() }
@@ -173,8 +174,8 @@ struct SidebarEdge: View {
     }
 }
 
-/// With the sidebar hidden, the pointer at the window's left edge brings it in over the page, on
-/// glass. It stays while the pointer is over it and goes a moment after the pointer leaves.
+/// With the sidebar hidden, the pointer at the window's left edge slides the sidebar out over the
+/// page. It stays while the pointer is over it and goes a moment after the pointer leaves.
 struct SidebarPeek: View {
     @Environment(Browser.self) private var browser
     @State private var shown = false
@@ -189,20 +190,18 @@ struct SidebarPeek: View {
                 .contentShape(.rect)
                 .onHover { if $0 { show(true) } }
             if shown {
+                // The sidebar itself, sliding out over the page as it does when you show it, and
+                // running up behind the traffic lights.
                 Sidebar()
                     .frame(width: max(browser.preferences.sidebarWidth, SidebarEdge.widths.lowerBound))
                     .frame(maxHeight: .infinity)
-                    // The sky backdrop, if it's on, keeps to the card.
-                    .clipShape(.rect(cornerRadius: 14, style: .continuous))
-                    // Tinted with the window's color, so the page behind doesn't show through the rows.
-                    .glassEffect(.regular.tint(Color(nsColor: .windowBackgroundColor).opacity(0.6)),
-                                 in: .rect(cornerRadius: 14, style: .continuous))
-                    .padding(6)
+                    .background { WindowBackdrop().ignoresSafeArea() }
+                    .shadow(color: .black.opacity(0.18), radius: 14, x: 2)
                     .onHover { show($0) }
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .transition(.move(edge: .leading))
             }
         }
-        .motion(shown ? Motion.arrive : Motion.exit, value: shown)
+        .motion(.default, value: shown)
         // Showing the sidebar for good takes the peek with it.
         .onDisappear { leaving?.cancel() }
     }
