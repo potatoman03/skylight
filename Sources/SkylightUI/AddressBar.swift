@@ -75,7 +75,7 @@ struct AddressField: View {
             }
             .allowsHitTesting(false)
         }
-        .background { ViewProbe { anchor.field = $0 } }
+        .background { ViewProbe { anchor.addField($0) } }
         .contentShape(.rect)
         .onTapGesture { if !editing { browser.presentCommandBar(.editCurrent) } }
         .onChange(of: editing) { _, now in
@@ -110,10 +110,14 @@ struct AddressField: View {
     }
 }
 
-/// Suggestions under the address field while you type, styled like a menu.
+/// Suggestions while you type, as one panel with the address field: it starts behind the field
+/// (which sits in the toolbar, over it) and drops down the field's width, as Chrome's does.
 struct SuggestionsList: View {
     @Environment(Browser.self) private var browser
     @Environment(AddressAnchor.self) private var anchor
+
+    /// How far the panel reaches past the field on each side.
+    private static let margin: CGFloat = 5
 
     var body: some View {
         let bar = browser.commandBar
@@ -121,20 +125,25 @@ struct SuggestionsList: View {
         if !items.isEmpty {
             // Read again when the window resizes, which moves the field.
             GeometryReader { geo in
-                let field = anchor.fieldFrame(size: geo.size) ?? CGRect(x: (geo.size.width - 560) / 2, y: -6, width: 560, height: 0)
+                let field = anchor.fieldFrame(size: geo.size) ?? CGRect(x: (geo.size.width - 560) / 2, y: -34, width: 560, height: 28)
+                let m = Self.margin
                 VStack(spacing: 0) {
+                    // The field shows through here.
+                    Color.clear.frame(height: field.height + m)
+                    Divider().padding(.horizontal, 4).padding(.vertical, 4)
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         SuggestionRow(item: item, highlighted: index == bar.selection)
                             .onTapGesture { bar.submit(item) }
                             .onHover { if $0 { bar.selection = index } }
                     }
                 }
-                .padding(5)
-                .frame(width: max(field.width, 360))
-                .background(.regularMaterial, in: .rect(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
+                .padding([.horizontal, .bottom], m)
+                .padding(.top, m)
+                .frame(width: max(field.width, 360) + 2 * m)
+                .background(.regularMaterial, in: .rect(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.separator, lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.18), radius: 16, y: 8)
-                .offset(x: max(field.minX, 8), y: field.maxY + 6)
+                .offset(x: max(field.minX - m, 4), y: field.minY - m)
             }
             .transition(.opacity)
         }
@@ -146,14 +155,29 @@ struct SuggestionsList: View {
 @MainActor
 @Observable
 final class AddressAnchor {
-    @ObservationIgnored weak var field: NSView?
+    /// Every copy of the field the toolbar has made. It rebuilds its items (hiding the sidebar
+    /// does) and can keep an old copy in the window, out of sight.
+    @ObservationIgnored private var fields = NSHashTable<NSView>.weakObjects()
     @ObservationIgnored weak var page: NSView?
     /// Where the address field's toolbar item starts, in the window.
     var itemX: CGFloat?
 
+    func addField(_ view: NSView) { fields.add(view) }
+
+    /// The field on screen: the one you're typing in, else the newest one showing.
+    private var field: NSView? {
+        let showing = fields.allObjects.filter { $0.window != nil && $0.window === page?.window && !$0.isHiddenOrHasHiddenAncestor }
+        if let editor = page?.window?.firstResponder as? NSView, editor.window != nil {
+            let r = editor.convert(editor.bounds, to: nil)
+            let center = CGPoint(x: r.midX, y: r.midY)
+            if let typing = showing.first(where: { $0.convert($0.bounds, to: nil).contains(center) }) { return typing }
+        }
+        return showing.last
+    }
+
     /// The field's frame in the page's coordinates, y down; `size` is the page's.
     func fieldFrame(size: CGSize) -> CGRect? {
-        guard let field, let page, field.window != nil, field.window === page.window else { return nil }
+        guard let field, let page else { return nil }
         let r = page.convert(field.bounds, from: field)
         return page.isFlipped ? r : CGRect(x: r.minX, y: size.height - r.maxY, width: r.width, height: r.height)
     }
