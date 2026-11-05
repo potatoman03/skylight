@@ -104,6 +104,35 @@ private let c = URL(string: "https://c.example")!
         #expect(state.spaces[1].selectedTabID == workTab)
     }
 
+    @Test func spaceOffsetStepsAlongTheBarAndStopsAtEachEnd() {
+        var state = BrowserState.initial()
+        let (first, last) = (state.spaces[0].id, state.spaces[1].id)
+        BrowserReducer.reduce(&state, .switchSpace(first), env: env)
+
+        #expect(!BrowserReducer.reduce(&state, .switchSpaceByOffset(-1), env: env).applied)
+        #expect(state.activeSpaceID == first)
+
+        #expect(BrowserReducer.reduce(&state, .switchSpaceByOffset(1), env: env).applied)
+        #expect(state.activeSpaceID == last)
+
+        #expect(!BrowserReducer.reduce(&state, .switchSpaceByOffset(1), env: env).applied)
+        #expect(state.activeSpaceID == last)
+
+        #expect(BrowserReducer.reduce(&state, .switchSpaceByOffset(-1), env: env).applied)
+        #expect(state.activeSpaceID == first)
+    }
+
+    @Test func spaceOffsetShowsTheSpacesSelectedTab() {
+        var state = BrowserState.initial()
+        BrowserReducer.reduce(&state, .switchSpace(state.spaces[0].id), env: env)
+        let tab = open(&state, a)[0]
+        BrowserReducer.reduce(&state, .switchSpaceByOffset(1), env: env)
+        #expect(state.selectedTabID == nil)
+        let result = BrowserReducer.reduce(&state, .switchSpaceByOffset(-1), env: env)
+        #expect(state.selectedTabID == tab)
+        #expect(result.effects == [.showTab(tab)])
+    }
+
     @Test func deletingSpaceDiscardsItsPages() {
         var state = BrowserState.initial()
         let work = state.spaces[1].id
