@@ -9,24 +9,117 @@ usable by AI agents as a first-class citizen.
 
 ## Build and run
 
-Requirements: macOS 26, Xcode 26 (Swift 6.2+), `cmake` and `ninja` (`brew install cmake ninja`).
+### Requirements
+
+- macOS 26 on Apple silicon (the CEF build Skylight uses is `macosarm64`).
+- Xcode 26 with Swift 6.2 or later (`swift --version`).
+- `cmake` and `ninja` for CEF's C++ wrapper: `brew install cmake ninja`. `python3` and `curl`,
+  which macOS already has.
+- CEF 156 (Chromium 156). You don't install it yourself: the scripts download the exact version
+  named in `scripts/fetch-cef.sh` into `Vendor/cef`, which git ignores.
+
+### Fetch CEF, build, run
 
 ```bash
 scripts/bundle.sh
 ```
 
-The first run downloads CEF (~300 MB) into `Vendor/cef` and builds its C++ wrapper. Then:
+The first run downloads CEF (about 300 MB) into `Vendor/cef` and builds `libcef_dll_wrapper`
+(`scripts/fetch-cef.sh`, then `scripts/build-cef-wrapper.sh`; you can run either on its own). Later
+runs only rebuild Skylight. The result is `build/Skylight.app`:
 
 ```bash
 open build/Skylight.app
 ```
 
-`scripts/bundle.sh release` makes an optimized build. Tests: `swift test`. The app icon is drawn in
-code: edit `scripts/make-icon.swift` and run it to regenerate `Resources/AppIcon.icns`.
+`scripts/bundle.sh release` makes an optimized build, and `OPEN=1 scripts/bundle.sh` builds, then
+launches. `swift build` alone compiles everything but doesn't make an app Chromium can run: the
+framework and the five helper apps only come together in the bundle.
 
-Data lives in `~/Library/Application Support/Skylight` (`state.json`, `preferences.json`, `Packages/`,
-`Engine/`, `mcp.json`). Set `SKYLIGHT_DATA_DIR` to run against another folder, and
-`SKYLIGHT_DEBUG_PORT=9333` to expose Chrome DevTools Protocol for debugging.
+If you already run a copy of Skylight, `open` brings that one to the front instead, since both
+have the same bundle id. Start the new build's executable directly instead (see the next section).
+
+### Demo mode
+
+For trying a change without touching your own tabs, cookies or passwords:
+
+```bash
+SKYLIGHT_DEV=1 SKYLIGHT_DATA_DIR="$(mktemp -d)" build/Skylight.app/Contents/MacOS/Skylight
+```
+
+- `SKYLIGHT_DATA_DIR` puts every file Skylight writes in that folder instead of
+  `~/Library/Application Support/Skylight` (`state.json`, `preferences.json`, `Packages/`,
+  `Engine/`, `mcp.json`, `engine.log`).
+- `SKYLIGHT_DEV=1` keeps passwords in memory, with three made-up logins, instead of your login
+  Keychain, and gives Chromium a mock keychain for its cookie key.
+- `SKYLIGHT_DEBUG_PORT=9333` also exposes the Chrome DevTools Protocol on that port.
+
+### Tests
+
+```bash
+swift test
+```
+
+116 tests in Swift Testing, over SkylightCore, SkylightKit and SkylightMCP. They use temporary
+folders and in-memory stores only. `swift test -c release --filter Performance` prints the timings
+quoted under Performance below.
+
+`swift test` builds the whole package, CEFBridge included, so it needs CEF in `Vendor/cef` (run
+`scripts/fetch-cef.sh` once). No test needs CEF, though, so without it you can build only the test
+bundle and run that:
+
+```bash
+swift build --product SkylightPackageTests
+swift test --skip-build
+```
+
+### Signing
+
+By default `bundle.sh` signs ad hoc. That's enough to run on your own Mac. An ad hoc build is a
+development build (`SkylightDevBuild` in its Info.plist): its signature changes on every build,
+so it uses Chromium's mock keychain rather than asking for your login Keychain at every launch.
+
+To sign with your own certificate, put it in `.signing` at the top of the repo. Git ignores the
+file, so never commit it, and never put anything other than these variables in it:
+
+```bash
+SKYLIGHT_SIGN_IDENTITY="Apple Development: You (TEAMID)"
+# Optional: a profile with Apple's web-browser.public-key-credential entitlement, for passkeys.
+SKYLIGHT_PROVISIONING_PROFILE=path/to/Skylight.provisionprofile
+```
+
+`bundle.sh` reads it on every build (variables already set in your shell win). A signed build uses
+the hardened runtime and your real Keychain. Keep to one identity: a build signed differently from
+the last re-keys Chromium's cookies, and you are signed out of sites once.
+
+The app icon is drawn in code: edit `scripts/make-icon.swift` and run it to regenerate
+`Resources/AppIcon.icns`.
+
+### Releases (not built yet)
+
+There's no release pipeline yet. The plan is a Developer ID-signed, notarized build in a DMG,
+updated with Sparkle. Until then, build it yourself as above.
+
+## Modules
+
+Skylight is one Swift package. Each module is a target in `Package.swift`, and depends only on
+modules above it in this list:
+
+| Module | What's in it |
+|---|---|
+| `SkylightCore` | State, actions, the reducer and store, persistence, themes, splits, omnibox parsing. No AppKit, no engine. |
+| `SkylightEngine` | The `WebEngine`, `WebPage` and `ExtensionHost` protocols the rest of the app uses for web pages. |
+| `SkylightKit` | Packages and boosts, Chrome extension manifests, native messaging hosts, passwords (Keychain, CSV, Chromium import). |
+| `SkylightAgent` | The agent tool hub, built-in browser tools, page scripts and WebMCP. |
+| `SkylightMCP` | The Model Context Protocol server on `127.0.0.1`. |
+| `SkylightBrowser` | `Browser`, the object that owns every service and connects them: the store, pages, prompts, packages, agents, passwords, extensions, media. |
+| `SkylightUI` | The SwiftUI window: sidebar, toolbar, address field, page area, Settings. |
+| `SkylightCEF`, `CEFBridge` | The CEF engine: a Swift adapter over an Objective-C++ bridge. Only these two know about Chromium. |
+| `Skylight`, `SkylightHelper` | The app executable, and Chromium's sub-process executable. |
+
+[AGENTS.md](AGENTS.md) has the full map, where each kind of change goes, and the rules that keep it
+working. [CONTRIBUTING.md](CONTRIBUTING.md) covers branches, commits and pull requests.
+[docs/architecture.md](docs/architecture.md) lists known boundary problems and proposed fixes.
 
 ## Using it
 
@@ -194,7 +287,7 @@ nothing: five tabs with one awake use about as much as one page.
 ```
 Skylight (app) ─┬─> SkylightUI ──> SkylightBrowser ─┬─> SkylightCore     state, reducer, store (pure)
                 │                                   ├─> SkylightEngine   WebEngine protocols
-                │                                   ├─> SkylightKit      packages
+                │                                   ├─> SkylightKit      packages, extensions, passwords
                 │                                   ├─> SkylightAgent    tool hub, page scripts, WebMCP
                 │                                   └─> SkylightMCP      MCP over local HTTP
                 └─> SkylightCEF ──> CEFBridge (Objective-C++) ──> CEF

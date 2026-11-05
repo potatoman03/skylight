@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # No test needs Chromium, so the test bundle builds without CEF: fast, and nothing to download.
+  test:
+    name: Tests
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Build the tests (without CEF)
+        run: swift build --product SkylightPackageTests
+      - name: Run the tests
+        run: swift test --skip-build
+
+  # The whole package and the app bundle. CEF (about 300 MB) is fetched once per CEF version and
+  # cached; the key changes when scripts/fetch-cef.sh names a new version.
+  app:
+    name: App bundle
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore CEF
+        id: cef
+        uses: actions/cache@v4
+        with:
+          path: Vendor/cef
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/fetch-cef.sh', 'scripts/build-cef-wrapper.sh') }}
+      - name: Fetch CEF and build its wrapper
+        if: steps.cef.outputs.cache-hit != 'true'
+        run: |
+          command -v ninja >/dev/null || brew install ninja
+          scripts/fetch-cef.sh
+          # Only Release is linked and bundled; dropping the rest halves the cache.
+          rm -rf Vendor/cef/Debug Vendor/cef/tests
+      - name: Build everything
+        run: swift build
+      - name: Bundle (ad hoc signed)
+        run: scripts/bundle.sh
+      - name: Check the bundle's signature
+        run: codesign --verify --deep --strict build/Skylight.app
