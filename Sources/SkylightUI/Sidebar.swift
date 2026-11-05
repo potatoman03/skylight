@@ -998,56 +998,37 @@ private struct AgentActivityBadge: View {
     }
 }
 
-/// A downloaded update, at the bottom of the sidebar. Restart installs it now; otherwise it
-/// installs when Skylight next quits, and the × puts the card away until then.
+/// A downloaded update, at the bottom of the sidebar: one tile, like the pinned ones, that
+/// relaunches Skylight to install it. Otherwise it installs when Skylight next quits; the context
+/// menu puts the tile away until then.
 private struct UpdateCard: View {
     let update: ReadyUpdate
+    @Environment(\.sidebarDensity) private var density
     @State private var dismissed = false
-    @State private var hovering = false
 
     var body: some View {
         if !dismissed {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(.tint)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("Skylight \(update.version) is ready")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Or it installs when you quit")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    .lineLimit(1)
+            Button { update.install() } label: {
+                HStack {
+                    Text("Relaunch to update")
+                    Spacer(minLength: 4)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
-                // Drawn, not a system button: it keeps its color when the window isn't active.
-                Button { update.install() } label: {
-                    Text("Restart to Update")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 26)
-                        .background(.tint, in: .capsule)
-                        .contentShape(.capsule)
-                }
-                .buttonStyle(.plain)
+                .font(density.rowFont.weight(.medium))
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity)
+                .frame(height: 34)
+                .contentShape(.rect(cornerRadius: 10))
             }
-            .padding(10)
-            .glassEffect(.regular, in: .rect(cornerRadius: 12, style: .continuous))
-            .overlay(alignment: .topTrailing) {
-                if hovering {
-                    Button { animate(Motion.exit) { dismissed = true } } label: {
-                        Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
-                    }
-                    .buttonStyle(RowActionStyle())
-                    .help("Install When Skylight Quits")
-                    .offset(x: 4, y: -4)
-                    .transition(.opacity)
-                }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 10, style: .continuous))
+            .help("Relaunch to update · v\(update.version)")
+            .contextMenu {
+                Button("Install When Skylight Quits") { animate(Motion.exit) { dismissed = true } }
             }
-            .motion(Motion.feedback, value: hovering)
-            .onHover { hovering = $0 }
             .transition(Arrive(anchor: .bottom, scale: 0.94, rise: 8))
         }
     }
