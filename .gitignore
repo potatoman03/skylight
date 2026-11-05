@@ -1,5 +1,5 @@
 .build/
-Vendor/
+/Vendor
 build/
 *.xcodeproj
 .DS_Store
