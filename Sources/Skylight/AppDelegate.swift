@@ -134,6 +134,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func stopLoading(_ sender: Any?) { if let id = selected { store?.send(.stop(id)) } }
     @objc func goBack(_ sender: Any?) { if let id = selected { store?.send(.goBack(id)) } }
     @objc func goForward(_ sender: Any?) { if let id = selected { store?.send(.goForward(id)) } }
+    // ⌘← and ⌘→ as well, as in Safari. A page's text field takes them first, as do ours (see
+    // validateMenuItem), where they move to the start or end of the line.
+    @objc func goBackWithArrow(_ sender: Any?) { goBack(sender) }
+    @objc func goForwardWithArrow(_ sender: Any?) { goForward(sender) }
     @objc func pictureInPicture(_ sender: Any?) { browser?.togglePictureInPicture() }
     @objc func newSplitTab(_ sender: Any?) { if selected != nil { browser?.presentCommandBar(.split) } }
     @objc func nextPane(_ sender: Any?) { browser?.focusPane(offset: 1) }
@@ -183,4 +187,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
     @objc func importPasswordsCSV(_ sender: Any?) { browser?.openSettings("passwords") }
+}
+
+extension AppDelegate: NSMenuItemValidation {
+    /// The arrow shortcuts step aside while you type in the address field or a sidebar name, so
+    /// the field gets them. A disabled item's shortcut passes on to the field.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(goBackWithArrow(_:)), #selector(goForwardWithArrow(_:)):
+            !(NSApp.keyWindow?.firstResponder is NSText)
+        default:
+            true
+        }
+    }
 }

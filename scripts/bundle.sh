@@ -21,7 +21,9 @@ CONFIG="${1:-debug}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CEF="$ROOT/Vendor/cef"
 APP="$ROOT/build/Skylight.app"
-VERSION="0.1.0"
+VERSION="${SKYLIGHT_VERSION:-0.1.0}"
+# Counts up with every release; what updaters compare.
+BUILD="${SKYLIGHT_BUILD:-1}"
 BUNDLE_ID="app.skylight.Skylight"
 # A build signed differently from the last re-keys Chromium's cookies, so keep to one identity.
 if [[ -z "${SKYLIGHT_SIGN_IDENTITY:-}" && -f "$ROOT/.signing" ]]; then source "$ROOT/.signing"; fi
@@ -60,7 +62,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>Skylight</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleVersion</key><string>$BUILD</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSPrincipalClass</key><string>SKApplication</string>
@@ -116,7 +118,7 @@ for kind in "" " (Alerts)" " (GPU)" " (Plugin)" " (Renderer)"; do
   <key>CFBundleName</key><string>$name</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleVersion</key><string>$BUILD</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSUIElement</key><string>1</string>
   <key>LSFileQuarantineEnabled</key><true/>

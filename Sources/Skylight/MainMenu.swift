@@ -68,6 +68,8 @@ enum MainMenu {
         main.addItem(submenu("History", [
             item("Back", #selector(AppDelegate.goBack(_:)), "[", target: target),
             item("Forward", #selector(AppDelegate.goForward(_:)), "]", target: target),
+            hidden(item("Back", #selector(AppDelegate.goBackWithArrow(_:)), String(UnicodeScalar(NSLeftArrowFunctionKey)!), target: target)),
+            hidden(item("Forward", #selector(AppDelegate.goForwardWithArrow(_:)), String(UnicodeScalar(NSRightArrowFunctionKey)!), target: target)),
         ]))
 
         var spaceItems: [NSMenuItem] = [
@@ -114,6 +116,13 @@ enum MainMenu {
         let menu = NSMenu(title: title)
         items.forEach(menu.addItem)
         item.submenu = menu
+        return item
+    }
+
+    /// A second shortcut for a command: not shown, but its key equivalent still works.
+    private static func hidden(_ item: NSMenuItem) -> NSMenuItem {
+        item.isHidden = true
+        item.allowsKeyEquivalentWhenHidden = true
         return item
     }
 
