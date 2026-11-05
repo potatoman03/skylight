@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ShortcutMap.apply(browser.preferences.shortcuts)
         CEFRuntime.onTerminate { [weak self] in self?.quit() }
 
-        let window = NSWindow(
+        let window = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
@@ -241,4 +241,11 @@ extension AppDelegate: NSMenuItemValidation {
             true
         }
     }
+}
+
+/// Skylight's window. Escape belongs to pages and Skylight's own fields: one that nothing used
+/// (a page passes on keys it doesn't handle) mustn't take the window out of full screen, which is
+/// AppKit's default. A fullscreen video still leaves on Escape; the engine handles that first.
+private final class BrowserWindow: NSWindow {
+    override func cancelOperation(_ sender: Any?) {}
 }
