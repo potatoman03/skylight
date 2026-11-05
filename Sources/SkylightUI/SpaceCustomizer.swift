@@ -60,14 +60,14 @@ struct SpaceCustomizer: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
-            section("Sky") {
-                Picker("Sky", selection: Binding(get: { space.themeID }, set: { store.send(.setSpaceTheme(space.id, $0)) })) {
+            section("Theme") {
+                Picker("Theme", selection: Binding(get: { space.themeID }, set: { store.send(.setSpaceTheme(space.id, $0)) })) {
                     Text("Same as the app").tag(String?.none)
                     Divider()
                     ForEach(prefs.themes) { Text($0.name).tag(Optional($0.id)) }
                 }
                 .labelsHidden()
-                Toggle("Show the sky behind the sidebar", isOn: $prefs.skyBackdrop)
+                Toggle("Show the theme behind the sidebar", isOn: $prefs.skyBackdrop)
                     .controlSize(.small)
             }
         }

@@ -120,7 +120,7 @@ public struct ThemeImage: Codable, Hashable, Sendable {
 
 /// A field of characters drifting over the sky, drawn live.
 public enum AsciiPattern: String, Codable, CaseIterable, Identifiable, Sendable {
-    case stars, mist, hearts, meadow, rain, petals, waves, snow, embers, grid, dots
+    case stars, mist, hearts, meadow, rain, petals, waves, snow, embers, grid, dots, dust, weave, contour
 
     public var id: String { rawValue }
 
@@ -137,6 +137,9 @@ public enum AsciiPattern: String, Codable, CaseIterable, Identifiable, Sendable 
         case .embers: "Embers"
         case .grid: "Retro grid"
         case .dots: "Halftone"
+        case .dust: "Dust"
+        case .weave: "Weave"
+        case .contour: "Contour lines"
         }
     }
 
@@ -144,7 +147,7 @@ public enum AsciiPattern: String, Codable, CaseIterable, Identifiable, Sendable 
     public var glyphs: [Character] {
         switch self {
         case .stars: [".", "·", "'", ":", "+", "*", "✦", "✧"]
-        case .mist: [".", "·", ":", "-", "~", "=", "░", "▒"]
+        case .mist: [".", "·", ":", "-", "~", "~", "=", "≈"]
         case .hearts: ["·", ".", "+", "✧", "*", "♡", "❤", "♡"]
         case .meadow: [".", ",", "'", "\"", ";", "^", "|", "Y"]
         case .rain: ["0", "1", "7", ":", "=", "+", "<", ">"]
@@ -154,6 +157,9 @@ public enum AsciiPattern: String, Codable, CaseIterable, Identifiable, Sendable 
         case .embers: [".", "'", "`", "·", ":", "*", "^", "✦"]
         case .grid: ["·", ".", "-", "=", "+", "|", "#", "#"]
         case .dots: ["·", ".", ":", "o", "O", "0", "@", "#"]
+        case .dust: [".", "·", ".", "·", "'", "·", ".", ":"]
+        case .weave: ["·", ".", "-", "-", "=", "+", "+", "×"]
+        case .contour: ["·", ".", "-", "-", "~", "~", "-", "."]
         }
     }
 }
@@ -297,7 +303,7 @@ public struct SkyTheme: Codable, Identifiable, Hashable, Sendable {
                            sunlight: RGB(h: 0.70, s: 0.35, v: 1), rays: 0.30),
         followsSpace: true)
 
-    public static let presets: [SkyTheme] = skies + asciiThemes
+    public static let presets: [SkyTheme] = skies + asciiThemes + quietThemes
 
     /// Painted skies.
     public static let skies: [SkyTheme] = [
@@ -378,6 +384,55 @@ public struct SkyTheme: Codable, Identifiable, Hashable, Sendable {
         ascii("mono", "Mono", .dots,
               light: (("#E9E9E9", "#F7F7F7", "#EFEFEF", "#222222", "#FFFFFF", 0, 1), ("#111111", "#555555", "#999999", "#FFFFFF", 0.35), "#222222", 0.35),
               dark: (("#141414", "#0A0A0A", "#1E1E1E", "#EDEDED", "#FFFFFF", 0, 1), ("#F2F2F2", "#A6A6A6", "#8C8C8C", "#0A0A0A", 0.30), "#F0F0F0", 0.4)),
+        ascii("golden-hour", "Golden Hour", .embers,
+              light: (("#FFD9A8", "#FFF0D6", "#FFC4B0", "#A84A16", "#FFF2D0", 0, 1), ("#4A2610", "#7E5230", "#EE9A55", "#FFF8EC", 0.36), "#D9782A", 0.5),
+              dark: (("#3A1F14", "#180C08", "#6A2F22", "#FFB870", "#FFD9A0", 0, 1), ("#FFF1E0", "#DDB89A", "#E8904A", "#180C08", 0.32), "#FFB870", 0.6)),
+        ascii("matcha", "Matcha", .meadow,
+              light: (("#D6E8B4", "#F5F9E6", "#E6F0C4", "#4A7A1E", "#FDFFE8", 0, 1), ("#26381A", "#556B42", "#8DBB5C", "#FBFFF0", 0.38), "#5E9230", 0.55),
+              dark: (("#1E2C14", "#0E1609", "#2F4318", "#B8E67C", "#E2F7BE", 0, 1), ("#F0FAE2", "#B2C99A", "#7FB84A", "#0E1609", 0.34), "#B8E67C", 0.5)),
+        ascii("midnight", "Midnight", .rain,
+              light: (("#DDE6F7", "#F3F6FC", "#CCD9F2", "#2A55B8", "#F6F9FF", 0, 1), ("#14264F", "#4A5D85", "#6F93DD", "#FFFFFF", 0.32), "#2A55B8", 0.45),
+              dark: (("#070F24", "#030712", "#0F1F4A", "#7AAEFF", "#C2D8FF", 0, 1), ("#E2ECFF", "#93A8CC", "#3F6FD0", "#030712", 0.30), "#6FA8FF", 0.65)),
+        ascii("cotton-candy", "Cotton Candy", .hearts,
+              light: (("#F8D7EC", "#DCEBFF", "#FFE3D6", "#A83A88", "#FFF6FA", 0, 1), ("#47264F", "#7A5A85", "#E48BCB", "#FFFFFF", 0.34), "#D66BB8", 0.55),
+              dark: (("#3A2450", "#1C1238", "#2F3A78", "#FFB3E0", "#CFE0FF", 0, 1), ("#FFF0FA", "#D3BCDC", "#E28FCB", "#1C1238", 0.38), "#FFB3E0", 0.6)),
+        ascii("citrus", "Citrus", .dots,
+              light: (("#FFE89A", "#FFF9DC", "#FFD08A", "#A04F00", "#FFFBE0", 0, 1), ("#4A3206", "#7E6228", "#F0B040", "#FFFDF0", 0.40), "#E08A1A", 0.4),
+              dark: (("#2E2408", "#151004", "#4A3208", "#FFC83D", "#FFE9A0", 0, 1), ("#FFF7DF", "#D6C28C", "#D9962A", "#151004", 0.34), "#FFC83D", 0.45)),
+    ]
+
+    /// Soft colors and faint, slow patterns, for when the theme should stay out of the way.
+    public static let quietThemes: [SkyTheme] = [
+        ascii("linen", "Linen", .dust,
+              light: (("#EFEAE1", "#F8F5EE", "#E8E1D4", "#5E5548", "#FFFDF8", 0, 1), ("#2E2A24", "#6B6459", "#B8AD9A", "#FBF8F2", 0.30), "#8C8272", 0.3),
+              dark: (("#26231F", "#1A1815", "#2E2A25", "#D8CDB9", "#F2EADB", 0, 1), ("#EFE9DE", "#A89F90", "#8C8272", "#1A1815", 0.30), "#BDB29F", 0.25)),
+        ascii("oat", "Oat", .weave,
+              light: (("#F0E6D6", "#FAF4EA", "#EADFCB", "#7E6034", "#FFFBF2", 0, 1), ("#362B1C", "#75664F", "#C9B48F", "#FCF8F0", 0.30), "#A58A60", 0.24),
+              dark: (("#2C261D", "#1C1813", "#372F24", "#DBC198", "#F4E6CC", 0, 1), ("#F1EADD", "#B3A68F", "#8A7350", "#1C1813", 0.30), "#DBC198", 0.2)),
+        ascii("stone", "Stone", .weave,
+              light: (("#E3E1DC", "#F1F0EC", "#DAD8D2", "#55524C", "#FBFAF7", 0, 1), ("#2A2926", "#6A6863", "#A8A59D", "#F5F4F0", 0.30), "#77746D", 0.25),
+              dark: (("#2A2927", "#1B1A19", "#33322F", "#CFCBC2", "#ECE9E2", 0, 1), ("#ECEAE5", "#A5A29B", "#77746D", "#1B1A19", 0.30), "#A5A29B", 0.2)),
+        ascii("sage", "Sage", .contour,
+              light: (("#DDE3D6", "#F1F3EB", "#D3DCCB", "#4E6853", "#F9FBF4", 0, 1), ("#27332A", "#5E6D60", "#9DB19F", "#F6F8F1", 0.30), "#6F8A72", 0.28),
+              dark: (("#252C26", "#171C18", "#2E372F", "#AFC9B1", "#DDEBDD", 0, 1), ("#E9EFE8", "#A3B3A4", "#6F8A72", "#171C18", 0.30), "#AFC9B1", 0.22)),
+        ascii("moss", "Moss", .dust,
+              light: (("#E2E2CF", "#F3F3E7", "#D9DAC2", "#5E6138", "#FBFBF0", 0, 1), ("#2D2E1C", "#66674F", "#AEB08B", "#F8F8EE", 0.30), "#84875A", 0.28),
+              dark: (("#262818", "#191A10", "#30321F", "#C6CA99", "#E8EBC8", 0, 1), ("#EEEFDF", "#ABAD91", "#7C7F55", "#191A10", 0.30), "#C6CA99", 0.2)),
+        ascii("fog", "Fog", .mist,
+              light: (("#DEE3E8", "#F2F4F6", "#D5DBE2", "#4F6B84", "#FAFBFC", 0, 1), ("#252E38", "#5F6C79", "#9FB1C2", "#F6F8FA", 0.30), "#7890A6", 0.3),
+              dark: (("#252B32", "#171B20", "#2D343C", "#A9C1D6", "#D9E5EF", 0, 1), ("#E8EDF2", "#A0ADBA", "#6E8699", "#171B20", 0.30), "#A9C1D6", 0.22)),
+        ascii("harbor", "Harbor", .waves,
+              light: (("#D9E0E6", "#EFF2F4", "#CFD9E0", "#3D5A73", "#F8FAFB", 0, 1), ("#1F2C38", "#566675", "#94ABBD", "#F5F7F9", 0.30), "#5F7D96", 0.26),
+              dark: (("#1D2732", "#121920", "#25323E", "#9DB8CE", "#D2E0EC", 0, 1), ("#E6EDF3", "#9AAAB8", "#5F7D96", "#121920", 0.30), "#9DB8CE", 0.2)),
+        ascii("clay", "Clay", .contour,
+              light: (("#EBDDD2", "#F7F0EA", "#E6D2C4", "#8E5339", "#FFF9F4", 0, 1), ("#3A2A22", "#75604F", "#CFA48F", "#FBF5F0", 0.30), "#B27E66", 0.28),
+              dark: (("#30251F", "#1E1714", "#3B2C24", "#DDA88E", "#F3D9C9", 0, 1), ("#F2E8E1", "#B8A597", "#9A6B55", "#1E1714", 0.30), "#DDA88E", 0.22)),
+        ascii("mauve", "Mauve", .dust,
+              light: (("#E6DFE6", "#F5F1F4", "#DFD5DF", "#7A5C7E", "#FCF9FB", 0, 1), ("#332936", "#6F6272", "#B7A4BA", "#FAF6F9", 0.30), "#957D99", 0.3),
+              dark: (("#2C2630", "#1C181F", "#372E3B", "#CDB4D2", "#EADCEE", 0, 1), ("#EFE9F1", "#AFA3B3", "#80698A", "#1C181F", 0.30), "#CDB4D2", 0.22)),
+        ascii("sumi", "Sumi", .contour,
+              light: (("#EDEDEA", "#F8F8F6", "#E4E4E0", "#2B2B2B", "#FFFFFF", 0, 1), ("#171717", "#5C5C58", "#A6A6A0", "#FBFBF9", 0.30), "#5C5C58", 0.22),
+              dark: (("#181818", "#101010", "#202020", "#DEDEDA", "#F4F4F0", 0, 1), ("#EDEDEA", "#9C9C98", "#6C6C68", "#101010", 0.30), "#9C9C98", 0.2)),
     ]
 
     private typealias Colors = (sky: String, horizon: String, glow: String, accent: String, sunlight: String, rays: Double, glass: Double)

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ImageIO
 import Observation
 import SkylightCore
 
@@ -88,7 +89,7 @@ public final class Preferences {
             switch self {
             case .addressBar: "Address bar"
             case .favorites: "Favorites"
-            case .newTab: "New Tab button"
+            case .newTab: "New Tab"
             case .agentActivity: "Agent activity"
             case .reopenTab: "Reopen Closed Tab"
             case .settings: "Settings"
@@ -341,13 +342,107 @@ public final class Preferences {
     /// Copies a picture into the Backgrounds folder, so a theme keeps it if the original moves.
     /// Nil if it isn't a picture Skylight can show.
     public func importBackground(from source: URL) -> ThemeImage? {
-        guard let folder = backgroundsFolder, let image = NSImage(contentsOf: source), image.isValid else { return nil }
-        let file = "\(UUID().uuidString).\(source.pathExtension.lowercased())"
+        guard let data = try? Data(contentsOf: source) else { return nil }
+        return storePicture(data, fileExtension: source.pathExtension)
+    }
+
+    private func storePicture(_ data: Data, fileExtension: String) -> ThemeImage? {
+        let fileExtension = fileExtension.lowercased()
+        guard let folder = backgroundsFolder, ThemeImage.fileExtensions.contains(fileExtension),
+              let image = NSImage(data: data), image.isValid else { return nil }
+        let file = "\(UUID().uuidString).\(fileExtension)"
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: source, to: folder.appending(path: file))
+            try data.write(to: folder.appending(path: file), options: .atomic)
         } catch { return nil }
         return ThemeImage(file: file)
+    }
+
+    /// A new theme from a picture, named after the file, with colors picked to suit it.
+    /// Nil if it isn't a picture Skylight can show.
+    @discardableResult
+    public func makeTheme(fromPicture source: URL) -> SkyTheme? {
+        guard let image = importBackground(from: source) else { return nil }
+        let pixels = pixels(of: url(for: image))
+        let name = source.deletingPathExtension().lastPathComponent
+        return saveTheme(SkyTheme(name: uniqueThemeName(name), light: .suited(to: pixels, dark: false, image: image),
+                                  dark: .suited(to: pixels, dark: true, image: image), followsSpace: false))
+    }
+
+    /// Picks a look's colors again to suit its picture, keeping its picture and pattern.
+    public func matchColors(of id: String, dark: Bool) {
+        guard var theme = theme(id), !theme.isPreset else { return }
+        let path: WritableKeyPath<SkyTheme, ThemePalette> = dark ? \.dark : \.light
+        let look = theme[keyPath: path]
+        guard let image = look.image else { return }
+        var matched = ThemePalette.suited(to: pixels(of: url(for: image)), dark: dark, image: image)
+        matched.ascii = look.ascii
+        theme[keyPath: path] = matched
+        saveTheme(theme)
+    }
+
+    /// Saves a theme and its pictures to one file, to keep or to share.
+    public func exportTheme(_ id: String, to destination: URL) -> Bool {
+        guard let theme = theme(id) else { return false }
+        var pictures: [String: Data] = [:]
+        for image in [theme.light.image, theme.dark.image].compactMap({ $0 }) {
+            if let url = url(for: image), let data = try? Data(contentsOf: url) { pictures[image.file] = data }
+        }
+        guard let data = try? ThemeFile(theme: theme, pictures: pictures).encoded() else { return false }
+        return (try? data.write(to: destination, options: .atomic)) != nil
+    }
+
+    /// Adds a theme from a file. A picture that's missing or isn't one leaves that look without it.
+    @discardableResult
+    public func importTheme(from source: URL) -> SkyTheme? {
+        guard let size = try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= ThemeFile.sizeLimit,
+              let data = try? Data(contentsOf: source), let file = try? ThemeFile.decoded(from: data) else { return nil }
+        var theme = file.importedTheme()
+        theme.name = uniqueThemeName(theme.name)
+        // Stored once each, even when both looks share a picture.
+        var stored: [String: ThemeImage] = [:]
+        func store(_ path: WritableKeyPath<SkyTheme, ThemePalette>) {
+            guard let image = theme[keyPath: path].image else { return }
+            if stored[image.file] == nil, let bytes = file.pictures[image.file] {
+                stored[image.file] = storePicture(bytes, fileExtension: (image.file as NSString).pathExtension)
+            }
+            var kept = stored[image.file].map { new in
+                var adjusted = image
+                adjusted.file = new.file
+                return adjusted
+            }
+            kept?.builtIn = false
+            theme[keyPath: path].image = kept
+        }
+        store(\.light)
+        store(\.dark)
+        return saveTheme(theme)
+    }
+
+    private func uniqueThemeName(_ name: String) -> String {
+        let name = name.isEmpty ? "My Theme" : name
+        let taken = Set(themes.map(\.name))
+        guard taken.contains(name) else { return name }
+        return (2...).lazy.map { "\(name) \($0)" }.first { !taken.contains($0) } ?? name
+    }
+
+    /// A small sample of a picture's pixels, enough to judge its colors.
+    private func pixels(of url: URL?) -> [RGB] {
+        let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 48,
+                                        kCGImageSourceCreateThumbnailWithTransform: true]
+        guard let url, let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return [] }
+        let (width, height) = (image.width, image.height)
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                          bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else { return [] }
+        return stride(from: 0, to: bytes.count, by: 4).map { RGB(Double(bytes[$0]) / 255, Double(bytes[$0 + 1]) / 255, Double(bytes[$0 + 2]) / 255) }
     }
 
     /// Removes pictures no theme of yours uses any more.

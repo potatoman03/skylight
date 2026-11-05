@@ -1,6 +1,7 @@
 import SkylightBrowser
 import SkylightCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Previews
 
@@ -239,84 +240,88 @@ struct ThemeCard: View {
 
 struct AppearanceSettings: View {
     @Environment(Browser.self) private var browser
-    @Environment(\.colorScheme) private var scheme
     @State private var customizing = false
+    @State private var problem: String?
+    @State private var dropping = false
 
     var body: some View {
         @Bindable var prefs = browser.preferences
         let hue = browser.store.state.activeSpace.hue
         let current = prefs.theme(prefs.themeID) ?? .standard
-        let dark = prefs.appearance == .dark || (prefs.appearance == .system && scheme == .dark)
 
         Form {
             Section {
-                VStack(alignment: .leading, spacing: 18) {
-                    labeled("Mode") {
-                        HStack(spacing: 14) {
-                            ForEach(Preferences.Appearance.allCases) { mode in
-                                ChoiceCard(title: mode.name, selected: prefs.appearance == mode) {
-                                    switch mode {
-                                    case .light: WindowSketch(dark: false)
-                                    case .dark: WindowSketch(dark: true)
-                                    case .system: HalfAndHalf { WindowSketch(dark: false) } dark: { WindowSketch(dark: true) }
+                Picker("Mode", selection: $prefs.appearance) {
+                    ForEach(Preferences.Appearance.allCases) { Text($0.name).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                VStack(alignment: .leading, spacing: 20) {
+                    labeled("Yours") {
+                        LazyVGrid(columns: Self.galleryColumns, alignment: .leading, spacing: 14) {
+                            ForEach(prefs.customThemes) { theme in
+                                card(theme, current: current, hue: hue, prefs)
+                                    .contextMenu {
+                                        Button("Edit…") {
+                                            pick(theme, prefs)
+                                            customizing = true
+                                        }
+                                        Button("Export…") { export(theme) }
+                                        Divider()
+                                        Button("Delete", role: .destructive) { prefs.deleteTheme(theme.id) }
                                     }
-                                } action: { prefs.appearance = mode }
                             }
+                            ChoiceCard(title: "Add Theme", selected: false, height: 72) {
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .strokeBorder(.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                                    .overlay(Image(systemName: "plus").font(.system(size: 18)).foregroundStyle(.secondary))
+                            } action: { add(ThemePanels.chooseThemeSource().map { [$0] } ?? []) }
+                            .help("A picture, a GIF or a .\(ThemeFile.fileExtension) file")
                         }
                     }
-                    labeled("Background") {
-                        HStack(spacing: 14) {
-                            ChoiceCard(title: "Glass", selected: !prefs.skyBackdrop) {
-                                WindowSketch(dark: dark)
+                    labeled("Quiet") {
+                        LazyVGrid(columns: Self.galleryColumns, alignment: .leading, spacing: 14) {
+                            ForEach(SkyTheme.quietThemes) { card($0, current: current, hue: hue, prefs) }
+                        }
+                    }
+                    labeled("Playful") {
+                        LazyVGrid(columns: Self.galleryColumns, alignment: .leading, spacing: 14) {
+                            ForEach(SkyTheme.asciiThemes) { card($0, current: current, hue: hue, prefs) }
+                        }
+                    }
+                    labeled("Skies") {
+                        LazyVGrid(columns: Self.galleryColumns, alignment: .leading, spacing: 14) {
+                            ChoiceCard(title: "Glass", selected: !prefs.skyBackdrop, height: 72) {
+                                WindowSketch(dark: false)
                             } action: { animate(Motion.travel) { prefs.skyBackdrop = false } }
-                            ChoiceCard(title: "Sky", selected: prefs.skyBackdrop) {
-                                ThemePreview(theme: current, dark: dark, hue: hue)
-                            } action: { animate(Motion.travel) { prefs.skyBackdrop = true } }
-                            // Keeps the two cards the width of the mode cards above.
-                            Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
+                            ForEach(SkyTheme.skies) { card($0, current: current, hue: hue, prefs) }
                         }
                     }
                 }
                 .padding(.vertical, 6)
-            } header: {
-                Text("Theme")
-            } footer: {
-                Text(prefs.skyBackdrop ? "A Space can have its own sky, from Spaces." : "Glass lets your desktop show softly through the sidebar.")
-            }
-
-            if prefs.skyBackdrop {
-                Section {
-                    VStack(alignment: .leading, spacing: 18) {
-                        labeled("Patterns") { gallery(SkyTheme.asciiThemes, current: current, hue: hue, prefs) }
-                        labeled("Skies") { gallery(SkyTheme.skies, current: current, hue: hue, prefs) }
-                        labeled("Yours") {
-                            LazyVGrid(columns: Self.galleryColumns, alignment: .leading, spacing: 14) {
-                                ForEach(prefs.customThemes) { theme in
-                                    ThemeCard(theme: theme, selected: theme.id == current.id, hue: hue) { prefs.themeID = theme.id }
-                                }
-                                ChoiceCard(title: "New Theme", selected: false, height: 72) {
-                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                        .strokeBorder(.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                                        .overlay(Image(systemName: "plus").font(.system(size: 16, weight: .medium)).foregroundStyle(.secondary))
-                                } action: {
-                                    newTheme(from: current)
-                                    customizing = true
-                                }
-                            }
-                        }
-                    }
-                    .padding(.vertical, 6)
-                    Toggle("Light through the sky", isOn: $prefs.godRays)
-                    Toggle("Fill new tabs with the theme", isOn: $prefs.sceneOnNewTab)
-                    LabeledContent(current.isPreset ? "\(current.name) is built in" : current.name) {
-                        Button(current.isPreset ? "Customize…" : "Edit Theme…") {
+                .dropDestination(for: URL.self) { urls, _ in
+                    add(urls)
+                    return true
+                } isTargeted: { dropping = $0 }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(.tint, lineWidth: 2)
+                        .opacity(dropping ? 1 : 0)
+                        .allowsHitTesting(false)
+                }
+                if prefs.skyBackdrop {
+                    LabeledContent(current.name) {
+                        Button(current.isPreset ? "Customize…" : "Edit…") {
                             if current.isPreset { newTheme(from: current) }
                             customizing = true
                         }
                     }
-                } header: {
-                    Text("Themes")
+                    Toggle("Fill new tabs with the theme", isOn: $prefs.sceneOnNewTab)
+                    Toggle("Light through the sky", isOn: $prefs.godRays)
                 }
+            } header: {
+                Text("Theme")
+            } footer: {
+                Text(problem ?? "Drop a picture or a .\(ThemeFile.fileExtension) file here to add it. A Space can have its own theme, from Spaces.")
             }
 
             Section {
@@ -404,18 +409,49 @@ struct AppearanceSettings: View {
         .sheet(isPresented: $customizing) {
             let theme = browser.preferences.theme(browser.preferences.themeID) ?? .standard
             ThemeEditor(theme: theme, duplicate: { newTheme(from: theme) }, deleted: { customizing = false }, done: { customizing = false })
-                .frame(width: 540, height: 720)
+                .frame(width: 520, height: 640)
         }
     }
 
     private static let galleryColumns = [GridItem(.adaptive(minimum: 128, maximum: 170), spacing: 14)]
 
-    private func gallery(_ themes: [SkyTheme], current: SkyTheme, hue: Double, _ prefs: Preferences) -> some View {
-        LazyVGrid(columns: Self.galleryColumns, alignment: .leading, spacing: 14) {
-            ForEach(themes) { theme in
-                ThemeCard(theme: theme, selected: theme.id == current.id, hue: hue) { prefs.themeID = theme.id }
+    private func card(_ theme: SkyTheme, current: SkyTheme, hue: Double, _ prefs: Preferences) -> some View {
+        ThemeCard(theme: theme, selected: prefs.skyBackdrop && theme.id == current.id, hue: hue) { pick(theme, prefs) }
+    }
+
+    private func pick(_ theme: SkyTheme, _ prefs: Preferences) {
+        animate(Motion.travel) {
+            prefs.skyBackdrop = true
+            prefs.themeID = theme.id
+        }
+    }
+
+    /// Adds pictures and theme files, shows the last one added, and offers it for editing if it
+    /// came from a picture, whose colors are only a first guess.
+    private func add(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        let prefs = browser.preferences
+        var added: SkyTheme?
+        var fromPicture = false
+        var failures = 0
+        for url in urls {
+            let isThemeFile = url.pathExtension.lowercased() == ThemeFile.fileExtension
+            if let theme = isThemeFile ? prefs.importTheme(from: url) : prefs.makeTheme(fromPicture: url) {
+                added = theme
+                fromPicture = !isThemeFile
+            } else {
+                failures += 1
             }
         }
+        problem = failures == 0 ? nil : "Skylight couldn't read \(failures == 1 ? "that file" : "\(failures) of those files")."
+        guard let added else { return }
+        pick(added, prefs)
+        if fromPicture, urls.count == 1 { customizing = true }
+    }
+
+    private func export(_ theme: SkyTheme) {
+        guard let url = ThemePanels.chooseExportDestination(named: theme.name) else { return }
+        problem = browser.preferences.exportTheme(theme.id, to: url) ? nil : "Skylight couldn't save that theme."
     }
 
     private func moveButton(_ section: SidebarSection, by offset: Int, label: String, symbol: String, _ prefs: Preferences) -> some View {
@@ -454,6 +490,33 @@ struct AppearanceSettings: View {
     }
 }
 
+/// The file panels themes use.
+@MainActor
+private enum ThemePanels {
+    static var themeFile: UTType { UTType(filenameExtension: ThemeFile.fileExtension) ?? .json }
+
+    static func choosePicture() -> URL? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.message = "Choose a picture or GIF"
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    static func chooseThemeSource() -> URL? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image, themeFile]
+        panel.message = "Choose a picture, a GIF or a Skylight theme"
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    static func chooseExportDestination(named name: String) -> URL? {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [themeFile]
+        panel.nameFieldStringValue = "\(name).\(ThemeFile.fileExtension)"
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+}
+
 /// Edits a theme of your own in place, live: both its looks are saved together, and the window
 /// behind changes as you go. Built-in ones offer to make an editable copy.
 private struct ThemeEditor: View {
@@ -465,6 +528,7 @@ private struct ThemeEditor: View {
     @Environment(\.colorScheme) private var scheme
     @State private var dark: Bool?
     @State private var problem: String?
+    @State private var showsColors = false
 
     var body: some View {
         let live = browser.preferences.theme(theme.id) ?? theme
@@ -472,21 +536,21 @@ private struct ThemeEditor: View {
         let path: WritableKeyPath<SkyTheme, ThemePalette> = showing ? \.dark : \.light
         VStack(spacing: 0) {
             preview(live, dark: showing, palette: binding(path))
-                .frame(height: 190)
+                .frame(height: 170)
                 .clipShape(.rect(cornerRadius: 12, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
                 .padding([.horizontal, .top], 16)
-                .padding(.bottom, 10)
             Picker("Look", selection: Binding(get: { showing }, set: { dark = $0 })) {
                 Text("Light").tag(false)
                 Text("Dark").tag(true)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 200)
+            .frame(width: 160)
+            .padding(.top, 12)
             Form {
                 if theme.isPreset {
-                    Section("Customize \(theme.name)") {
+                    Section {
                         LabeledContent("Built-in themes can't be changed.") {
                             Button("Save a Copy", action: duplicate)
                         }
@@ -494,29 +558,48 @@ private struct ThemeEditor: View {
                 } else {
                     Section {
                         TextField("Name", text: binding(\.name))
-                        Toggle("Follow each Space's color", isOn: binding(\.followsSpace))
                     }
                     PictureEditor(palette: binding(path), problem: $problem)
                     AsciiEditor(palette: binding(path))
-                    PaletteEditor(palette: binding(path))
+                    Section {
+                        LabeledContent("Colors") {
+                            HStack {
+                                if live[keyPath: path].image != nil {
+                                    Button("Match Picture") {
+                                        browser.preferences.matchColors(of: theme.id, dark: showing)
+                                    }
+                                    .help("Pick this look's colors again to suit its picture")
+                                }
+                                Button(showsColors ? "Hide" : "Edit…") { animate(Motion.travel) { showsColors.toggle() } }
+                            }
+                        }
+                        if showsColors { Toggle("Follow each Space's color", isOn: binding(\.followsSpace)) }
+                    }
+                    if showsColors { PaletteEditor(palette: binding(path)) }
                 }
             }
             .formStyle(.grouped)
             HStack {
                 if !theme.isPreset {
-                    Button("Delete Theme", role: .destructive) {
-                        browser.preferences.deleteTheme(theme.id)
-                        deleted()
-                    }
-                    Button("Save a Copy", action: duplicate)
-                    if let reset = live.reset {
-                        Button("Reset") {
-                            browser.preferences.saveTheme(reset)
-                            browser.preferences.pruneBackgrounds()
+                    Menu {
+                        Button("Save a Copy", action: duplicate)
+                        Button("Export…", action: export)
+                        if let reset = live.reset {
+                            Button("Reset to \(SkyTheme.preset(live.basedOn)?.name ?? "Original")") {
+                                browser.preferences.saveTheme(reset)
+                                browser.preferences.pruneBackgrounds()
+                            }
+                            .disabled(reset == live)
                         }
-                        .disabled(reset == live)
-                        .help("Go back to \(SkyTheme.preset(live.basedOn)?.name ?? "the original")")
+                        Divider()
+                        Button("Delete Theme", role: .destructive) {
+                            browser.preferences.deleteTheme(theme.id)
+                            deleted()
+                        }
+                    } label: {
+                        Text("More")
                     }
+                    .fixedSize()
                 }
                 Spacer()
                 Button("Done", action: done).keyboardShortcut(.defaultAction)
@@ -525,10 +608,16 @@ private struct ThemeEditor: View {
         }
     }
 
+    private func export() {
+        guard let url = ThemePanels.chooseExportDestination(named: (browser.preferences.theme(theme.id) ?? theme).name) else { return }
+        problem = browser.preferences.exportTheme(theme.id, to: url) ? nil : "Skylight couldn't save that theme."
+    }
+
     /// The look being edited; with a picture, drag to choose what stays in view.
     @ViewBuilder
     private func preview(_ live: SkyTheme, dark: Bool, palette: Binding<ThemePalette>) -> some View {
-        let base = ThemePreview(theme: live, dark: dark)
+        // A picture shows whole, so you can see what you're framing.
+        let base = ThemePreview(theme: live, dark: dark, showsWindow: palette.wrappedValue.image == nil)
         if palette.wrappedValue.image != nil, !theme.isPreset {
             base.modifier(FocusDrag(palette: palette))
                 .help("Drag to choose which part of the picture stays in view")
@@ -585,13 +674,13 @@ private struct PictureEditor: View {
                 }
             }
             if palette.image != nil {
-                slider("Sidebar position", \.sidebarFocusX, 0...1)
-                slider("Zoom", \.zoom, 1...3)
-                slider("Blur", \.blur, 0...40)
-                slider("Fade", \.fade, 0...0.9)
+                DisclosureGroup("Adjust") {
+                    slider("Sidebar position", \.sidebarFocusX, 0...1)
+                    slider("Zoom", \.zoom, 1...3)
+                    slider("Blur", \.blur, 0...40)
+                    slider("Fade", \.fade, 0...0.9)
+                }
             }
-        } header: {
-            Text("Background")
         } footer: {
             Text(problem ?? "An image or GIF, for this look only. Drag the preview to reposition it.")
         }
@@ -603,10 +692,7 @@ private struct PictureEditor: View {
     }
 
     private func choose() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
-        panel.message = "Choose a picture or GIF"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = ThemePanels.choosePicture() else { return }
         guard let image = browser.preferences.importBackground(from: url) else {
             problem = "Skylight can't show that file."
             return
@@ -622,7 +708,7 @@ private struct AsciiEditor: View {
     @Binding var palette: ThemePalette
 
     var body: some View {
-        Section("Pattern") {
+        Section {
             Picker("Pattern", selection: Binding(get: { palette.ascii?.pattern }, set: { pattern in
                 palette.ascii = pattern.map { AsciiLayer(pattern: $0, color: palette.ascii?.color ?? palette.accent, opacity: palette.ascii?.opacity ?? 0.5) }
             })) {

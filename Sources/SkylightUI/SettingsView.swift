@@ -227,7 +227,7 @@ private struct SpaceSettingsRow: View {
             Picker("Profile", selection: Binding(get: { space.profileID }, set: { browser.store.send(.assignProfile(space.id, $0)) })) {
                 ForEach(profiles) { Text($0.name).tag($0.id) }
             }
-            Picker("Sky", selection: Binding(get: { space.themeID }, set: { browser.store.send(.setSpaceTheme(space.id, $0)) })) {
+            Picker("Theme", selection: Binding(get: { space.themeID }, set: { browser.store.send(.setSpaceTheme(space.id, $0)) })) {
                 Text("Same as the app").tag(String?.none)
                 Divider()
                 ForEach(browser.preferences.themes) { Text($0.name).tag(Optional($0.id)) }
