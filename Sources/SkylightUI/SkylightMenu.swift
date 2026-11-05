@@ -545,7 +545,7 @@ private struct MenuRowView: View {
             HStack(spacing: 9) {
                 icon.frame(width: 18)
                 Text(row.title).lineLimit(1)
-                Spacer(minLength: 18)
+                Spacer(minLength: 0)
                 if let keys = row.keys {
                     Text(keys).foregroundStyle(.secondary)
                 }
