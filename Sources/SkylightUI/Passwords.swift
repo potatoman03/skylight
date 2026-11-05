@@ -10,27 +10,40 @@ struct PasswordSettings: View {
     @State private var search = ""
     @State private var importing: String?
     @State private var result: String?
+    @State private var profile: ProfileID?
 
     var body: some View {
         let passwords = browser.passwords
-        let shown = passwords.saved.filter {
+        let profiles = browser.store.state.profiles
+        let current = profile.flatMap { id in profiles.contains { $0.id == id } ? id : nil } ?? browser.store.state.activeSpace.profileID
+        let saved = passwords.logins(in: current)
+        let shown = saved.filter {
             search.isEmpty || $0.displayHost.localizedCaseInsensitiveContains(search) || $0.username.localizedCaseInsensitiveContains(search)
         }
         let browsers = ChromiumBrowser.installed.filter { FileManager.default.fileExists(atPath: $0.loginData.path) }
         Form {
+            if profiles.count > 1 {
+                Section {
+                    Picker("Profile", selection: Binding(get: { current }, set: { profile = $0 })) {
+                        ForEach(profiles) { Text($0.name).tag($0.id) }
+                    }
+                } footer: {
+                    Text("Each profile has its own saved passwords. Importing and exporting use the one chosen here.")
+                }
+            }
             Section {
                 if let error = passwords.lastError {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                 }
                 if shown.isEmpty {
-                    Text(passwords.saved.isEmpty ? "No passwords yet." : "Nothing matches.").foregroundStyle(.secondary)
+                    Text(saved.isEmpty ? "No passwords yet." : "Nothing matches.").foregroundStyle(.secondary)
                 }
                 ForEach(shown) { login in
                     LoginRow(login: login)
                 }
             } header: {
                 HStack {
-                    Text("\(passwords.saved.count) Saved Login\(passwords.saved.count == 1 ? "" : "s")")
+                    Text("\(saved.count) Saved Login\(saved.count == 1 ? "" : "s")")
                     Spacer()
                     TextField("Search", text: $search, prompt: Text("Search"))
                         .labelsHidden()
@@ -50,7 +63,7 @@ struct PasswordSettings: View {
                             Button("Import") {
                                 importing = source.id
                                 Task {
-                                    result = await passwords.importFrom(source)
+                                    result = await passwords.importFrom(source, into: current)
                                     importing = nil
                                 }
                             }
@@ -59,7 +72,7 @@ struct PasswordSettings: View {
                     }
                 }
                 LabeledContent {
-                    Button("Choose…") { result = passwords.importCSV() ?? result }
+                    Button("Choose…") { result = passwords.importCSV(into: current) ?? result }
                 } label: {
                     Text("CSV file")
                     Text("From Chrome, Safari, 1Password, Bitwarden and others")
@@ -73,7 +86,7 @@ struct PasswordSettings: View {
 
             Section {
                 LabeledContent("Export all logins as a CSV file") {
-                    Button("Export…") { Task { await passwords.exportCSV() } }.disabled(passwords.saved.isEmpty)
+                    Button("Export…") { Task { await passwords.exportCSV(current) } }.disabled(saved.isEmpty)
                 }
             }
         }
@@ -126,7 +139,7 @@ struct LoginKeyButton: View {
     @Environment(Browser.self) private var browser
 
     var body: some View {
-        let logins = browser.passwords.logins(for: url)
+        let logins = browser.passwords.logins(for: url, in: browser.store.state.activeSpace.profileID)
         if !logins.isEmpty {
             Menu {
                 Section("Fill a saved login") {

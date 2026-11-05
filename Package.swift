@@ -92,7 +92,7 @@ let package = Package(
         .executableTarget(name: "SkylightHelper", dependencies: ["CEFBridge"]),
 
         .testTarget(name: "SkylightCoreTests", dependencies: ["SkylightCore"]),
-        .testTarget(name: "SkylightKitTests", dependencies: ["SkylightKit"]),
+        .testTarget(name: "SkylightKitTests", dependencies: ["SkylightKit", "SkylightCore"]),
         .testTarget(name: "SkylightMCPTests", dependencies: ["SkylightMCP", "SkylightAgent"]),
     ],
     cxxLanguageStandard: .cxx20

@@ -1,4 +1,5 @@
 import AppKit
+import SkylightBrowser
 import SkylightCEF
 import SkylightCore
 import SkylightKit
@@ -26,7 +27,9 @@ do {
         // Unsigned builds would prompt for the login keychain on every launch.
         useMockKeychain: devBuild,
         remoteDebuggingPort: debugPort,
-        defaultProfile: paths.profileDirectory(for: .standard)
+        defaultProfile: paths.profileDirectory(for: .standard),
+        extensionFolders: ExtensionService.launchFolders(root: paths.root),
+        extensionHelper: paths.extensionHelper
     )) {
         delegate.engineDidStart()
     }

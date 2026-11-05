@@ -1,5 +1,6 @@
 import CommonCrypto
 import Foundation
+import SkylightCore
 import SQLite3
 import Testing
 @testable import SkylightKit
@@ -155,20 +156,63 @@ import Testing
 
 @MainActor
 @Suite struct MemoryCredentialStoreTests {
+    @MainActor @Test func profilesKeepTheirOwnLogins() throws {
+        let work = ProfileID("work")
+        let store = MemoryCredentialStore()
+        let origin = "https://mail.example"
+        try store.save(Credential(origin: origin, username: "jon1", password: "one"))
+        try store.save(Credential(origin: origin, username: "jon2", password: "two"))
+        try store.save(Credential(origin: origin, username: "jon3", password: "three", profile: work))
+        // The same login can live in both.
+        try store.save(Credential(origin: origin, username: "jon1", password: "other", profile: work))
+
+        #expect(try store.credentials(forOrigin: origin, in: .standard).map(\.username) == ["jon1", "jon2"])
+        #expect(try store.credentials(forOrigin: origin, in: work).map(\.username) == ["jon1", "jon3"])
+        #expect(try store.all(in: ProfileID("empty")).isEmpty)
+
+        let personal = try #require(try store.credentials(forOrigin: origin, in: .standard).first)
+        let client = try #require(try store.credentials(forOrigin: origin, in: work).first)
+        #expect(try store.password(for: personal) == "one")
+        #expect(try store.password(for: client) == "other")
+        try store.delete(client)
+        #expect(try store.password(for: personal) == "one")
+    }
+
     @Test func upsertAndDelete() throws {
         let store = MemoryCredentialStore()
         try store.save(Credential(origin: "https://example.com", username: "a", password: "one"))
         try store.save(Credential(origin: "https://example.com", username: "a", password: "two"))
         try store.save(Credential(origin: "https://other.example", username: "b", password: "three"))
 
-        #expect(try store.all().count == 2)
-        #expect(try store.all().allSatisfy { $0.password.isEmpty })
-        let listed = try #require(try store.credentials(forOrigin: "https://example.com").first)
+        #expect(try store.all(in: .standard).count == 2)
+        #expect(try store.all(in: .standard).allSatisfy { $0.password.isEmpty })
+        let listed = try #require(try store.credentials(forOrigin: "https://example.com", in: .standard).first)
         #expect(try store.password(for: listed) == "two")
 
         try store.delete(listed)
-        #expect(try store.credentials(forOrigin: "https://example.com").isEmpty)
+        #expect(try store.credentials(forOrigin: "https://example.com", in: .standard).isEmpty)
         #expect(throws: CredentialStoreError.notFound) { try store.password(for: listed) }
         #expect(throws: CredentialStoreError.self) { try store.save(Credential(origin: "nope", username: "x")) }
+    }
+}
+
+@Suite struct KeychainProfileTests {
+    private let domain = kSecAttrSecurityDomain as String
+    private let description = kSecAttrDescription as String
+
+    @MainActor @Test func defaultProfileKeepsTheItemsItAlwaysHad() throws {
+        let query = try KeychainCredentialStore.identity(Credential(origin: "https://example.com", username: "a"))
+        #expect(query[description] as? String == "Skylight web password")
+        #expect(query[domain] == nil)
+    }
+
+    @MainActor @Test func otherProfilesAreSeparateKeychainItems() throws {
+        let work = ProfileID("work")
+        let query = try KeychainCredentialStore.identity(Credential(origin: "https://example.com", username: "a", profile: work))
+        #expect(query[description] as? String == "Skylight web password: work")
+        // Part of the item's identity, unlike its description.
+        #expect(query[domain] as? String == "work")
+        let item: [String: Any] = [kSecAttrServer as String: "example.com", kSecAttrAccount as String: "a"]
+        #expect(KeychainCredentialStore.credential(from: item, profile: work)?.profile == work)
     }
 }

@@ -26,18 +26,37 @@ public protocol WebEngine: AnyObject {
     var extensions: ExtensionHost? { get }
 }
 
-/// Runs Chrome extensions in the default profile.
+/// One profile's pages, as its extensions see them.
+public struct ExtensionTabs {
+    public let profile: WebProfile
+    public let pages: [WebPage]
+    /// The tab extensions treat as current. Nil unless the profile's Space is on screen.
+    public let active: WebPage?
+
+    public init(profile: WebProfile, pages: [WebPage], active: WebPage?) {
+        self.profile = profile
+        self.pages = pages
+        self.active = active
+    }
+}
+
+/// Runs Chrome extensions.
+///
+/// Every profile runs the extensions the engine was started with, each with its own storage.
+/// `load` and `unload` change only the default profile; the others catch up at the next launch.
 ///
 /// Engines without Chrome's tab strip must still give extensions a current tab and a window:
 /// `setTabs` says which pages exist and which one is in front, and `openTab` receives the tabs
 /// extensions ask for.
 @MainActor
 public protocol ExtensionHost: AnyObject {
+    /// Gets ready for the extensions the engine started with.
+    func start() async
     /// Loads an unpacked extension folder. Returns the extension's id.
     func load(_ directory: URL) async throws -> String
     func unload(_ id: String) async throws
-    /// The pages extensions can see, and the one they treat as the current tab.
-    func setTabs(_ pages: [WebPage], active: WebPage?)
+    /// The pages each profile's extensions can see.
+    func setTabs(_ groups: [ExtensionTabs])
     /// Clicks the extension's toolbar button for an extension without a popup.
     func triggerAction(_ id: String, page: WebPage?) async throws
     /// An extension asked to open a tab.

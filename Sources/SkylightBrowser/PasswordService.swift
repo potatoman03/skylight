@@ -7,6 +7,7 @@ import SkylightKit
 import UniformTypeIdentifiers
 
 /// Saves and fills passwords. They live in the Keychain; the page never sees one until you pick it.
+/// Each profile has its own: a Space only offers the logins saved in its profile.
 ///
 /// A small page script reports login fields and submitted logins. Filling only happens when you
 /// choose a login in Skylight's own UI, and only into the page whose address matches the login.
@@ -22,7 +23,7 @@ public final class PasswordService {
         public let isUpdate: Bool
     }
 
-    /// Every saved login, without passwords.
+    /// Every saved login in every profile, without passwords.
     public private(set) var saved: [Credential] = []
     /// Tabs whose page has a password field.
     public private(set) var tabsWithLoginForm: Set<TabID> = []
@@ -33,6 +34,8 @@ public final class PasswordService {
     @ObservationIgnored private let toasts: ToastCenter
     @ObservationIgnored private let neverFile: URL?
     @ObservationIgnored private var never: Set<String> = []
+    /// The profiles to list logins for.
+    @ObservationIgnored var profiles: () -> [ProfileID] = { [.standard] }
 
     public init(store: CredentialStore, toasts: ToastCenter, neverFile: URL?) {
         self.store = store
@@ -47,17 +50,22 @@ public final class PasswordService {
 
     public func reload() {
         do {
-            saved = try store.all().sorted { ($0.displayHost, $0.username) < ($1.displayHost, $1.username) }
+            saved = try profiles().flatMap { try store.all(in: $0) }
+                .sorted { ($0.displayHost, $0.username) < ($1.displayHost, $1.username) }
             lastError = nil
         } catch {
             lastError = error.localizedDescription
         }
     }
 
-    /// Logins for the page at `url`.
-    public func logins(for url: URL?) -> [Credential] {
+    public func logins(in profile: ProfileID) -> [Credential] {
+        saved.filter { $0.profile == profile }
+    }
+
+    /// A profile's logins for the page at `url`.
+    public func logins(for url: URL?, in profile: ProfileID) -> [Credential] {
         guard let url, let origin = CredentialOrigin.normalize(url) else { return [] }
-        return saved.filter { $0.origin == origin }
+        return logins(in: profile).filter { $0.origin == origin }
     }
 
     // MARK: - Pages
@@ -125,7 +133,7 @@ public final class PasswordService {
     """
 
     /// Handles `passwords.*` messages. `url` is the tab's address as Skylight knows it, never the page's word.
-    public func handle(_ message: JSONValue, tab: TabID, url: URL?) -> JSONValue {
+    public func handle(_ message: JSONValue, tab: TabID, url: URL?, profile: ProfileID) -> JSONValue {
         switch message["type"]?.stringValue {
         case "passwords.form":
             tabsWithLoginForm.insert(tab)
@@ -133,9 +141,10 @@ public final class PasswordService {
             guard let url, let origin = CredentialOrigin.normalize(url), !never.contains(origin),
                   let password = message["password"]?.stringValue, !password.isEmpty else { break }
             let username = message["username"]?.stringValue ?? ""
-            let existing = saved.first { $0.origin == origin && $0.username == username }
+            let existing = logins(in: profile).first { $0.origin == origin && $0.username == username }
             if let existing, (try? store.password(for: existing)) == password { break }
-            offer = Offer(tabID: tab, credential: Credential(origin: origin, username: username, password: password, source: "Skylight"),
+            offer = Offer(tabID: tab, credential: Credential(origin: origin, username: username, password: password, source: "Skylight",
+                                                             profile: profile),
                           isUpdate: existing != nil)
         default:
             break
@@ -218,39 +227,61 @@ public final class PasswordService {
         }
     }
 
+    /// A deleted profile's logins join the default profile's. One you already have there keeps
+    /// its password.
+    public func moveLogins(from profile: ProfileID) {
+        let have = Set(logins(in: .standard).map(\.id))
+        var failed = 0
+        for login in logins(in: profile) {
+            var moved = login
+            moved.profile = .standard
+            do {
+                if !have.contains(moved.id) {
+                    moved.password = try store.password(for: login)
+                    try store.save(moved)
+                }
+                try store.delete(login)
+            } catch {
+                failed += 1
+            }
+        }
+        reload()
+        if failed > 0 { toasts.show("Couldn't move \(failed) password\(failed == 1 ? "" : "s") to Default", symbol: "exclamationmark.triangle") }
+    }
+
     /// Imports logins from another browser on this Mac. macOS asks you to let Skylight read that
     /// browser's key from the Keychain.
-    public func importFrom(_ browser: ChromiumBrowser) async -> String {
+    public func importFrom(_ browser: ChromiumBrowser, into profile: ProfileID) async -> String {
         let result = await Task.detached { Result { try ChromiumPasswordImporter.read(browser) } }.value
         switch result {
-        case let .success(credentials): return add(credentials, from: browser.name)
+        case let .success(credentials): return add(credentials, from: browser.name, into: profile)
         case let .failure(error): return report(error, from: browser.name)
         }
     }
 
     /// Imports a CSV export from Chrome, Safari, 1Password, Bitwarden and the like.
-    public func importCSV() -> String? {
+    public func importCSV(into profile: ProfileID) -> String? {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.message = "Choose a passwords CSV exported from another browser or password manager."
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
-            return add(try PasswordCSV.parse(text, source: "CSV"), from: url.lastPathComponent)
+            return add(try PasswordCSV.parse(text, source: "CSV"), from: url.lastPathComponent, into: profile)
         } catch {
             return report(error, from: url.lastPathComponent)
         }
     }
 
-    /// Writes every password to a CSV file you choose, after you authenticate.
-    public func exportCSV() async {
+    /// Writes a profile's passwords to a CSV file you choose, after you authenticate.
+    public func exportCSV(_ profile: ProfileID) async {
         guard await authenticate("export your saved passwords") else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.nameFieldStringValue = "Skylight Passwords.csv"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let full = try saved.map { c -> Credential in
+            let full = try logins(in: profile).map { c -> Credential in
                 var c = c
                 c.password = try store.password(for: c)
                 return c
@@ -264,7 +295,12 @@ public final class PasswordService {
 
     /// Adds logins you don't have yet; ones you already saved keep their password.
     @discardableResult
-    public func add(_ credentials: [Credential], from source: String) -> String {
+    public func add(_ credentials: [Credential], from source: String, into profile: ProfileID) -> String {
+        let credentials = credentials.map { credential -> Credential in
+            var credential = credential
+            credential.profile = profile
+            return credential
+        }
         let have = Set(saved.map(\.id))
         var added = 0
         var failed = 0

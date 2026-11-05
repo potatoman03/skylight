@@ -16,10 +16,12 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) BOOL useMockKeychain;
 /// Port for Chromium's remote debugging (0 = off).
 @property (nonatomic) NSInteger remoteDebuggingPort;
-/// The profile Chromium starts with. Extensions run in this one.
+/// The profile Chromium starts with. Extensions added while running reach only this one.
 @property (nonatomic, copy, nullable) NSString *defaultProfilePath;
 /// Opens a DevTools connection private to this process (a pipe, not a port), for extensions.
 @property (nonatomic) BOOL enableDevToolsPipe;
+/// Unpacked extensions for every profile, read once at launch. Needs `enableDevToolsPipe`.
+@property (nonatomic, copy, nullable) NSArray<NSString *> *extensionPaths;
 @end
 
 /// A browser Chromium opened by itself, such as an extension's window.

@@ -190,6 +190,63 @@ private let c = URL(string: "https://c.example")!
         #expect(!BrowserReducer.reduce(&state, .deleteProfile(.standard), env: env).applied)
     }
 
+    @Test func newSpaceStartsWithItsOwnProfile() {
+        var state = BrowserState.initial()
+        BrowserReducer.reduce(&state, .createSpace(name: "Client"), env: env)
+        #expect(state.activeSpace.name == "Client")
+        #expect(state.activeSpace.profileID != .standard)
+        #expect(state.profile(state.activeSpace.profileID)?.name == "Client")
+    }
+
+    @Test func newSpaceCanShareAnotherSpacesLogins() {
+        var state = BrowserState.initial()
+        let first = state.spaces[0]
+        let profiles = state.profiles.count
+        BrowserReducer.reduce(&state, .createSpace(name: "Same", sharing: first.id), env: env)
+        #expect(state.activeSpace.profileID == first.profileID)
+        #expect(state.profiles.count == profiles)
+        #expect(!BrowserReducer.reduce(&state, .createSpace(name: "Lost", sharing: SpaceID("gone")), env: env).applied)
+    }
+
+    @Test func duplicateSpaceCopiesLookAndLoginsButNotTabs() {
+        var state = BrowserState.initial()
+        _ = open(&state, a)
+        let source = state.spaces[0]
+        BrowserReducer.reduce(&state, .setSpaceIcon(source.id, "star"), env: env)
+        BrowserReducer.reduce(&state, .setSpaceHue(source.id, 0.4), env: env)
+        BrowserReducer.reduce(&state, .setSpaceTheme(source.id, "dusk"), env: env)
+        BrowserReducer.reduce(&state, .duplicateSpace(source.id), env: env)
+        let copy = state.spaces[1]
+        #expect(state.activeSpaceID == copy.id)
+        #expect(copy.id != source.id)
+        #expect(copy.name == "\(source.name) Copy")
+        #expect(copy.icon == "star")
+        #expect(copy.hue == 0.4)
+        #expect(copy.themeID == "dusk")
+        #expect(copy.profileID == source.profileID)
+        #expect(copy.allTabIDs.isEmpty)
+    }
+
+    @Test func spaceCanLeaveASharedProfile() {
+        var state = BrowserState.initial()
+        let first = state.spaces[0]
+        let id = open(&state, a)[0]
+        BrowserReducer.reduce(&state, .duplicateSpace(first.id), env: env)
+        BrowserReducer.reduce(&state, .switchSpace(first.id), env: env)
+        let result = BrowserReducer.reduce(&state, .giveSpaceOwnProfile(first.id), env: env)
+        #expect(state.spaces[0].profileID != state.spaces[1].profileID)
+        #expect(state.profile(state.spaces[0].profileID)?.name == first.name)
+        #expect(result.effects == [.discardPage(id), .showTab(id)])
+    }
+
+    @Test func deletingASpaceKeepsItsProfile() {
+        var state = BrowserState.initial()
+        BrowserReducer.reduce(&state, .createSpace(name: "Client"), env: env)
+        let space = state.activeSpace
+        BrowserReducer.reduce(&state, .deleteSpace(space.id), env: env)
+        #expect(state.profile(space.profileID) != nil)
+    }
+
     @Test func importAddsSpacesAndSkipsDuplicates() {
         var state = BrowserState.initial()
         _ = open(&state, a)
