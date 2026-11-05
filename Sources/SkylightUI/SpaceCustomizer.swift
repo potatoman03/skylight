@@ -10,8 +10,8 @@ struct SpaceCustomizer: View {
     @Environment(Browser.self) private var browser
     @Environment(\.colorScheme) private var scheme
     @State private var page = Page.symbols
-    @State private var typed = ""
-    @FocusState private var typing: Bool
+    @State private var search = ""
+    @FocusState private var searching: Bool
 
     private enum Page: String, CaseIterable, Identifiable {
         case symbols = "Symbols", emoji = "Emoji"
@@ -19,19 +19,8 @@ struct SpaceCustomizer: View {
     }
 
     private static let columns = Array(repeating: GridItem(.fixed(28), spacing: 4), count: 8)
-
-    static let symbols: [String] = SpaceMenu.icons.map(\.symbol) + [
-        "sparkles", "cloud", "mountain.2", "tree", "pawprint", "airplane", "car", "bicycle",
-        "camera", "film", "headphones", "gamecontroller", "dumbbell", "fork.knife", "cup.and.saucer",
-        "building.2", "banknote", "chart.bar", "hammer", "terminal", "flask", "lightbulb", "calendar",
-    ]
-
-    static let emoji = [
-        "😀", "😎", "🤓", "🧠", "💼", "🏠", "📚", "🎓",
-        "🎨", "🎵", "🎮", "🎬", "✈️", "🏝️", "🏔️", "🌿",
-        "🌸", "🔥", "⚡️", "⭐️", "🌙", "☀️", "❤️", "🚀",
-        "🧪", "💡", "💰", "📈", "🛒", "🍕", "☕️", "🐾",
-    ]
+    /// Five rows, the most results fill, so the popover keeps its size as you type.
+    private static let gridHeight: CGFloat = 156
 
     var body: some View {
         let store = browser.store
@@ -43,10 +32,14 @@ struct SpaceCustomizer: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                switch page {
-                case .symbols: symbolGrid
-                case .emoji: emojiGrid
+                searchField
+                Group {
+                    switch page {
+                    case .symbols: symbolGrid
+                    case .emoji: emojiGrid
+                    }
                 }
+                .frame(height: Self.gridHeight, alignment: .top)
             }
             section("Color") {
                 HStack(spacing: 0) {
@@ -82,36 +75,17 @@ struct SpaceCustomizer: View {
         .frame(width: 292)
     }
 
-    private var symbolGrid: some View {
-        LazyVGrid(columns: Self.columns, spacing: 4) {
-            IconCell(selected: space.icon == nil, help: "First letter") { browser.store.send(.setSpaceIcon(space.id, nil)) } label: {
-                SpaceIcon(icon: nil, name: space.name, size: 14)
-            }
-            ForEach(Self.symbols, id: \.self) { symbol in
-                IconCell(selected: space.icon == symbol, help: symbol) { browser.store.send(.setSpaceIcon(space.id, symbol)) } label: {
-                    SpaceIcon(icon: symbol, name: space.name, size: 14)
-                }
-            }
-        }
-    }
-
-    private var emojiGrid: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            LazyVGrid(columns: Self.columns, spacing: 4) {
-                ForEach(Self.emoji, id: \.self) { emoji in
-                    IconCell(selected: space.icon == emoji, help: emoji) { browser.store.send(.setSpaceIcon(space.id, emoji)) } label: {
-                        Text(emoji).font(.system(size: 15))
-                    }
-                }
-            }
-            HStack(spacing: 6) {
-                TextField("Any emoji", text: $typed)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($typing)
-                    .onChange(of: typed) { _, text in take(text) }
+    /// Finds icons by name. An emoji typed, pasted or picked here becomes the icon straight away.
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            TextField(page == .symbols ? "Search icons" : "Search emoji", text: $search)
+                .textFieldStyle(.roundedBorder)
+                .focused($searching)
+                .onChange(of: search) { _, text in take(text) }
+            if page == .emoji {
                 Button {
                     // The palette types into whatever has focus, so the field has to have it first.
-                    typing = true
+                    searching = true
                     DispatchQueue.main.async { NSApp.orderFrontCharacterPalette(nil) }
                 } label: {
                     Image(systemName: "face.smiling")
@@ -121,14 +95,54 @@ struct SpaceCustomizer: View {
         }
     }
 
-    /// Keeps the last emoji typed or picked, and nothing else: the icon is one character.
-    private func take(_ text: String) {
-        guard !text.isEmpty else { return }
-        guard let emoji = text.last(where: \.isEmoji) else {
-            typed = ""
-            return
+    @ViewBuilder
+    private var symbolGrid: some View {
+        let symbols = IconSearch.symbols(matching: search)
+        if symbols.isEmpty {
+            noMatch("No matching icons")
+        } else {
+            LazyVGrid(columns: Self.columns, spacing: 4) {
+                if search.isEmpty {
+                    IconCell(selected: space.icon == nil, help: "First letter") { browser.store.send(.setSpaceIcon(space.id, nil)) } label: {
+                        SpaceIcon(icon: nil, name: space.name, size: 14)
+                    }
+                }
+                ForEach(symbols, id: \.symbol) { icon in
+                    IconCell(selected: space.icon == icon.symbol, help: icon.name) { browser.store.send(.setSpaceIcon(space.id, icon.symbol)) } label: {
+                        SpaceIcon(icon: icon.symbol, name: space.name, size: 14)
+                    }
+                }
+            }
         }
-        if typed != String(emoji) { typed = String(emoji) }
+    }
+
+    @ViewBuilder
+    private var emojiGrid: some View {
+        let emoji = IconSearch.emoji(matching: search)
+        if emoji.isEmpty {
+            noMatch("No emoji match")
+        } else {
+            LazyVGrid(columns: Self.columns, spacing: 4) {
+                ForEach(emoji, id: \.self) { emoji in
+                    IconCell(selected: space.icon == emoji, help: emoji) { browser.store.send(.setSpaceIcon(space.id, emoji)) } label: {
+                        Text(emoji).font(.system(size: 15))
+                    }
+                }
+            }
+        }
+    }
+
+    private func noMatch(_ text: String) -> some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Takes the last emoji in the field as the icon. Anything else is a search.
+    private func take(_ text: String) {
+        guard let emoji = text.last(where: \.isEmoji) else { return }
+        search = ""
         browser.store.send(.setSpaceIcon(space.id, String(emoji)))
     }
 

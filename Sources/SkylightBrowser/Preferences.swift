@@ -180,6 +180,7 @@ public final class Preferences {
         var spaceMenuOnHover: Bool?
         var spaceBarStyle: SpaceBarStyle?
         var showsDropHints: Bool?
+        var sidebarOrder: [SidebarSection]?
         var extensionPlacement: ExtensionPlacement?
         var skyBackdrop: Bool?
         var highlightFocusedPane: Bool?
@@ -232,6 +233,7 @@ public final class Preferences {
     public var spaceBarStyle: SpaceBarStyle = .icons { didSet { save() } }
     /// Hints like "Drag tabs here to pin them" in empty sections. Off, they show only during a drag.
     public var showsDropHints = true { didSet { save() } }
+    public var sidebarOrder = SidebarSection.standardOrder { didSet { save() } }
     public var extensionPlacement: ExtensionPlacement = .addressBar { didSet { save() } }
     /// Ring the pane that has focus in a split.
     public var highlightFocusedPane = true { didSet { save() } }
@@ -316,6 +318,7 @@ public final class Preferences {
         spaceMenuOnHover = stored.spaceMenuOnHover ?? spaceMenuOnHover
         spaceBarStyle = stored.spaceBarStyle ?? spaceBarStyle
         showsDropHints = stored.showsDropHints ?? showsDropHints
+        sidebarOrder = (stored.sidebarOrder ?? sidebarOrder).normalized
         extensionPlacement = stored.extensionPlacement ?? extensionPlacement
         skyBackdrop = stored.skyBackdrop ?? skyBackdrop
         highlightFocusedPane = stored.highlightFocusedPane ?? highlightFocusedPane
@@ -341,7 +344,7 @@ public final class Preferences {
                             customThemes: customThemes, hiddenSidebarItems: hiddenSidebarItems, density: density,
                             favoriteStyle: favoriteStyle, favoriteSize: favoriteSize, favoritesPerRow: favoritesPerRow,
                             spaceHeaderStyle: spaceHeaderStyle, spaceMenuOnHover: spaceMenuOnHover,
-                            spaceBarStyle: spaceBarStyle, showsDropHints: showsDropHints,
+                            spaceBarStyle: spaceBarStyle, showsDropHints: showsDropHints, sidebarOrder: sidebarOrder,
                             extensionPlacement: extensionPlacement, skyBackdrop: skyBackdrop,
                             highlightFocusedPane: highlightFocusedPane, autoPictureInPicture: autoPictureInPicture,
                             showMediaControls: showMediaControls, tidyInstruction: tidyInstruction, sidebarWidth: sidebarWidth,
