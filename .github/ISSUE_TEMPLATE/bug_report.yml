@@ -1,0 +1,55 @@
+name: Bug report
+description: Something in Skylight doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Report security problems privately to the maintainer, not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a new tab with ⌘T
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "26.1"
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Skylight commit
+      description: "`git rev-parse --short HEAD` in your checkout."
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: Build
+      options:
+        - Debug (scripts/bundle.sh)
+        - Release (scripts/bundle.sh release)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        For page problems, the relevant part of `engine.log` in the data folder
+        (`~/Library/Application Support/Skylight`). Remove anything private first.
+      render: text

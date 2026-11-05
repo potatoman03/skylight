@@ -3,23 +3,6 @@ import SkylightBrowser
 import SkylightCore
 import SwiftUI
 
-extension Browser {
-    /// ⌘L edits the address in the toolbar; ⌘T (and a new split pane) opens the command bar in the
-    /// middle of the page.
-    @MainActor
-    public func presentCommandBar(_ mode: CommandBarModel.Mode) {
-        let query = mode == .editCurrent ? (store.state.selectedTab?.url.absoluteString ?? "") : ""
-        commandBar.present(mode, query: query)
-    }
-
-    @MainActor
-    public func dismissCommandBar() {
-        guard commandBar.isPresented else { return }
-        commandBar.dismiss()
-        pages.focusVisiblePage()
-    }
-}
-
 /// The address field in the toolbar, as in Safari: the site when you're reading, the full address
 /// (selected) when you click it, with suggestions below while you type.
 struct AddressField: View {
