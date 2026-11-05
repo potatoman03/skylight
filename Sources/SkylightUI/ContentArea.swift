@@ -34,7 +34,7 @@ struct ContentArea: View {
                     }
                     .opacity(browser.commandBar.isPresented ? 0 : 1)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.background)
+                    .background { PageGround { Rectangle().fill(.background) } }
                 }
 
                 if let split, layout.isSplit, browser.pages.fullscreenTabID == nil {
@@ -57,7 +57,7 @@ struct ContentArea: View {
             ZStack {
                 // A new tab opens on an empty page, not over the one you were reading.
                 if bar.isPresented, bar.mode == .newTab {
-                    Color(nsColor: .textBackgroundColor).transition(.opacity)
+                    PageGround { Color(nsColor: .textBackgroundColor) }.transition(.opacity)
                 }
                 if bar.isPresented, bar.mode != .editCurrent { CommandPalette() }
             }

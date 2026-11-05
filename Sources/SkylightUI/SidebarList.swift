@@ -339,6 +339,8 @@ struct SidebarDropDelegate: DropDelegate {
 
 extension EnvironmentValues {
     @Entry var sidebarDensity: Preferences.Density = .comfortable
+    /// The theme's highlight for the selected row; nil is the system's.
+    @Entry var rowSelection: Color?
 }
 
 extension Preferences.FavoriteSize {
@@ -421,6 +423,7 @@ private struct SidebarRowChrome: ViewModifier {
     let highlights: Bool
     let indent: CGFloat
     @Environment(\.sidebarDensity) private var density
+    @Environment(\.rowSelection) private var selection
     @Environment(\.colorScheme) private var scheme
     @State private var hovering = false
 
@@ -443,6 +446,7 @@ private struct SidebarRowChrome: ViewModifier {
     private var fill: AnyShapeStyle {
         if targeted { return AnyShapeStyle(.tint.opacity(0.18)) }
         guard highlights else { return AnyShapeStyle(.clear) }
+        if let selection { return AnyShapeStyle(selection.opacity(selected ? 0.38 : hovering ? 0.16 : 0)) }
         let dark = scheme == .dark
         let ink = dark ? Color.white : Color.black
         return AnyShapeStyle(ink.opacity(selected ? (dark ? 0.14 : 0.09) : hovering ? (dark ? 0.06 : 0.045) : 0))

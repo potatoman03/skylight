@@ -63,11 +63,26 @@ public final class Preferences {
     public enum SidebarItem: String, Codable, CaseIterable, Identifiable, Sendable {
         /// Kept so older preferences still load; the address field lives in the toolbar now.
         case addressBar
-        case favorites, newTab, agentActivity
+        case favorites, newTab, agentActivity, reopenTab, settings
         public var id: String { rawValue }
 
         /// The choices to offer.
-        public static let choices: [SidebarItem] = [.favorites, .newTab, .agentActivity]
+        public static let choices: [SidebarItem] = [.favorites, .newTab, .reopenTab, .settings, .agentActivity]
+        /// The ones that are rows at the foot of the sidebar.
+        public static let actions: [SidebarItem] = [.reopenTab, .settings]
+
+        /// Where it goes until you say otherwise.
+        public var standardVisibility: SidebarVisibility {
+            switch self {
+            case .reopenTab, .settings: .hidden
+            default: .always
+            }
+        }
+
+        /// Agent activity only appears for a moment, so there'd be nothing to find under More.
+        public var visibilityChoices: [SidebarVisibility] {
+            self == .agentActivity ? [.always, .hidden] : SidebarVisibility.allCases
+        }
 
         public var name: String {
             switch self {
@@ -75,6 +90,22 @@ public final class Preferences {
             case .favorites: "Favorites"
             case .newTab: "New Tab button"
             case .agentActivity: "Agent activity"
+            case .reopenTab: "Reopen Closed Tab"
+            case .settings: "Settings"
+            }
+        }
+    }
+
+    /// Where a part of the sidebar goes.
+    public enum SidebarVisibility: String, Codable, CaseIterable, Identifiable, Sendable {
+        case always, more, hidden
+        public var id: String { rawValue }
+
+        public var name: String {
+            switch self {
+            case .always: "Always show"
+            case .more: "Under More"
+            case .hidden: "Don't show"
             }
         }
     }
@@ -172,6 +203,8 @@ public final class Preferences {
         var themeID: String?
         var customThemes: [SkyTheme]?
         var hiddenSidebarItems: Set<SidebarItem>?
+        var sidebarVisibility: [String: SidebarVisibility]?
+        var sceneOnNewTab: Bool?
         var density: Density?
         var favoriteStyle: FavoriteStyle?
         var favoriteSize: FavoriteSize?
@@ -221,7 +254,12 @@ public final class Preferences {
     /// The app's theme; Spaces can pick their own.
     public var themeID = SkyTheme.standard.id { didSet { save() } }
     public var customThemes: [SkyTheme] = [] { didSet { save() } }
+    /// Parts of the sidebar hidden by older versions, until `sidebarVisibility` says otherwise.
     public var hiddenSidebarItems: Set<SidebarItem> = [] { didSet { save() } }
+    /// Where you've put each part of the sidebar, by the item's raw value.
+    public var sidebarVisibility: [String: SidebarVisibility] = [:] { didSet { save() } }
+    /// A theme's picture fills the window for a new tab, instead of an empty page.
+    public var sceneOnNewTab = true { didSet { save() } }
     public var density: Density = .comfortable { didSet { save() } }
     public var favoriteStyle: FavoriteStyle = .glass { didSet { save() } }
     public var favoriteSize: FavoriteSize = .medium { didSet { save() } }
@@ -259,11 +297,19 @@ public final class Preferences {
         theme(space.themeID) ?? theme(themeID) ?? .standard
     }
 
-    public func shows(_ item: SidebarItem) -> Bool { !hiddenSidebarItems.contains(item) }
-
-    public func setShows(_ item: SidebarItem, _ shown: Bool) {
-        if shown { hiddenSidebarItems.remove(item) } else { hiddenSidebarItems.insert(item) }
+    public func visibility(_ item: SidebarItem) -> SidebarVisibility {
+        sidebarVisibility[item.rawValue] ?? (hiddenSidebarItems.contains(item) ? .hidden : item.standardVisibility)
     }
+
+    public func setVisibility(_ item: SidebarItem, _ visibility: SidebarVisibility) {
+        sidebarVisibility[item.rawValue] = visibility
+    }
+
+    /// Always in the sidebar, rather than under More or hidden.
+    public func shows(_ item: SidebarItem) -> Bool { visibility(item) == .always }
+
+    /// What's listed under More, in the order they're offered.
+    public var moreSidebarItems: [SidebarItem] { SidebarItem.choices.filter { visibility($0) == .more } }
 
     /// Adds or replaces a theme of your own. Presets can't be changed; saving one makes a copy.
     @discardableResult
@@ -281,6 +327,37 @@ public final class Preferences {
     public func deleteTheme(_ id: String) {
         customThemes.removeAll { $0.id == id }
         if themeID == id { themeID = SkyTheme.standard.id }
+        pruneBackgrounds()
+    }
+
+    /// Where a theme's picture is, if it's still there.
+    public func url(for image: ThemeImage) -> URL? {
+        if image.builtIn { return Bundle.main.url(forResource: image.file, withExtension: nil, subdirectory: "Themes") }
+        guard let url = backgroundsFolder?.appending(path: image.file),
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
+    /// Copies a picture into the Backgrounds folder, so a theme keeps it if the original moves.
+    /// Nil if it isn't a picture Skylight can show.
+    public func importBackground(from source: URL) -> ThemeImage? {
+        guard let folder = backgroundsFolder, let image = NSImage(contentsOf: source), image.isValid else { return nil }
+        let file = "\(UUID().uuidString).\(source.pathExtension.lowercased())"
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: source, to: folder.appending(path: file))
+        } catch { return nil }
+        return ThemeImage(file: file)
+    }
+
+    /// Removes pictures no theme of yours uses any more.
+    public func pruneBackgrounds() {
+        guard let folder = backgroundsFolder,
+              let files = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return }
+        let used = Set(customThemes.flatMap { [$0.light.image, $0.dark.image] }.compactMap { $0?.file })
+        for file in files where !used.contains(file) {
+            try? FileManager.default.removeItem(at: folder.appending(path: file))
+        }
     }
 
     /// What searches go to. A custom address that isn't usable falls back to Google.
@@ -293,6 +370,9 @@ public final class Preferences {
     public var omnibox: Omnibox { Omnibox(searchTemplate: searchTemplate) }
 
     @ObservationIgnored private let fileURL: URL?
+    @ObservationIgnored private var backgroundsFolder: URL? {
+        fileURL?.deletingLastPathComponent().appending(path: "Backgrounds")
+    }
     @ObservationIgnored private var loading = false
 
     public init(fileURL: URL?) {
@@ -310,6 +390,8 @@ public final class Preferences {
         themeID = stored.themeID ?? themeID
         customThemes = stored.customThemes ?? []
         hiddenSidebarItems = stored.hiddenSidebarItems ?? []
+        sidebarVisibility = stored.sidebarVisibility ?? [:]
+        sceneOnNewTab = stored.sceneOnNewTab ?? sceneOnNewTab
         density = stored.density ?? density
         favoriteStyle = stored.favoriteStyle ?? favoriteStyle
         favoriteSize = stored.favoriteSize ?? favoriteSize
@@ -341,7 +423,8 @@ public final class Preferences {
         guard !loading, let fileURL else { return }
         let stored = Stored(searchEngine: searchEngine, customSearchTemplate: customSearchTemplate, appearance: appearance, godRays: godRays,
                             archiveAfterHours: archiveAfterHours, sidebarCollapsed: sidebarCollapsed, themeID: themeID,
-                            customThemes: customThemes, hiddenSidebarItems: hiddenSidebarItems, density: density,
+                            customThemes: customThemes, hiddenSidebarItems: hiddenSidebarItems, sidebarVisibility: sidebarVisibility,
+                            sceneOnNewTab: sceneOnNewTab, density: density,
                             favoriteStyle: favoriteStyle, favoriteSize: favoriteSize, favoritesPerRow: favoritesPerRow,
                             spaceHeaderStyle: spaceHeaderStyle, spaceMenuOnHover: spaceMenuOnHover,
                             spaceBarStyle: spaceBarStyle, showsDropHints: showsDropHints, sidebarOrder: sidebarOrder,

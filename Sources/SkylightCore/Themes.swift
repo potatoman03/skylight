@@ -53,6 +53,21 @@ public struct RGB: Codable, Hashable, Sendable {
         return RGB(h: c.h + turns, s: c.s, v: c.v)
     }
 
+    /// How bright it looks, 0...1, as WCAG measures it.
+    public var luminance: Double {
+        let linear = { (v: Double) in v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+    }
+
+    /// WCAG contrast with another color, 1...21.
+    public func contrast(with other: RGB) -> Double {
+        let (a, b) = (luminance, other.luminance)
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    /// Black or white, whichever reads better on this color.
+    public var ink: RGB { contrast(with: RGB(0, 0, 0)) > contrast(with: RGB(1, 1, 1)) ? RGB(0, 0, 0) : RGB(1, 1, 1) }
+
     public func mixed(with other: RGB, _ amount: Double) -> RGB {
         RGB(r + (other.r - r) * amount, g + (other.g - g) * amount, b + (other.b - b) * amount)
     }
@@ -71,7 +86,106 @@ public struct RGB: Codable, Hashable, Sendable {
     }
 }
 
-/// The colors of one look (light or dark) of a theme.
+/// A picture behind the window, in place of the painted sky: a still image or a GIF.
+public struct ThemeImage: Codable, Hashable, Sendable {
+    /// A file in the app's Themes folder if `builtIn`, else in your Backgrounds folder.
+    public var file: String
+    public var builtIn: Bool
+    /// The point of the picture to keep in view when it's cropped to the window, 0...1 from the top left.
+    public var focusX: Double
+    public var focusY: Double
+    /// Which part of the picture the sidebar shows while a page covers the rest, 0...1 across it.
+    public var sidebarFocusX: Double
+    /// 1 fills the window; higher crops in.
+    public var zoom: Double
+    /// Points of blur.
+    public var blur: Double
+    /// How far the picture fades toward the window's background, 0...1.
+    public var fade: Double
+
+    public init(file: String, builtIn: Bool = false, focusX: Double = 0.5, focusY: Double = 0.5, sidebarFocusX: Double = 0.5,
+                zoom: Double = 1, blur: Double = 0, fade: Double = 0) {
+        self.file = file
+        self.builtIn = builtIn
+        self.focusX = focusX
+        self.focusY = focusY
+        self.sidebarFocusX = sidebarFocusX
+        self.zoom = zoom
+        self.blur = blur
+        self.fade = fade
+    }
+
+    public var isAnimated: Bool { file.lowercased().hasSuffix(".gif") }
+}
+
+/// A field of characters drifting over the sky, drawn live.
+public enum AsciiPattern: String, Codable, CaseIterable, Identifiable, Sendable {
+    case stars, mist, hearts, meadow, rain, petals, waves, snow, embers, grid, dots
+
+    public var id: String { rawValue }
+
+    public var name: String {
+        switch self {
+        case .stars: "Stars"
+        case .mist: "Mist"
+        case .hearts: "Hearts"
+        case .meadow: "Meadow"
+        case .rain: "Code rain"
+        case .petals: "Petals"
+        case .waves: "Waves"
+        case .snow: "Snow"
+        case .embers: "Embers"
+        case .grid: "Retro grid"
+        case .dots: "Halftone"
+        }
+    }
+
+    /// The characters it's drawn in, from faintest to strongest.
+    public var glyphs: [Character] {
+        switch self {
+        case .stars: [".", "·", "'", ":", "+", "*", "✦", "✧"]
+        case .mist: [".", "·", ":", "-", "~", "=", "░", "▒"]
+        case .hearts: ["·", ".", "+", "✧", "*", "♡", "❤", "♡"]
+        case .meadow: [".", ",", "'", "\"", ";", "^", "|", "Y"]
+        case .rain: ["0", "1", "7", ":", "=", "+", "<", ">"]
+        case .petals: [".", "·", "'", ",", "✿", "❀", "✾", "❁"]
+        case .waves: [".", "-", "~", "~", "≈", "≈", "∿", "≋"]
+        case .snow: [".", "·", "*", "+", "✻", "✼", "❄", "❅"]
+        case .embers: [".", "'", "`", "·", ":", "*", "^", "✦"]
+        case .grid: ["·", ".", "-", "=", "+", "|", "#", "#"]
+        case .dots: ["·", ".", ":", "o", "O", "0", "@", "#"]
+        }
+    }
+}
+
+/// A theme's character field: what it draws, and in what color.
+public struct AsciiLayer: Codable, Hashable, Sendable {
+    public var pattern: AsciiPattern
+    public var color: RGB
+    /// 0...1.
+    public var opacity: Double
+
+    public init(pattern: AsciiPattern, color: RGB, opacity: Double) {
+        self.pattern = pattern
+        self.color = color
+        self.opacity = opacity
+    }
+}
+
+/// A veil of color over the sidebar, to keep its text readable on a busy picture.
+public struct ThemeScrim: Codable, Hashable, Sendable {
+    public var color: RGB
+    /// 0...1.
+    public var opacity: Double
+
+    public init(color: RGB, opacity: Double) {
+        self.color = color
+        self.opacity = opacity
+    }
+}
+
+/// The colors of one look (light or dark) of a theme. Optional colors are Automatic when nil:
+/// the system's own, for the window's mode.
 public struct ThemePalette: Codable, Hashable, Sendable {
     /// The top of the sky.
     public var sky: RGB
@@ -87,8 +201,18 @@ public struct ThemePalette: Codable, Hashable, Sendable {
     public var rays: Double
     /// How solid the frosted surfaces are: 1 is standard, lower is clearer.
     public var glass: Double
+    /// A picture in place of the sky. The sky's colors still show until it loads.
+    public var image: ThemeImage?
+    public var ascii: AsciiLayer?
+    public var scrim: ThemeScrim?
+    public var text: RGB?
+    public var secondaryText: RGB?
+    /// The highlight behind the selected row.
+    public var selection: RGB?
 
-    public init(sky: RGB, horizon: RGB, glow: RGB, accent: RGB, sunlight: RGB, rays: Double, glass: Double = 1) {
+    public init(sky: RGB, horizon: RGB, glow: RGB, accent: RGB, sunlight: RGB, rays: Double, glass: Double = 1,
+                image: ThemeImage? = nil, ascii: AsciiLayer? = nil, scrim: ThemeScrim? = nil, text: RGB? = nil, secondaryText: RGB? = nil,
+                selection: RGB? = nil) {
         self.sky = sky
         self.horizon = horizon
         self.glow = glow
@@ -96,11 +220,24 @@ public struct ThemePalette: Codable, Hashable, Sendable {
         self.sunlight = sunlight
         self.rays = rays
         self.glass = glass
+        self.image = image
+        self.ascii = ascii
+        self.scrim = scrim
+        self.text = text
+        self.secondaryText = secondaryText
+        self.selection = selection
     }
 
+    /// Turns the colors round the wheel. A picture and the colors you set by hand stay as they are.
     func rotated(by turns: Double) -> ThemePalette {
-        ThemePalette(sky: sky.rotated(by: turns), horizon: horizon.rotated(by: turns), glow: glow.rotated(by: turns),
-                     accent: accent.rotated(by: turns), sunlight: sunlight.rotated(by: turns), rays: rays, glass: glass)
+        var p = self
+        p.sky = sky.rotated(by: turns)
+        p.horizon = horizon.rotated(by: turns)
+        p.glow = glow.rotated(by: turns)
+        p.accent = accent.rotated(by: turns)
+        p.sunlight = sunlight.rotated(by: turns)
+        p.ascii?.color = ascii?.color.rotated(by: turns) ?? .init(0, 0, 0)
+        return p
     }
 }
 
@@ -114,16 +251,19 @@ public struct SkyTheme: Codable, Identifiable, Hashable, Sendable {
     public var light: ThemePalette
     public var dark: ThemePalette
     public var followsSpace: Bool
+    /// The built-in theme this one was copied from, which Reset goes back to.
+    public var basedOn: String?
 
     /// The hue that following themes are drawn in.
     public static let baseHue = 0.58
 
-    public init(id: String = UUID().uuidString, name: String, light: ThemePalette, dark: ThemePalette, followsSpace: Bool) {
+    public init(id: String = UUID().uuidString, name: String, light: ThemePalette, dark: ThemePalette, followsSpace: Bool, basedOn: String? = nil) {
         self.id = id
         self.name = name
         self.light = light
         self.dark = dark
         self.followsSpace = followsSpace
+        self.basedOn = basedOn
     }
 
     public func palette(dark isDark: Bool, spaceHue: Double) -> ThemePalette {
@@ -132,6 +272,16 @@ public struct SkyTheme: Codable, Identifiable, Hashable, Sendable {
     }
 
     public var isPreset: Bool { Self.presets.contains { $0.id == id } }
+
+    /// This theme as it was built, keeping its name and id.
+    public var reset: SkyTheme? {
+        guard let base = Self.preset(basedOn) else { return nil }
+        var theme = base
+        theme.id = id
+        theme.name = name
+        theme.basedOn = basedOn
+        return theme
+    }
 
     public static func preset(_ id: String?) -> SkyTheme? { presets.first { $0.id == id } }
 
@@ -147,7 +297,10 @@ public struct SkyTheme: Codable, Identifiable, Hashable, Sendable {
                            sunlight: RGB(h: 0.70, s: 0.35, v: 1), rays: 0.30),
         followsSpace: true)
 
-    public static let presets: [SkyTheme] = [
+    public static let presets: [SkyTheme] = skies + asciiThemes
+
+    /// Painted skies.
+    public static let skies: [SkyTheme] = [
         standard,
         SkyTheme(
             id: "pastel", name: "Pastel",
@@ -190,13 +343,67 @@ public struct SkyTheme: Codable, Identifiable, Hashable, Sendable {
               dark: ("#0B1E33", "#050A14", "#14503F", "#7CF0C4", "#B8FFE6", 0.45, 1)),
     ]
 
+    /// Drawn in characters, live, with nothing to download. Each sets its colors to suit.
+    public static let asciiThemes: [SkyTheme] = [
+        ascii("ethereal", "Ethereal", .mist,
+              light: (("#EDE3F4", "#FBF0F3", "#D8EEF3", "#7A5AC7", "#FFF8EE", 0, 1), ("#3B2F5E", "#6C6190", "#9F86E0", "#FFFFFF", 0.30), "#8A6FD6", 0.55),
+              dark: (("#2A2357", "#141030", "#4A3A86", "#C9B6FF", "#DCD2FF", 0, 1), ("#F3EEFF", "#BDB2E2", "#B9A2FF", "#140F33", 0.40), "#C9B6FF", 0.5)),
+        ascii("deep-space", "Deep Space", .stars,
+              light: (("#E6DDF1", "#F7E9EE", "#D9D8F5", "#6A55C9", "#FFF4E6", 0, 1), ("#37305C", "#6A6291", "#9488E6", "#FFFFFF", 0.30), "#6A55C9", 0.5),
+              dark: (("#160B33", "#080414", "#4A1560", "#E48BFF", "#E9B8FF", 0, 1), ("#F2ECFF", "#B3A8D6", "#C77DFF", "#070312", 0.30), "#E7DCFF", 0.85)),
+        ascii("pink-princess", "Pink Princess", .hearts,
+              light: (("#F9D3E2", "#FFEFF0", "#FFD9C9", "#D1457F", "#FFF3E6", 0, 1), ("#5F2544", "#94587A", "#F06BA3", "#FFFFFF", 0.30), "#E0508F", 0.6),
+              dark: (("#5C2A5E", "#2B1236", "#A33D78", "#FFA6CC", "#FFD3A8", 0, 1), ("#FFF0F6", "#E8BBD2", "#FF8FC0", "#2A1030", 0.42), "#FFA6CC", 0.7)),
+        ascii("wildwood", "Wildwood", .meadow,
+              light: (("#CFE3A8", "#F3F6DC", "#E8E59A", "#3E7D2C", "#FFF7CF", 0, 1), ("#233D18", "#4E6A3C", "#6FA84A", "#FDFFF0", 0.40), "#4C8A33", 0.6),
+              dark: (("#0E3A36", "#06191C", "#13504A", "#7FE6B4", "#BFF5E0", 0, 1), ("#EAFBF2", "#A8D5C3", "#5FD6A2", "#051A1A", 0.40), "#7FE6B4", 0.55)),
+        ascii("terminal", "Terminal", .rain,
+              light: (("#E8F0E4", "#F6F9F2", "#D3E8D0", "#1F7A3D", "#F4FFF0", 0, 1), ("#123A1F", "#44694F", "#4FB06E", "#FFFFFF", 0.30), "#1F7A3D", 0.5),
+              dark: (("#061208", "#020604", "#0A2412", "#5CFF8F", "#B8FFCE", 0, 1), ("#D8FFE4", "#86C69A", "#3CCB6E", "#020604", 0.30), "#3CFF7A", 0.7)),
+        ascii("sakura", "Sakura", .petals,
+              light: (("#FBE4EC", "#FFF5F6", "#FAD7E4", "#C2476F", "#FFF6F0", 0, 1), ("#4E2A3A", "#86596C", "#EE86A8", "#FFFFFF", 0.25), "#E58BA9", 0.7),
+              dark: (("#2C2548", "#120F24", "#54305F", "#FFB0C9", "#FFE0B8", 0, 1), ("#FFF1F5", "#D2B8CB", "#FF9DBC", "#13102A", 0.38), "#FFB7CF", 0.7)),
+        ascii("tide", "Tide", .waves,
+              light: (("#9FDDEB", "#E6FAF7", "#B8F0E4", "#0B7F95", "#FFFBEA", 0, 1), ("#0C3A4A", "#2F6472", "#2FB5C7", "#FFFFFF", 0.42), "#0B8FA8", 0.45),
+              dark: (("#0A3A44", "#041A20", "#0E4E55", "#6FEBE0", "#B8FFF4", 0, 1), ("#E9FFFC", "#A6D9D6", "#4FD9D0", "#042023", 0.38), "#6FEBE0", 0.55)),
+        ascii("snowfall", "Snowfall", .snow,
+              light: (("#DCE8F4", "#F6FAFD", "#E4E8F7", "#2F6FB0", "#FFFFFF", 0, 1), ("#1F2F45", "#566A82", "#7FB0E0", "#FFFFFF", 0.35), "#7FA5CC", 0.7),
+              dark: (("#142238", "#080E1A", "#22304F", "#9CCBFF", "#DCEBFF", 0, 1), ("#EAF3FF", "#A9BBD2", "#7FB6F0", "#080E1A", 0.35), "#DCEBFF", 0.7)),
+        ascii("ember", "Ember", .embers,
+              light: (("#F8D9B8", "#FFF1E0", "#F9C9A8", "#B8451E", "#FFF0D8", 0, 1), ("#4A2310", "#80502F", "#E6763C", "#FFF8EE", 0.38), "#D9602A", 0.6),
+              dark: (("#2A0F0A", "#100503", "#5A1E10", "#FF9A55", "#FFC48C", 0, 1), ("#FFEFE2", "#D8B09A", "#FF7A3C", "#100503", 0.30), "#FF8A3C", 0.85)),
+        ascii("synthwave", "Synthwave", .grid,
+              light: (("#F6D6F2", "#DCE6FF", "#FFD6E8", "#B026A8", "#FFF0FA", 0, 1), ("#3A1648", "#6E4A80", "#D868D0", "#FFFFFF", 0.32), "#B026A8", 0.5),
+              dark: (("#1B0B3A", "#070316", "#4A0F5E", "#FF5FD2", "#FFB8EC", 0, 1), ("#F7E8FF", "#B9A2D6", "#FF5FD2", "#070316", 0.32), "#FF5FD2", 0.75)),
+        ascii("mono", "Mono", .dots,
+              light: (("#E9E9E9", "#F7F7F7", "#EFEFEF", "#222222", "#FFFFFF", 0, 1), ("#111111", "#555555", "#999999", "#FFFFFF", 0.35), "#222222", 0.35),
+              dark: (("#141414", "#0A0A0A", "#1E1E1E", "#EDEDED", "#FFFFFF", 0, 1), ("#F2F2F2", "#A6A6A6", "#8C8C8C", "#0A0A0A", 0.30), "#F0F0F0", 0.4)),
+    ]
+
     private typealias Colors = (sky: String, horizon: String, glow: String, accent: String, sunlight: String, rays: Double, glass: Double)
 
+    private typealias Ink = (text: String, secondaryText: String, selection: String, scrim: String, scrimOpacity: Double)
+
+    private static func palette(_ c: Colors) -> ThemePalette {
+        ThemePalette(sky: RGB(hex: c.sky)!, horizon: RGB(hex: c.horizon)!, glow: RGB(hex: c.glow)!,
+                     accent: RGB(hex: c.accent)!, sunlight: RGB(hex: c.sunlight)!, rays: c.rays, glass: c.glass)
+    }
+
     private static func fixed(_ id: String, _ name: String, light: Colors, dark: Colors) -> SkyTheme {
-        func palette(_ c: Colors) -> ThemePalette {
-            ThemePalette(sky: RGB(hex: c.sky)!, horizon: RGB(hex: c.horizon)!, glow: RGB(hex: c.glow)!,
-                         accent: RGB(hex: c.accent)!, sunlight: RGB(hex: c.sunlight)!, rays: c.rays, glass: c.glass)
+        SkyTheme(id: id, name: name, light: palette(light), dark: palette(dark), followsSpace: false)
+    }
+
+    private static func ascii(_ id: String, _ name: String, _ pattern: AsciiPattern, light: (Colors, Ink, String, Double),
+                              dark: (Colors, Ink, String, Double)) -> SkyTheme {
+        func look(_ c: (Colors, Ink, String, Double)) -> ThemePalette {
+            var p = palette(c.0)
+            p.text = RGB(hex: c.1.text)
+            p.secondaryText = RGB(hex: c.1.secondaryText)
+            p.selection = RGB(hex: c.1.selection)
+            p.scrim = ThemeScrim(color: RGB(hex: c.1.scrim)!, opacity: c.1.scrimOpacity)
+            p.ascii = AsciiLayer(pattern: pattern, color: RGB(hex: c.2)!, opacity: c.3)
+            return p
         }
-        return SkyTheme(id: id, name: name, light: palette(light), dark: palette(dark), followsSpace: false)
+        return SkyTheme(id: id, name: name, light: look(light), dark: look(dark), followsSpace: false)
     }
 }
