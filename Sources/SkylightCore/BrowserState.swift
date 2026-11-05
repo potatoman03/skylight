@@ -9,18 +9,15 @@ public struct BrowserState: Codable, Equatable, Sendable {
     public var version = BrowserState.schemaVersion
     public var profiles: [Profile]
     public var spaces: [Space]
-    /// Favorites sit above every Space, shared by all of them.
-    public var favorites: [TabID] = []
     public var tabs: [TabID: Tab]
     public var activeSpaceID: SpaceID
     public var closedTabs: [ClosedTab] = []
 
     public init(profiles: [Profile] = [Profile(id: .standard, name: "Default")], spaces: [Space],
-                favorites: [TabID] = [], tabs: [TabID: Tab] = [:], activeSpaceID: SpaceID) {
+                tabs: [TabID: Tab] = [:], activeSpaceID: SpaceID) {
         precondition(spaces.contains { $0.id == activeSpaceID }, "active Space must exist")
         self.profiles = profiles
         self.spaces = spaces
-        self.favorites = favorites
         self.tabs = tabs
         self.activeSpaceID = activeSpaceID
     }
@@ -32,7 +29,9 @@ public struct BrowserState: Codable, Equatable, Sendable {
         return BrowserState(spaces: [personal, work], activeSpaceID: personal.id)
     }
 
-    enum CodingKeys: String, CodingKey { case version, profiles, spaces, favorites, tabs, activeSpaceID, closedTabs }
+    enum CodingKeys: String, CodingKey { case version, profiles, spaces, tabs, activeSpaceID, closedTabs }
+    /// Favorites used to be shared by every Space.
+    private enum LegacyKeys: String, CodingKey { case favorites }
 
     /// Fields added after version 1 are optional, so older files still load.
     public init(from decoder: Decoder) throws {
@@ -40,10 +39,14 @@ public struct BrowserState: Codable, Equatable, Sendable {
         version = try c.decodeIfPresent(Int.self, forKey: .version) ?? Self.schemaVersion
         profiles = try c.decodeIfPresent([Profile].self, forKey: .profiles) ?? [Profile(id: .standard, name: "Default")]
         spaces = try c.decode([Space].self, forKey: .spaces)
-        favorites = try c.decodeIfPresent([TabID].self, forKey: .favorites) ?? []
         tabs = try c.decodeIfPresent([TabID: Tab].self, forKey: .tabs) ?? [:]
         activeSpaceID = try c.decode(SpaceID.self, forKey: .activeSpaceID)
         closedTabs = try c.decodeIfPresent([ClosedTab].self, forKey: .closedTabs) ?? []
+        // Shared favorites stay where you last were; drag them to the Spaces they belong in.
+        let shared = try decoder.container(keyedBy: LegacyKeys.self).decodeIfPresent([TabID].self, forKey: .favorites) ?? []
+        if let i = spaces.firstIndex(where: { $0.id == activeSpaceID }) ?? spaces.indices.first {
+            spaces[i].favorites = shared + spaces[i].favorites
+        }
     }
 
     // MARK: - Lookup
@@ -60,11 +63,14 @@ public struct BrowserState: Codable, Equatable, Sendable {
 
     public func tabs(in space: Space, _ section: TabSection) -> [Tab] { space[section].compactMap { tabs[$0] } }
 
+    /// The active Space's favorites.
+    public var favorites: [TabID] { activeSpace.favorites }
+
     public var favoriteTabs: [Tab] { favorites.compactMap { tabs[$0] } }
 
-    public func isFavorite(_ id: TabID) -> Bool { favorites.contains(id) }
+    public func isFavorite(_ id: TabID) -> Bool { spaces.contains { $0.favorites.contains(id) } }
 
-    /// The profile a tab's page loads in. Favorites use the active Space's profile.
+    /// The profile a tab's page loads in.
     public func profileID(forTab id: TabID) -> ProfileID {
         (space(containing: id) ?? activeSpace).profileID
     }
@@ -91,14 +97,14 @@ public struct BrowserState: Codable, Equatable, Sendable {
         if !spaces.contains(where: { $0.id == activeSpaceID }) { activeSpaceID = spaces[0].id }
         if !profiles.contains(where: { $0.id == .standard }) { profiles.insert(Profile(id: .standard, name: "Default"), at: 0) }
         var seen = Set<TabID>()
-        favorites = favorites.filter { tabs[$0] != nil && seen.insert($0).inserted }
         let profileIDs = Set(profiles.map(\.id))
         for i in spaces.indices {
             if !profileIDs.contains(spaces[i].profileID) { spaces[i].profileID = .standard }
+            spaces[i].favorites = spaces[i].favorites.filter { tabs[$0] != nil && seen.insert($0).inserted }
             for section in TabSection.allCases {
                 spaces[i][section] = spaces[i][section].filter { tabs[$0] != nil && seen.insert($0).inserted }
             }
-            if let sel = spaces[i].selectedTabID, !spaces[i].contains(sel), !favorites.contains(sel) { spaces[i].selectedTabID = nil }
+            if let sel = spaces[i].selectedTabID, !spaces[i].contains(sel) { spaces[i].selectedTabID = nil }
             // A split keeps its tabs in one section, each tab in one split, two panes at least.
             var placed = Set<TabID>()
             let space = spaces[i]

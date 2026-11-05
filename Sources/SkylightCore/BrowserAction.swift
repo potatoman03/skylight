@@ -22,13 +22,13 @@ public enum BrowserAction: Equatable, Sendable {
     case togglePin(TabID)
     /// Closes any tab for good, pinned and favorites included. (`closeTab` only unloads those.)
     case removeTab(TabID)
-    /// Moves a tab into the favorites above every Space, or back out into the active Space.
+    /// Moves a tab into its Space's favorites, or back out into Today.
     case toggleFavorite(TabID)
     /// Closes every Today tab in the active Space except the selected one.
     case clearToday
     case moveTab(TabID, to: TabSection, index: Int)
     case moveTabToSpace(TabID, SpaceID)
-    /// Puts a tab in the favorites at `index` (or moves it there within them).
+    /// Puts a tab in the active Space's favorites at `index` (or moves it there within them).
     case moveToFavorites(TabID, index: Int)
     /// Names a tab yourself; an empty name goes back to the page's title.
     case renameTab(TabID, String)

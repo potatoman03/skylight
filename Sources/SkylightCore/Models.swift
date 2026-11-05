@@ -185,6 +185,8 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
     public var themeID: String?
     /// How strongly the Space's color washes through the sidebar.
     public var tint: SpaceTint
+    /// Tabs kept as tiles above the Space's other tabs. They sleep rather than close.
+    public var favorites: [TabID]
     public var pinned: [TabID]
     public var today: [TabID]
     public var selectedTabID: TabID?
@@ -194,7 +196,7 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
     public var folders: [TabFolder]
 
     public init(id: SpaceID = SpaceID(), name: String, hue: Double, icon: String? = nil, profileID: ProfileID = .standard,
-                themeID: String? = nil, tint: SpaceTint = .none, pinned: [TabID] = [], today: [TabID] = [],
+                themeID: String? = nil, tint: SpaceTint = .none, favorites: [TabID] = [], pinned: [TabID] = [], today: [TabID] = [],
                 selectedTabID: TabID? = nil, splits: [TabSplit] = [], folders: [TabFolder] = []) {
         self.id = id
         self.name = name
@@ -203,6 +205,7 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         self.profileID = profileID
         self.themeID = themeID
         self.tint = tint
+        self.favorites = favorites
         self.pinned = pinned
         self.today = today
         self.selectedTabID = selectedTabID
@@ -210,7 +213,7 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         self.folders = folders
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, hue, icon, profileID, themeID, tint, pinned, today, selectedTabID, splits, folders }
+    enum CodingKeys: String, CodingKey { case id, name, hue, icon, profileID, themeID, tint, favorites, pinned, today, selectedTabID, splits, folders }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -222,6 +225,7 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         themeID = try c.decodeIfPresent(String.self, forKey: .themeID)
         // A tint from a newer build shouldn't cost you your Spaces.
         tint = (try? c.decodeIfPresent(SpaceTint.self, forKey: .tint)) ?? .none
+        favorites = try c.decodeIfPresent([TabID].self, forKey: .favorites) ?? []
         pinned = try c.decodeIfPresent([TabID].self, forKey: .pinned) ?? []
         today = try c.decodeIfPresent([TabID].self, forKey: .today) ?? []
         selectedTabID = try c.decodeIfPresent(TabID.self, forKey: .selectedTabID)
@@ -229,9 +233,9 @@ public struct Space: Identifiable, Codable, Equatable, Sendable {
         folders = try c.decodeIfPresent([TabFolder].self, forKey: .folders) ?? []
     }
 
-    public var allTabIDs: [TabID] { pinned + today }
+    public var allTabIDs: [TabID] { favorites + pinned + today }
 
-    public func contains(_ id: TabID) -> Bool { pinned.contains(id) || today.contains(id) }
+    public func contains(_ id: TabID) -> Bool { favorites.contains(id) || pinned.contains(id) || today.contains(id) }
 
     public func section(of id: TabID) -> TabSection? {
         if pinned.contains(id) { return .pinned }

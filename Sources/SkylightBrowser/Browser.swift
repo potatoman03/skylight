@@ -501,9 +501,8 @@ extension Browser: CommandSource {
         // Open tabs, any Space.
         let state = store.state
         var tabRows: [(Int, CommandItem)] = []
-        let favoritesSpace = Space(id: state.activeSpaceID, name: "Favorites", hue: 0, today: state.favorites)
-        for space in [favoritesSpace] + state.spaces {
-            for tab in state.tabs(in: space, .pinned) + state.tabs(in: space, .today) where tab.id != state.selectedTabID {
+        for space in state.spaces {
+            for tab in space.allTabIDs.compactMap({ state.tabs[$0] }) where tab.id != state.selectedTabID {
                 guard let score = query.isEmpty ? 0 : FuzzyMatch.score(query, title: tab.displayTitle, url: tab.url.absoluteString)
                 else { continue }
                 let spaceNote = space.id == state.activeSpaceID ? "" : " · \(space.name)"

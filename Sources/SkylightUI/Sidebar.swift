@@ -7,8 +7,8 @@ import SwiftUI
 /// SwiftUI has its own `Tab`.
 typealias BrowserTab = SkylightCore.Tab
 
-/// A source list, like Finder's or Mail's: favorites shared by every Space, then the Space's pinned
-/// tabs and today's tabs. Spaces switch from the bar at the bottom, or with a two-finger swipe.
+/// A source list, like Finder's or Mail's: the Space's favorites, its pinned tabs and today's
+/// tabs. Spaces switch from the bar at the bottom, or with a two-finger swipe.
 struct Sidebar: View {
     @Environment(Browser.self) private var browser
     @Environment(TabDragSession.self) private var drag
@@ -130,7 +130,7 @@ struct Sidebar: View {
         return response
     }
 
-    /// A grid of tiles, as in Arc, shared by every Space, at the top or bottom of the sidebar.
+    /// A grid of tiles, as in Arc, for the Space on screen, at the top or bottom of the sidebar.
     @ViewBuilder
     private var favorites: some View {
         let state = browser.store.state
@@ -350,7 +350,7 @@ private struct FavoritesGrid: View {
 
     var body: some View {
         if tabs.isEmpty {
-            Text("Drop a tab here to keep it in every Space")
+            Text("Drop a tab here to keep it close")
                 .font(.callout)
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, minHeight: 34)
