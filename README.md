@@ -97,9 +97,11 @@ The app icon is drawn in code: edit `scripts/make-icon.swift` and run it to rege
 
 ### Releases and updates
 
-Signed builds update themselves with [Sparkle](https://sparkle-project.org). They read the feed
-on the repo's latest GitHub release about once a day, or when you choose Skylight → Check for
-Updates…, and install only builds signed with the project's update key. Development builds
+Signed builds update themselves with [Sparkle](https://sparkle-project.org). Every few hours they
+read the feed on the repo's latest GitHub release and download a new version quietly. Then a card
+at the bottom of the sidebar offers to restart; otherwise it installs when Skylight quits.
+Skylight → Check for Updates… checks right away. Only builds signed with the project's update key
+are installed. Development builds
 (ad hoc, or `SKYLIGHT_DEV=1`) never update.
 
 - `scripts/publish.sh 0.2.0` builds the app, signs the zip with the update key, writes
