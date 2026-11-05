@@ -363,7 +363,7 @@ public final class Browser {
         /// What comes over, for the import screen.
         public var summary: String {
             switch self {
-            case .arc: "Spaces, pinned tabs, favorites, passwords and sign-ins"
+            case .arc: "Spaces, profiles, pinned tabs, favorites, passwords and sign-ins"
             case .aside: "Sidebar folders as Spaces, bookmarks, passwords and sign-ins"
             default: "Bookmarks bar as favorites, folders as Spaces, passwords and sign-ins"
             }
@@ -371,44 +371,58 @@ public final class Browser {
     }
 
     /// Brings Spaces, tabs, passwords and sign-ins over from another browser, into the Space on
-    /// screen. macOS asks before Skylight can read that browser's key. Returns a summary.
+    /// screen. Arc's other profiles become profiles here, keeping their own. macOS asks before
+    /// Skylight can read that browser's key. Returns a summary.
     @discardableResult
     public func importBrowser(_ source: ImportSource) async -> String {
         var problem: String?
         var tabs = 0
+        let profilesBefore = store.state.profiles.count
+        // Each of the browser's profiles, and the profile here that gets its logins.
+        var targets = source.chromium.map { [(browser: $0, profile: store.state.activeSpace.profileID)] } ?? []
         do {
             if FileManager.default.fileExists(atPath: source.file.path) {
                 let data = try Data(contentsOf: source.file)
-                let imported = source == .arc ? try BrowserImporters.arc(data)
+                var imported = source == .arc ? try BrowserImporters.arc(data)
                     : try BrowserImporters.chromium(data, browser: source.rawValue)
+                if let file = source.chromium?.localState, let names = try? Data(contentsOf: file) {
+                    imported.profileNames = BrowserImporters.chromiumProfileNames(names)
+                }
                 let before = store.state.tabs.count
                 store.send(.importBrowserData(imported))
                 tabs = store.state.tabs.count - before
+                for folder in imported.profileFolders {
+                    let name = imported.profileName(for: folder)
+                    if let browser = source.chromium, let profile = store.state.profiles.first(where: { $0.name == name }) {
+                        targets.append((browser.profile(folder), profile.id))
+                    }
+                }
             }
         } catch {
             problem = (error as? LocalizedError)?.errorDescription ?? "Couldn't read \(source.rawValue)'s tabs."
         }
 
         var logins = 0
-        var sites = 0
-        if let chromium = source.chromium {
-            do {
-                let profile = store.state.activeSpace.profileID
-                let found = try await passwords.signIns(from: chromium)
-                logins = passwords.save(found.credentials, into: store.state.passwordProfile(for: profile)).added
-                if await pages.addCookies(found.cookies, to: profile) > 0 {
-                    sites = Set(found.cookies.map(\.host)).count
+        var sites = Set<String>()
+        do {
+            let found = try await passwords.signIns(from: targets.map(\.browser))
+            for (target, signIns) in zip(targets, found) {
+                logins += passwords.save(signIns.credentials, into: store.state.passwordProfile(for: target.profile)).added
+                if await pages.addCookies(signIns.cookies, to: target.profile) > 0 {
+                    sites.formUnion(signIns.cookies.map(\.host))
                 }
-            } catch {
-                let reason = (error as? LocalizedError)?.errorDescription ?? "Couldn't read them."
-                problem = "Passwords and sign-ins stayed behind. \(reason)"
             }
+        } catch {
+            let reason = (error as? LocalizedError)?.errorDescription ?? "Couldn't read them."
+            problem = "Passwords and sign-ins stayed behind. \(reason)"
         }
 
         var parts: [String] = []
+        let profiles = store.state.profiles.count - profilesBefore
+        if profiles > 0 { parts.append("\(profiles) profile\(profiles == 1 ? "" : "s")") }
         if tabs > 0 { parts.append("\(tabs) tab\(tabs == 1 ? "" : "s")") }
         if logins > 0 { parts.append("\(logins) password\(logins == 1 ? "" : "s")") }
-        if sites > 0 { parts.append("sign-ins for \(sites) site\(sites == 1 ? "" : "s")") }
+        if !sites.isEmpty { parts.append("sign-ins for \(sites.count) site\(sites.count == 1 ? "" : "s")") }
         let summary = parts.isEmpty ? nil : "Imported " + ListFormatter.localizedString(byJoining: parts) + " from \(source.rawValue)"
         let message = [summary, problem].compactMap(\.self).joined(separator: ". ")
         guard !message.isEmpty else {

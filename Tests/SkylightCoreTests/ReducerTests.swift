@@ -367,6 +367,68 @@ private let c = URL(string: "https://c.example")!
         #expect(state.spaces[2].icon == "book")
     }
 
+    @Test func arcProfilesBecomeProfiles() {
+        var state = BrowserState.initial()
+        let shared = BrowserImport.Link(url: a, title: "A")
+        var data = BrowserImport(source: "Arc", spaces: [
+            .init(name: "Client", pinned: [shared], sourceProfile: "Profile 2"),
+            .init(name: "Client Docs", pinned: [.init(url: b, title: "B")], sourceProfile: "Profile 2"),
+            .init(name: "Side", pinned: [shared]),
+            .init(name: "Bare", pinned: [], sourceProfile: "Profile 3"),
+        ], favorites: [])
+        data.spaces[0].favorites = [.init(url: c, title: "C")]
+        data.profileNames = ["Profile 2": "Acme"]
+        BrowserReducer.reduce(&state, .importBrowserData(data), env: env)
+
+        let acme = state.profiles.first { $0.name == "Acme" }?.id
+        #expect(acme != nil)
+        #expect(state.profiles.contains { $0.name == "Profile 3" })
+        let client = state.spaces.first { $0.name == "Client" }
+        #expect(client?.profileID == acme)
+        #expect(client?.favorites.count == 1)
+        #expect(state.spaces.first { $0.name == "Client Docs" }?.profileID == acme)
+        // The same page in another profile is a different tab.
+        let side = state.spaces.first { $0.name == "Side" }
+        #expect(side?.profileID == .standard)
+        #expect(side?.pinned.count == 1)
+        // A profile with nothing pinned still gets a Space to hold its logins.
+        #expect(state.spaces.contains { $0.name == "Bare" })
+
+        let (tabs, profiles, spaces) = (state.tabs.count, state.profiles.count, state.spaces.count)
+        BrowserReducer.reduce(&state, .importBrowserData(data), env: env)
+        #expect(state.tabs.count == tabs)
+        #expect(state.profiles.count == profiles)
+        #expect(state.spaces.count == spaces)
+    }
+
+    @Test func aSpaceImportedEarlierMovesToItsArcProfile() {
+        var state = BrowserState.initial()
+        let links = [BrowserImport.Link(url: a, title: "A")]
+        BrowserReducer.reduce(&state, .importBrowserData(.init(source: "Arc", spaces: [.init(name: "Client", pinned: links)], favorites: [])), env: env)
+        #expect(state.spaces.first { $0.name == "Client" }?.profileID == .standard)
+        let tabs = state.tabs.count
+
+        var data = BrowserImport(source: "Arc", spaces: [.init(name: "Client", pinned: links, sourceProfile: "Profile 2")], favorites: [])
+        data.profileNames = ["Profile 2": "Acme"]
+        let result = BrowserReducer.reduce(&state, .importBrowserData(data), env: env)
+        let client = state.spaces.first { $0.name == "Client" }
+        #expect(client?.profileID == state.profiles.first { $0.name == "Acme" }?.id)
+        #expect(state.tabs.count == tabs)
+        #expect(result.effects.contains(.discardPage(client!.pinned[0])))
+    }
+
+    @Test func aSpaceOnAnotherProfileStaysPut() {
+        var state = BrowserState.initial()
+        BrowserReducer.reduce(&state, .createProfile(name: "Mine"), env: env)
+        let mine = state.profiles.first { $0.name == "Mine" }!.id
+        let work = state.spaces[1].id
+        BrowserReducer.reduce(&state, .assignProfile(work, mine), env: env)
+        let data = BrowserImport(source: "Arc", spaces: [.init(name: "Work", pinned: [.init(url: a, title: "A")], sourceProfile: "Profile 2")], favorites: [])
+        BrowserReducer.reduce(&state, .importBrowserData(data), env: env)
+        #expect(state.spaces.first { $0.id == work }?.profileID == mine)
+        #expect(state.spaces.first { $0.id == work }?.pinned.count == 1)
+    }
+
     @Test func pageUpdatesChangeMetadataWithoutEffects() {
         var state = BrowserState.initial()
         let id = open(&state, a)[0]
@@ -519,6 +581,38 @@ private let c = URL(string: "https://c.example")!
         #expect(result.spaces[0].name == "Research")
         #expect(result.spaces[0].icon == "🔭")
         #expect(result.spaces[0].pinned.map(\.title) == ["Docs", "Renamed"])
+    }
+
+    @Test func readsArcProfiles() throws {
+        let json = #"""
+        {"sidebar":{"containers":[{"global":{}},{"topAppsContainerIDs":[{"default":true},"top",{"custom":{"_0":{"directoryBasename":"Profile 2","machineID":"m"}}},"top2"],
+          "spaces":["S1",{"id":"S1","title":"Home","containerIDs":["pinned","p1"],"profile":{"default":true}},
+                    "S2",{"id":"S2","title":"Client","containerIDs":["pinned","p2"],"profile":{"custom":{"_0":{"directoryBasename":"Profile 2","machineID":"m"}}}},
+                    "S3",{"id":"S3","title":"Odd","containerIDs":["pinned","p3"],"profile":{"custom":{"_0":{"directoryBasename":"../secrets"}}}}],
+          "items":["top",{"id":"top","childrenIds":["f1"],"data":{"itemContainer":{}}},
+                   "top2",{"id":"top2","childrenIds":["f2"],"data":{"itemContainer":{}}},
+                   "f1",{"id":"f1","childrenIds":[],"data":{"tab":{"savedURL":"https://mail.example","savedTitle":"Mail"}}},
+                   "f2",{"id":"f2","childrenIds":[],"data":{"tab":{"savedURL":"https://client.example","savedTitle":"Client Mail"}}},
+                   "p1",{"id":"p1","childrenIds":[],"data":{"itemContainer":{}}},
+                   "p2",{"id":"p2","childrenIds":[],"data":{"itemContainer":{}}},
+                   "p3",{"id":"p3","childrenIds":[],"data":{"itemContainer":{}}}]}]}}
+        """#
+        let result = try BrowserImporters.arc(Data(json.utf8))
+        #expect(result.spaces.map(\.sourceProfile) == [nil, "Profile 2", nil])
+        #expect(result.favorites.map(\.title) == ["Mail"])
+        #expect(result.spaces[1].favorites.map(\.title) == ["Client Mail"])
+        #expect(result.profileFolders == ["Profile 2"])
+    }
+
+    @Test func readsChromiumProfileNames() {
+        let json = #"{"profile":{"info_cache":{"Default":{"name":"Personal"},"Profile 2":{"name":"Acme"},"Profile 3":{}}}}"#
+        let names = BrowserImporters.chromiumProfileNames(Data(json.utf8))
+        #expect(names == ["Default": "Personal", "Profile 2": "Acme"])
+        #expect(BrowserImporters.chromiumProfileNames(Data("nope".utf8)).isEmpty)
+        var data = BrowserImport(source: "Arc", spaces: [], favorites: [])
+        data.profileNames = names
+        #expect(data.profileName(for: "Profile 2") == "Acme")
+        #expect(data.profileName(for: "Profile 3") == "Profile 3")
     }
 
     @Test func readsChromiumBookmarks() throws {
