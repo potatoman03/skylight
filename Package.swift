@@ -31,13 +31,16 @@ let package = Package(
         .executable(name: "SkylightHelper", targets: ["SkylightHelper"]),
     ],
     targets: [
-        // Pure model and logic. Foundation only, fully unit-tested.
+        // Pure model and logic: state, actions, the reducer, the store. Foundation (plus CoreGraphics
+        // geometry and Observation) only, fully unit-tested.
         .target(name: "SkylightCore"),
 
         // Engine-agnostic protocols for web pages, profiles and scripts.
         .target(name: "SkylightEngine", dependencies: ["SkylightCore"]),
 
-        // Packages and boosts: manifests, loading, URL matching, script composition.
+        // Things Skylight reads from disk and the system, with no engine or UI: packages and boosts,
+        // Chrome extension manifests and native messaging hosts, and passwords (Keychain, CSV,
+        // other Chromium browsers).
         .target(name: "SkylightKit", dependencies: ["SkylightCore"]),
 
         // Agent tools: the tool registry, built-in browser tools, page scripts, WebMCP.
@@ -72,9 +75,10 @@ let package = Package(
         ),
 
         // Swift adapter that makes CEF conform to SkylightEngine.
-        .target(name: "SkylightCEF", dependencies: ["SkylightEngine", "CEFBridge"]),
+        .target(name: "SkylightCEF", dependencies: ["SkylightCore", "SkylightEngine", "CEFBridge"]),
 
-        .executableTarget(name: "Skylight", dependencies: ["SkylightUI", "SkylightCEF"]),
+        // The app: builds the engine and the browser and hands the browser to the UI.
+        .executableTarget(name: "Skylight", dependencies: ["SkylightUI", "SkylightCEF", "SkylightBrowser", "SkylightCore", "SkylightKit"]),
         .executableTarget(name: "SkylightHelper", dependencies: ["CEFBridge"]),
 
         .testTarget(name: "SkylightCoreTests", dependencies: ["SkylightCore"]),

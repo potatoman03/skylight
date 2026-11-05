@@ -159,6 +159,19 @@ public final class Browser {
         }
     }
 
+    /// ⌘L edits the address in the toolbar; ⌘T (and a new split pane) opens the command bar in the
+    /// middle of the page.
+    public func presentCommandBar(_ mode: CommandBarModel.Mode) {
+        let query = mode == .editCurrent ? (store.state.selectedTab?.url.absoluteString ?? "") : ""
+        commandBar.present(mode, query: query)
+    }
+
+    public func dismissCommandBar() {
+        guard commandBar.isPresented else { return }
+        commandBar.dismiss()
+        pages.focusVisiblePage()
+    }
+
     /// Opens `url` beside the selected tab, in a split.
     public func openInSplit(_ url: URL) {
         guard let selected = store.state.selectedTabID, let id = store.send(.openTab(url, placement: .afterSelected)).openedTabID else {
