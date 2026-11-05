@@ -119,7 +119,9 @@ Steps 1–3 are `scripts/release.sh`: it signs with a **Developer ID Application
 notarized and stapled too. `bundle.sh` takes `SKYLIGHT_VERSION` and `SKYLIGHT_BUILD` (the release
 script uses the commit count) from the environment. Still to build:
 
-4. **Sparkle** for updates: an EdDSA-signed appcast, `SUFeedURL` and `SUPublicEDKey` in
-   Info.plist, and Sparkle's framework signed inside out like CEF's.
+4. **Sparkle** for updates: done. `Updater` in the app target owns it (no other module knows
+   about Sparkle), `bundle.sh` adds `SUFeedURL` and `SUPublicEDKey` and signs Sparkle's framework
+   inside out, and `scripts/publish.sh` signs the zip and writes the appcast on a GitHub release.
+   Releases should move to notarized DMGs once there's a Developer ID certificate.
 5. A tag-triggered CI job holding the certificate and notary credentials as secrets, and
    `SKYLIGHT_VERSION` read from the tag.

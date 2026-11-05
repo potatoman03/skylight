@@ -30,6 +30,10 @@ let package = Package(
         .executable(name: "Skylight", targets: ["Skylight"]),
         .executable(name: "SkylightHelper", targets: ["SkylightHelper"]),
     ],
+    dependencies: [
+        // Updates: checks the GitHub releases feed and installs new versions.
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
+    ],
     targets: [
         // Pure model and logic: state, actions, the reducer, the store. Foundation (plus CoreGraphics
         // geometry and Observation) only, fully unit-tested.
@@ -78,7 +82,13 @@ let package = Package(
         .target(name: "SkylightCEF", dependencies: ["SkylightCore", "SkylightEngine", "CEFBridge"]),
 
         // The app: builds the engine and the browser and hands the browser to the UI.
-        .executableTarget(name: "Skylight", dependencies: ["SkylightUI", "SkylightCEF", "SkylightBrowser", "SkylightCore", "SkylightKit"]),
+        // Only the app knows about Sparkle; bundle.sh puts its framework in Contents/Frameworks.
+        .executableTarget(
+            name: "Skylight",
+            dependencies: ["SkylightUI", "SkylightCEF", "SkylightBrowser", "SkylightCore", "SkylightKit",
+                           .product(name: "Sparkle", package: "Sparkle")],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
+        ),
         .executableTarget(name: "SkylightHelper", dependencies: ["CEFBridge"]),
 
         .testTarget(name: "SkylightCoreTests", dependencies: ["SkylightCore"]),

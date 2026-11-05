@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Publishes a release that installed copies of Skylight update to: builds it, zips it, signs the
+# zip with the update key, writes the update feed, and puts both on a GitHub release. Skylight
+# reads the feed from the latest release (SUFeedURL in bundle.sh), so the newest release wins.
+#
+#   scripts/publish.sh 0.2.0
+#
+# Needs:
+# - The update key in your keychain. `generate_keys --account skylight` (in
+#   .build/artifacts/sparkle/Sparkle/bin) made it. Back it up with
+#   `generate_keys --account skylight -x skylight-update-key.txt` and keep that file somewhere
+#   safe and private: installed copies take updates signed with this key only.
+# - A signing identity in .signing (or SKYLIGHT_SIGN_IDENTITY). Ad hoc builds are development
+#   builds, which don't update.
+# - gh signed in to an account that can make releases on the repo, and the commit pushed.
+# - The repo public, for installed copies to download from it.
+#
+# Builds aren't notarized here (that's scripts/release.sh), so a first install still needs
+# System Settings → Privacy & Security → Open Anyway. Updates install without asking that.
+set -euo pipefail
+
+VERSION="${1:?usage: scripts/publish.sh VERSION}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="${SKYLIGHT_REPO:-potatoman03/skylight}"
+APP="$ROOT/build/Skylight.app"
+OUT="$ROOT/build/releases/$VERSION"
+ZIP="$OUT/Skylight-$VERSION.zip"
+SPARKLE_BIN="$ROOT/.build/artifacts/sparkle/Sparkle/bin"
+
+cd "$ROOT"
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "Commit your changes first: a release is built from a commit." >&2; exit 1
+fi
+if [[ -z "$(git branch -r --contains HEAD)" ]]; then
+  echo "Push $(git rev-parse --short HEAD) first: the release points at it." >&2; exit 1
+fi
+if [[ -z "${SKYLIGHT_SIGN_IDENTITY:-}" && ! -f .signing ]]; then
+  echo "No signing identity (.signing or SKYLIGHT_SIGN_IDENTITY): an ad hoc build won't update." >&2; exit 1
+fi
+
+BUILD="$(git rev-list --count HEAD)"
+swift package resolve
+SKYLIGHT_VERSION="$VERSION" SKYLIGHT_BUILD="$BUILD" scripts/bundle.sh release
+
+mkdir -p "$OUT"
+rm -f "$ZIP"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+# Prints: sparkle:edSignature="…" length="…"
+SIGNATURE="$("$SPARKLE_BIN/sign_update" --account skylight "$ZIP")"
+
+cat > "$OUT/appcast.xml" <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Skylight</title>
+    <item>
+      <title>Skylight $VERSION</title>
+      <pubDate>$(LC_ALL=C date "+%a, %d %b %Y %H:%M:%S %z")</pubDate>
+      <sparkle:version>$BUILD</sparkle:version>
+      <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/$REPO/releases/tag/v$VERSION</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/$REPO/releases/download/v$VERSION/Skylight-$VERSION.zip" $SIGNATURE type="application/octet-stream"/>
+    </item>
+  </channel>
+</rss>
+XML
+
+gh release create "v$VERSION" "$ZIP" "$OUT/appcast.xml" --repo "$REPO" --target "$(git rev-parse HEAD)" \
+  --title "Skylight $VERSION" --generate-notes
+echo "Published Skylight $VERSION (build $BUILD). Send new people $ZIP; everyone else gets it as an update."

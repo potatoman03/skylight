@@ -95,13 +95,22 @@ the last re-keys Chromium's cookies, and you are signed out of sites once.
 The app icon is drawn in code: edit `scripts/make-icon.swift` and run it to regenerate
 `Resources/AppIcon.icns`.
 
-### Releases
+### Releases and updates
 
-`scripts/release.sh 0.2.0` builds `build/Skylight-0.2.0.dmg`: signed with a Developer ID, notarized
-and stapled, so it opens on any Mac without warnings. It needs a Developer ID Application
-certificate in your keychain and notary credentials saved with `xcrun notarytool
-store-credentials`; the top of the script has the steps. Automatic updates (Sparkle) and a CI job
-that publishes releases aren't built yet.
+Signed builds update themselves with [Sparkle](https://sparkle-project.org). They read the feed
+on the repo's latest GitHub release about once a day, or when you choose Skylight → Check for
+Updates…, and install only builds signed with the project's update key. Development builds
+(ad hoc, or `SKYLIGHT_DEV=1`) never update.
+
+- `scripts/publish.sh 0.2.0` builds the app, signs the zip with the update key, writes
+  `appcast.xml`, and puts both on a GitHub release. Installed copies pick it up from there. The
+  top of the script lists what it needs. The repo has to be public for installed copies to
+  download from it.
+- `scripts/release.sh 0.2.0` builds `build/Skylight-0.2.0.dmg`: signed with a Developer ID,
+  notarized and stapled, so a first install opens without warnings. It needs a Developer ID
+  Application certificate and notary credentials saved with `xcrun notarytool
+  store-credentials`. Until then, a first install from a published zip needs System Settings →
+  Privacy & Security → Open Anyway.
 
 ## Modules
 

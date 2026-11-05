@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var browser: Browser?
     private var window: NSWindow?
     private var settings: SettingsWindowController?
+    private var updater: Updater?
     private var quitting = false
     /// Links that arrived before the engine was ready, as when a click in another app launches Skylight.
     private var pendingURLs: [URL] = []
@@ -32,6 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ? MemoryCredentialStore.demo() : KeychainCredentialStore()
         let browser = Browser(engine: CEFEngine(support: paths.engineRoot.appending(path: "Skylight")), paths: paths, version: version, credentials: credentials)
         self.browser = browser
+        let info = Bundle.main.infoDictionary ?? [:]
+        updater = Updater(development: ProcessInfo.processInfo.environment["SKYLIGHT_DEV"] != nil
+                          || info["SkylightDevBuild"] as? Bool ?? false)
         NSApp.mainMenu = MainMenu.build(target: self)
         ShortcutMap.apply(browser.preferences.shortcuts)
         CEFRuntime.onTerminate { [weak self] in self?.quit() }
@@ -136,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func goForward(_ sender: Any?) { if let id = selected { store?.send(.goForward(id)) } }
     // ⌘← and ⌘→ as well, as in Safari. A page's text field takes them first, as do ours (see
     // validateMenuItem), where they move to the start or end of the line.
+    @objc func checkForUpdates(_ sender: Any?) { updater?.checkForUpdates() }
     @objc func goBackWithArrow(_ sender: Any?) { goBack(sender) }
     @objc func goForwardWithArrow(_ sender: Any?) { goForward(sender) }
     @objc func pictureInPicture(_ sender: Any?) { browser?.togglePictureInPicture() }
@@ -196,6 +201,8 @@ extension AppDelegate: NSMenuItemValidation {
         switch item.action {
         case #selector(goBackWithArrow(_:)), #selector(goForwardWithArrow(_:)):
             !(NSApp.keyWindow?.firstResponder is NSText)
+        case #selector(checkForUpdates(_:)):
+            updater?.canCheck ?? false
         default:
             true
         }
