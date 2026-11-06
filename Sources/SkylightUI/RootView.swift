@@ -149,6 +149,7 @@ public struct RootView: View {
         .sheet(isPresented: Binding(get: { browser.showShortcuts }, set: { browser.showShortcuts = $0 })) {
             ShortcutsSheet()
         }
+        .modifier(WelcomeHost())
         .sheet(item: Binding(get: { browser.spaceSetup }, set: { browser.spaceSetup = $0 })) {
             SpaceSetupSheet(request: $0)
         }

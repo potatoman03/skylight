@@ -41,6 +41,8 @@ public final class PageCoordinator: BrowserEffectHandler {
     @ObservationIgnored public var onPageGone: (@MainActor (TabID, _ tabClosed: Bool) -> Void)?
     /// Pages woke, slept, appeared or got their address: extensions want to know.
     @ObservationIgnored public var onPagesChange: (@MainActor () -> Void)?
+    /// A tab went somewhere, or learned its page's title.
+    @ObservationIgnored public var onVisit: (@MainActor (TabID, URL?, String?) -> Void)?
     /// A page went into fullscreen or came out of it: the window follows.
     @ObservationIgnored public var onFullscreenChange: (@MainActor (Bool) -> Void)?
 
@@ -297,6 +299,7 @@ extension PageCoordinator: WebPageDelegate {
             store.send(.pageDidUpdate(id, PageMetadata(url: event.url, title: event.title, faviconURL: event.faviconURL)))
         }
         if event.url != nil || event.extensionTabID != nil { onPagesChange?() }
+        if event.url != nil || event.title != nil { onVisit?(id, event.url, event.title) }
         if let full = event.isFullscreen {
             if full, visibleTabIDs.contains(id) { setFullscreen(id) } else if !full, fullscreenTabID == id { setFullscreen(nil) }
         }

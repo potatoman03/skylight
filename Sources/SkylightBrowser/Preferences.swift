@@ -63,12 +63,6 @@ public final class Preferences {
         }
     }
 
-    public enum Appearance: String, Codable, CaseIterable, Identifiable, Sendable {
-        case system, light, dark
-        public var id: String { rawValue }
-        public var name: String { rawValue.capitalized }
-    }
-
     /// Parts of the sidebar you can hide.
     public enum SidebarItem: String, Codable, CaseIterable, Identifiable, Sendable {
         /// Kept so older preferences still load; the address field lives in the toolbar now.
@@ -206,7 +200,6 @@ public final class Preferences {
     private struct Stored: Codable {
         var searchEngine: SearchEngine?
         var customSearchTemplate: String?
-        var appearance: Appearance?
         var godRays: Bool?
         var archiveAfterHours: Double?
         var sidebarCollapsed: Bool?
@@ -233,6 +226,7 @@ public final class Preferences {
         var sidebarWidth: Double?
         var shortcuts: [String: KeyBinding]?
         var newSpaceSetup: SpaceSetup?
+        var finishedWelcome: Bool?
     }
 
     /// A shortcut you set yourself: the key, and the modifier flags' raw value. An empty key takes
@@ -252,7 +246,6 @@ public final class Preferences {
     public var searchEngine: SearchEngine = .google { didSet { save() } }
     /// The Custom engine's address, with `%s` for the query.
     public var customSearchTemplate = "" { didSet { save() } }
-    public var appearance: Appearance = .system { didSet { save(); applyAppearance() } }
     /// The theme's sky behind the sidebar, instead of the system's sidebar material.
     public var skyBackdrop = true { didSet { save() } }
     /// The animated light in the sky. Off, the sky is a still gradient.
@@ -296,6 +289,8 @@ public final class Preferences {
     public var shortcuts: [String: KeyBinding] = [:] { didSet { save() } }
     /// The last choice in the New Space sheet.
     public var newSpaceSetup = SpaceSetup() { didSet { save() } }
+    /// The welcome a new install opens with has been seen, or wasn't needed.
+    public var finishedWelcome = false { didSet { save() } }
 
     /// Every theme you can pick: the presets, then your own.
     public var themes: [SkyTheme] { SkyTheme.presets + customThemes }
@@ -496,7 +491,6 @@ public final class Preferences {
               let stored = try? JSONDecoder().decode(Stored.self, from: data) else { return }
         searchEngine = stored.searchEngine ?? searchEngine
         customSearchTemplate = stored.customSearchTemplate ?? customSearchTemplate
-        appearance = stored.appearance ?? appearance
         godRays = stored.godRays ?? godRays
         archiveAfterHours = stored.archiveAfterHours ?? archiveAfterHours
         sidebarCollapsed = stored.sidebarCollapsed ?? sidebarCollapsed
@@ -523,19 +517,12 @@ public final class Preferences {
         sidebarWidth = stored.sidebarWidth ?? sidebarWidth
         shortcuts = stored.shortcuts ?? shortcuts
         newSpaceSetup = stored.newSpaceSetup ?? newSpaceSetup
-    }
-
-    public func applyAppearance() {
-        NSApp.appearance = switch appearance {
-        case .system: nil
-        case .light: NSAppearance(named: .aqua)
-        case .dark: NSAppearance(named: .darkAqua)
-        }
+        finishedWelcome = stored.finishedWelcome ?? finishedWelcome
     }
 
     private func save() {
         guard !loading, let fileURL else { return }
-        let stored = Stored(searchEngine: searchEngine, customSearchTemplate: customSearchTemplate, appearance: appearance, godRays: godRays,
+        let stored = Stored(searchEngine: searchEngine, customSearchTemplate: customSearchTemplate, godRays: godRays,
                             archiveAfterHours: archiveAfterHours, sidebarCollapsed: sidebarCollapsed, themeID: themeID,
                             customThemes: customThemes, hiddenSidebarItems: hiddenSidebarItems, sidebarVisibility: sidebarVisibility,
                             sceneOnNewTab: sceneOnNewTab, density: density,
@@ -545,7 +532,7 @@ public final class Preferences {
                             extensionPlacement: extensionPlacement, skyBackdrop: skyBackdrop,
                             highlightFocusedPane: highlightFocusedPane, autoPictureInPicture: autoPictureInPicture,
                             showMediaControls: showMediaControls, tidyInstruction: tidyInstruction, sidebarWidth: sidebarWidth,
-                            shortcuts: shortcuts, newSpaceSetup: newSpaceSetup)
+                            shortcuts: shortcuts, newSpaceSetup: newSpaceSetup, finishedWelcome: finishedWelcome)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)

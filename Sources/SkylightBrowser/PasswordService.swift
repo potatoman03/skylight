@@ -261,8 +261,8 @@ public final class PasswordService {
 
     /// The saved logins and cookies of a browser's profiles, read together so macOS asks only once.
     /// Demo mode's store is in memory, and a development run stays out of the login Keychain.
-    func signIns(from profiles: [ChromiumBrowser]) async throws -> [(credentials: [Credential], cookies: [WebCookie])] {
-        if store is MemoryCredentialStore { return profiles.map { _ in ([], []) } }
+    func signIns(from profiles: [ChromiumBrowser]) async throws -> [ChromiumSignIns] {
+        if store is MemoryCredentialStore { return profiles.map { _ in ChromiumSignIns() } }
         return try await Task.detached { try ChromiumPasswordImporter.readSignIns(profiles) }.value
     }
 

@@ -55,6 +55,8 @@ struct PasswordSettings: View {
                 Text("Stored in your login Keychain. Skylight offers to save a login after you sign in, and fills it from the key in the address field.")
             }
 
+            AutofillSection(profile: current)
+
             Section {
                 ForEach(browsers, id: \.id) { source in
                     LabeledContent(source.name) {

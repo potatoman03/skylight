@@ -69,6 +69,7 @@ enum MainMenu {
         ]))
 
         main.addItem(submenu("History", [
+            item("Show History", #selector(AppDelegate.showHistory(_:)), "y", target: target),
             item("Back", #selector(AppDelegate.goBack(_:)), "[", target: target),
             item("Forward", #selector(AppDelegate.goForward(_:)), "]", target: target),
             hidden(item("Back", #selector(AppDelegate.goBackWithArrow(_:)), String(UnicodeScalar(NSLeftArrowFunctionKey)!), target: target)),
@@ -109,6 +110,7 @@ enum MainMenu {
 
         let help = submenu("Help", [
             item("Keyboard Shortcuts", #selector(AppDelegate.showShortcuts(_:)), "/", target: target),
+            item("Welcome to Skylight", #selector(AppDelegate.showWelcome(_:)), "", target: target),
         ])
         NSApp.helpMenu = help.submenu
         main.addItem(help)

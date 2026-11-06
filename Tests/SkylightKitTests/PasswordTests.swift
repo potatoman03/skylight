@@ -141,6 +141,28 @@ import Testing
         #expect(credentials.isEmpty)
     }
 
+    @Test func aGoogleAccountsPasswordsComeToo() throws {
+        let saved = try makeLoginData(version: 23, rows: [
+            ("https://mac.example", "me", encrypt(Array("on this mac".utf8)), 0),
+            ("https://both.example", "me", encrypt(Array("old".utf8)), 0),
+        ])
+        let account = try makeLoginData(version: 23, rows: [
+            ("https://google.example", "me", encrypt(Array("in the account".utf8)), 0),
+            ("https://both.example", "me", encrypt(Array("new".utf8)), 0),
+        ])
+        let credentials = try ChromiumPasswordImporter.read(loginFiles: [account, saved], safeStorageKey: Self.key)
+        #expect(credentials.map(\.password).sorted() == ["in the account", "new", "on this mac"])
+    }
+
+    @Test func aProfileListsOnlyTheFilesItHas() throws {
+        let saved = try makeLoginData(version: 23, rows: [])
+        var browser = try #require(ChromiumBrowser.all.first)
+        browser.profileDirectory = saved.deletingLastPathComponent()
+        #expect(browser.loginFiles == [saved])
+        try Data(contentsOf: saved).write(to: browser.accountLoginData)
+        #expect(browser.loginFiles == [browser.accountLoginData, saved])
+    }
+
     @Test func missingFile() {
         #expect(throws: ChromiumImportError.self) {
             try ChromiumPasswordImporter.read(loginData: URL(fileURLWithPath: "/nonexistent/Login Data"), safeStorageKey: "k")

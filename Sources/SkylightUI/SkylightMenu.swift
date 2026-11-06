@@ -70,6 +70,7 @@ enum MenuContent {
                 MenuRow("Downloads", "arrow.down.circle") { browser.showDownloads() },
                 MenuRow("Extensions", "puzzlepiece.extension") { browser.openSettings("extensions") },
                 MenuRow("History", "clock.arrow.circlepath", submenu: [[
+                    MenuRow("Show History", "clock", "showHistory:"),
                     MenuRow("Back", "chevron.backward", "goBack:", enabled: status.canGoBack),
                     MenuRow("Forward", "chevron.forward", "goForward:", enabled: status.canGoForward),
                     MenuRow("Reopen Closed Tab", "arrow.uturn.backward", "reopenTab:", enabled: !state.closedTabs.isEmpty),

@@ -51,6 +51,7 @@ struct AddressField: View {
                 Text(tab.shortTitle)
                     .foregroundStyle(.secondary)
                     .fadingTail()
+                AutofillButton(url: tab.url)
                 LoginKeyButton(url: tab.url)
             }
         }

@@ -28,7 +28,8 @@ inline CefString ToCef(NSString* s) {
 /// The page scripts, as a CEF list.
 CefRefPtr<CefListValue> CurrentScriptsList();
 
-/// Every live browser (tabs and popups), so the engine can broadcast and shut down cleanly.
+/// Every live browser (tabs, popups and docked DevTools), so the engine can broadcast and shut down
+/// cleanly.
 void RegisterBrowser(CefRefPtr<CefBrowser> browser);
 void UnregisterBrowser(CefRefPtr<CefBrowser> browser);
 

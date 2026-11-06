@@ -22,7 +22,21 @@ public struct ChromiumBrowser: Sendable, Identifiable, Equatable {
     }
 
     public var loginData: URL { profileDirectory.appending(path: "Login Data") }
+    /// Passwords saved to a Google Account are kept apart from the ones saved on this Mac.
+    public var accountLoginData: URL { profileDirectory.appending(path: "Login Data For Account") }
+    /// Every file with this profile's passwords. The account's go first: it's the copy other
+    /// devices keep up to date.
+    public var loginFiles: [URL] {
+        [accountLoginData, loginData].filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
     public var bookmarks: URL { profileDirectory.appending(path: "Bookmarks") }
+    public var history: URL { profileDirectory.appending(path: "History") }
+    /// Addresses and cards.
+    public var webData: URL { profileDirectory.appending(path: "Web Data") }
+    /// Where a profile lists its extensions.
+    public var preferenceFiles: [URL] {
+        [profileDirectory.appending(path: "Secure Preferences"), profileDirectory.appending(path: "Preferences")]
+    }
     /// Newer versions moved this file into `Network`.
     public var cookies: URL {
         let moved = profileDirectory.appending(path: "Network/Cookies")
@@ -80,11 +94,28 @@ public enum ChromiumImportError: Error, LocalizedError, Equatable {
     }
 }
 
-/// Reads saved passwords from a Chromium profile's `Login Data` on macOS.
+/// What needs a browser's key to read.
+public struct ChromiumSignIns: Sendable {
+    public var credentials: [Credential] = []
+    public var cookies: [WebCookie] = []
+    public var autofill = AutofillData()
+
+    public init() {}
+}
+
+/// Reads saved passwords from a Chromium profile's `Login Data` files on macOS.
 public enum ChromiumPasswordImporter {
     /// Reads and decrypts every saved login. Rows that fail to decrypt are skipped.
     public static func read(loginData: URL, safeStorageKey: String, source: String? = nil) throws -> [Credential] {
         try withCopy(of: loginData) { db in try logins(in: db, safeStorageKey: safeStorageKey, source: source) }
+    }
+
+    /// Reads several files of one profile. A login in two of them counts once, from the first.
+    public static func read(loginFiles: [URL], safeStorageKey: String, source: String? = nil) throws -> [Credential] {
+        var seen = Set<String>()
+        return try loginFiles
+            .flatMap { try read(loginData: $0, safeStorageKey: safeStorageKey, source: source) }
+            .filter { seen.insert($0.id).inserted }
     }
 
     private static func logins(in db: OpaquePointer?, safeStorageKey: String, source: String?) throws -> [Credential] {
@@ -143,19 +174,29 @@ public enum ChromiumPasswordImporter {
 
     /// Reads the browser's passwords.
     public static func read(_ browser: ChromiumBrowser) throws -> [Credential] {
-        try read(loginData: browser.loginData, safeStorageKey: safeStorageKey(for: browser), source: browser.name)
+        let files = browser.loginFiles
+        return try read(loginFiles: files.isEmpty ? [browser.loginData] : files, safeStorageKey: safeStorageKey(for: browser), source: browser.name)
     }
 
-    /// Reads the passwords and cookies of a browser's profiles, in order, with one Keychain prompt
-    /// for all of them. Either can be missing: a profile that has never saved a password has no
-    /// `Login Data`.
-    public static func readSignIns(_ profiles: [ChromiumBrowser]) throws -> [(credentials: [Credential], cookies: [WebCookie])] {
+    /// Reads the passwords, cookies, addresses and cards of a browser's profiles, in order, with
+    /// one Keychain prompt for all of them. Any can be missing: a profile that has never saved a
+    /// password has no `Login Data`.
+    public static func readSignIns(_ profiles: [ChromiumBrowser]) throws -> [ChromiumSignIns] {
         guard let first = profiles.first else { return [] }
         let key = try safeStorageKey(for: first)
         let files = FileManager.default
         return try profiles.map { browser in
-            (files.fileExists(atPath: browser.loginData.path) ? try read(loginData: browser.loginData, safeStorageKey: key, source: browser.name) : [],
-             files.fileExists(atPath: browser.cookies.path) ? try ChromiumCookieImporter.read(cookies: browser.cookies, safeStorageKey: key) : [])
+            var found = ChromiumSignIns()
+            found.credentials = try read(loginFiles: browser.loginFiles, safeStorageKey: key, source: browser.name)
+            if files.fileExists(atPath: browser.cookies.path) {
+                found.cookies = try ChromiumCookieImporter.read(cookies: browser.cookies, safeStorageKey: key)
+            }
+            // Addresses and cards are a bonus: a format this version can't read shouldn't cost
+            // you your passwords.
+            if files.fileExists(atPath: browser.webData.path) {
+                found.autofill = (try? ChromiumAutofillImporter.read(webData: browser.webData, safeStorageKey: key)) ?? AutofillData()
+            }
+            return found
         }
     }
 

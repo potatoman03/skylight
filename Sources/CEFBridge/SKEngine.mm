@@ -301,11 +301,13 @@ void UnregisterBrowser(CefRefPtr<CefBrowser> browser) {
   skylight::g_scripts.clear();
   for (NSString* s in scripts) skylight::g_scripts.emplace_back(s.UTF8String);
 
-  // Existing renderer processes pick the new scripts up for their next navigation.
+  // Existing renderer processes pick the new scripts up for their next navigation. DevTools have
+  // a script of their own and don't take page scripts.
   for (auto& [id, browser] : skylight::g_browsers) {
     CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create(skylight::kScriptsMessage);
     msg->GetArgumentList()->SetList(0, skylight::CurrentScriptsList());
-    if (auto frame = browser->GetMainFrame()) frame->SendProcessMessage(PID_RENDERER, msg);
+    auto frame = browser->GetMainFrame();
+    if (frame && !frame->GetURL().ToString().starts_with("devtools:")) frame->SendProcessMessage(PID_RENDERER, msg);
   }
 }
 

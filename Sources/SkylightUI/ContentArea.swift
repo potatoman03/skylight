@@ -19,7 +19,8 @@ struct ContentArea: View {
         let bar = browser.commandBar
         // An empty page is always ready for an address, whether or not you're typing yet.
         let empty = browser.showsEmptyPage
-        let palette = empty || bar.isPresented && bar.mode != .editCurrent
+        // The welcome's sheet is smaller than the field, which would stick out from behind it.
+        let palette = !browser.showsWelcome && !browser.showHistory && (empty || bar.isPresented && bar.mode != .editCurrent)
         // With no tab, the window's own backdrop is the scene, so it stays put when the page moves.
         let scene = tab == nil && browser.preferences.showsScene(in: state.activeSpace, dark: scheme == .dark)
 

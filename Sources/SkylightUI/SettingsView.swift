@@ -348,7 +348,7 @@ private struct ImportSettings: View {
                             Button("Import") {
                                 importing = source
                                 Task {
-                                    results[source.rawValue] = await browser.importBrowser(source)
+                                    results[source.rawValue] = await browser.importBrowser(source).message
                                     importing = nil
                                 }
                             }
@@ -357,7 +357,7 @@ private struct ImportSettings: View {
                     }
                 }
             } footer: {
-                Text("Imports into the Space on screen, and adds to what's here. macOS asks before Skylight can read another browser's passwords and sign-ins, which stay on this Mac.")
+                Text("Imports into the Space on screen, and adds to what's here. \(Browser.ImportSource.staysBehind). macOS asks before Skylight can read another browser's passwords and sign-ins, which stay on this Mac.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
 

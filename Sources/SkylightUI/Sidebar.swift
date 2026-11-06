@@ -945,7 +945,7 @@ private struct SplitRow: View {
                         let lit = selected && focused == id
                         SplitPaneLabel(tab: tab, emphasized: lit)
                             .splitPane(id, in: glass, height: density.rowHeight - SplitPane.margin,
-                                       arriving: arriving)
+                                       arriving: arriving, controls: joining == nil)
                             .contentShape(.rect)
                             .onTapGesture { browser.store.send(.selectTab(id)) }
                             .help(tab.displayTitle)
@@ -1002,21 +1002,35 @@ enum SplitPane {
 
 extension View {
     /// One pane of a split in a sidebar row, as a pill of glass that morphs with its neighbours.
-    fileprivate func splitPane(_ id: TabID, in space: Namespace.ID, height: CGFloat, arriving: Bool = false) -> some View {
-        modifier(SplitPaneChrome(id: id, space: space, height: height, arriving: arriving))
+    fileprivate func splitPane(_ id: TabID, in space: Namespace.ID, height: CGFloat, arriving: Bool = false,
+                               controls: Bool = false) -> some View {
+        modifier(SplitPaneChrome(id: id, space: space, height: height, arriving: arriving, controls: controls))
     }
 }
 
-/// A pane's glass, its own hover, and the outline on one that's arriving.
+/// A pane's glass, its own hover, the outline on one that's arriving, and on hover its buttons.
 private struct SplitPaneChrome: ViewModifier {
     let id: TabID
     let space: Namespace.ID
     let height: CGFloat
     let arriving: Bool
+    /// Whether hovering shows the buttons. Not while a tab is held over the row.
+    let controls: Bool
+    @Environment(Browser.self) private var browser
     @State private var hovering = false
 
     func body(content: Content) -> some View {
-        content
+        HStack(spacing: 0) {
+            content
+            if hovering, controls {
+                button("minus", "Remove from Split") { browser.store.send(.leaveSplit(id)) }
+                // Out of the split first: a pinned tab only unloads, and shouldn't stay as a sleeping pane.
+                button("xmark", "Close Tab (⌘W)") {
+                    browser.store.send(.leaveSplit(id))
+                    browser.store.send(.closeTab(id))
+                }
+            }
+        }
             .padding(.horizontal, SplitPane.inset)
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: height)
@@ -1027,6 +1041,17 @@ private struct SplitPaneChrome: ViewModifier {
             .glassEffectTransition(.matchedGeometry)
             .animation(Motion.resolved(Motion.feedback), value: hovering)
             .onHover { hovering = $0 }
+    }
+
+    private func button(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
+        Button {
+            animate(Motion.travel, action)
+        } label: {
+            Image(systemName: symbol).font(.system(size: 10, weight: .bold))
+        }
+        .buttonStyle(RowActionStyle())
+        .help(help)
+        .transition(.scale(scale: 0.6).combined(with: .opacity))
     }
 }
 

@@ -7,6 +7,9 @@
 #include "Internal.h"
 #include "include/cef_client.h"
 #include "include/cef_cookie.h"
+#include "include/cef_devtools_message_observer.h"
+#include "include/cef_parser.h"
+#include "include/cef_registration.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
 #include "include/wrapper/cef_helpers.h"
@@ -374,22 +377,78 @@ NSArray<NSString*>* MediaKinds(uint32_t mask) {
 
 #pragma mark - Container view
 
-/// Keeps Chromium's child view filling the space the UI gives it.
+/// Keeps Chromium's child view filling the space the UI gives it, or sharing it with DevTools.
 @interface SKContainerView : NSView
+/// The page's view, once a side pane means the subviews aren't all the page.
+@property (nonatomic, weak) NSView* pageView;
+@property (nonatomic, strong) NSView* sideView;
+@property (nonatomic, strong) NSView* dividerView;
+- (void)layoutPanes;
+- (void)moveDividerTo:(CGFloat)x;
 @end
+
+/// The line between a page and its DevTools, and the handle for resizing them. It sits over both.
+@interface SKPaneDivider : NSView
+@end
+
+@implementation SKPaneDivider
+- (void)drawRect:(NSRect)dirtyRect {
+  [NSColor.separatorColor setFill];
+  NSRectFillUsingOperation(NSMakeRect(NSMidX(self.bounds) - 0.5, 0, 1, NSHeight(self.bounds)), NSCompositingOperationSourceOver);
+}
+- (void)resetCursorRects {
+  [self addCursorRect:self.bounds cursor:NSCursor.resizeLeftRightCursor];
+}
+- (BOOL)mouseDownCanMoveWindow {
+  return NO;
+}
+- (void)mouseDown:(NSEvent*)event {
+}
+- (void)mouseDragged:(NSEvent*)event {
+  SKContainerView* container = (SKContainerView*)self.superview;
+  [container moveDividerTo:[container convertPoint:event.locationInWindow fromView:nil].x];
+}
+@end
+
+namespace {
+constexpr CGFloat kDividerWidth = 7;
+constexpr CGFloat kSmallestSide = 300;
+constexpr CGFloat kSmallestPage = 320;
+/// The last width you gave DevTools, for the next tab that opens them.
+CGFloat g_sideWidth = 460;
+}  // namespace
 
 @implementation SKContainerView
 - (BOOL)isFlipped {
   return YES;
 }
 - (void)resizeSubviewsWithOldSize:(NSSize)oldSize {
-  for (NSView* v in self.subviews) v.frame = self.bounds;
+  [self layoutPanes];
+}
+- (void)layoutPanes {
+  NSRect bounds = self.bounds;
+  if (!self.sideView) {
+    for (NSView* v in self.subviews) v.frame = bounds;
+    return;
+  }
+  // In a narrow split pane the page keeps half, however wide DevTools were last.
+  CGFloat full = NSWidth(bounds);
+  CGFloat side = MAX(MIN(g_sideWidth, full - kSmallestPage), MIN(kSmallestSide, full / 2));
+  CGFloat edge = round(full - side);
+  self.pageView.frame = NSMakeRect(0, 0, edge, NSHeight(bounds));
+  self.sideView.frame = NSMakeRect(edge, 0, full - edge, NSHeight(bounds));
+  self.dividerView.frame = NSMakeRect(edge - kDividerWidth / 2, 0, kDividerWidth, NSHeight(bounds));
+  [self.window invalidateCursorRectsForView:self.dividerView];
+}
+- (void)moveDividerTo:(CGFloat)x {
+  g_sideWidth = NSWidth(self.bounds) - x;
+  [self layoutPanes];
 }
 // The keyboard belongs to the page inside. Chromium keeps a page's old views around, hidden, for
 // going back, so it's the one showing.
 - (BOOL)becomeFirstResponder {
   NSView* page = self;
-  for (NSView* next = self; next;) {
+  for (NSView* next = self.pageView ?: self; next;) {
     page = next;
     next = nil;
     for (NSView* v in page.subviews.reverseObjectEnumerator) {
@@ -405,10 +464,45 @@ NSArray<NSString*>* MediaKinds(uint32_t mask) {
 
 #pragma mark - Client
 
+namespace skylight {
+namespace {
+/// Stands in for the WebSocket Chromium's DevTools app connects to.
+constexpr char kDevToolsSocket[] = R"JS((() => {
+  const Native = window.WebSocket;
+  class Socket extends EventTarget {
+    constructor(url, protocols) {
+      if (url !== 'ws://skylight') return new Native(url, protocols);
+      super();
+      this.readyState = 1;
+      for (const type of ['open', 'message', 'error', 'close']) {
+        this.addEventListener(type, event => this['on' + type]?.(event));
+      }
+      window.cefQuery({
+        request: '',
+        persistent: true,
+        onSuccess: data => this.dispatchEvent(new MessageEvent('message', {data})),
+        onFailure: () => {},
+      });
+      setTimeout(() => this.dispatchEvent(new Event('open')));
+    }
+    send(data) {
+      window.cefQuery({request: data, onSuccess: () => {}, onFailure: () => {}});
+    }
+    close() {}
+  }
+  Object.assign(Socket, {CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3});
+  window.WebSocket = Socket;
+})();)JS";
+}  // namespace
+}  // namespace skylight
+
 @interface SKBrowser ()
 @property (nonatomic, weak) id<SKBrowserDelegate> delegate;
 - (void)didCreate:(CefRefPtr<CefBrowser>)browser;
 - (void)didClose;
+- (void)dockDevToolsAt:(CefPoint)point;
+- (void)didCreateDevTools:(CefRefPtr<CefBrowser>)browser;
+- (void)didCloseDevTools;
 @end
 
 namespace skylight {
@@ -425,6 +519,7 @@ class BrowserClient : public CefClient,
                       public CefDownloadHandler,
                       public CefContextMenuHandler,
                       public CefKeyboardHandler,
+                      public CefDevToolsMessageObserver,
                       public CefMessageRouterBrowserSide::Handler {
  public:
   explicit BrowserClient(SKBrowser* owner) : owner_(owner) {
@@ -450,6 +545,7 @@ class BrowserClient : public CefClient,
   // Chromium's menu, plus Inspect at the end as in Chrome.
   void OnBeforeContextMenu(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> frame, CefRefPtr<CefContextMenuParams> params,
                            CefRefPtr<CefMenuModel> model) override {
+    if (IsDevTools(b)) return;
     if (model->GetCount() > 0) model->AddSeparator();
     model->AddItem(kInspect, "Inspect");
   }
@@ -457,10 +553,15 @@ class BrowserClient : public CefClient,
   bool OnContextMenuCommand(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> frame, CefRefPtr<CefContextMenuParams> params,
                             int command_id, EventFlags event_flags) override {
     if (command_id != kInspect) return false;
-    CefWindowInfo info;
-    CefBrowserSettings settings;
     // Opens on the element you clicked.
-    b->GetHost()->ShowDevTools(info, nullptr, settings, CefPoint(params->GetXCoord(), params->GetYCoord()));
+    CefPoint point(params->GetXCoord(), params->GetYCoord());
+    if (IsMain(b)) {
+      [owner_ dockDevToolsAt:point];
+    } else {
+      CefWindowInfo info;
+      CefBrowserSettings settings;
+      b->GetHost()->ShowDevTools(info, nullptr, settings, point);
+    }
     return true;
   }
 
@@ -471,6 +572,45 @@ class BrowserClient : public CefClient,
 
   // Popups (OAuth windows and the like) go to Chromium's default window, owned by this client.
   bool IsMain(CefRefPtr<CefBrowser> b) const { return mainID_ == b->GetIdentifier(); }
+  bool IsDevTools(CefRefPtr<CefBrowser> b) const { return devToolsID_ == b->GetIdentifier(); }
+
+  // MARK: DevTools
+
+  /// Protocol messages from here up are Skylight's own, and DevTools never hear their replies.
+  static constexpr int kOwnMessages = 1 << 30;
+  int NextOwnMessage() { return nextOwnMessage_++; }
+
+  /// The next browser to be created is `page`'s DevTools.
+  void ExpectDevTools(CefRefPtr<CefBrowser> page, CefPoint point) {
+    expectingDevTools_ = true;
+    inspected_ = page;
+    devToolsObserver_ = page->GetHost()->AddDevToolsMessageObserver(this);
+    inspectPoint_ = point;
+  }
+
+  /// Shows the element at `point` in DevTools, once they're ready for it.
+  void InspectElementAt(CefPoint point) {
+    inspectPoint_ = point;
+    if (!devToolsReady_ || (point.x == 0 && point.y == 0)) return;
+    inspectPoint_ = CefPoint();
+    CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+    params->SetInt("x", point.x);
+    params->SetInt("y", point.y);
+    inspectMessage_ = NextOwnMessage();
+    inspected_->GetHost()->ExecuteDevToolsMethod(inspectMessage_, "DOM.getNodeForLocation", params);
+  }
+
+  /// Everything from the page for DevTools. Nobody else here needs the replies.
+  bool OnDevToolsMessage(CefRefPtr<CefBrowser> b, const void* message, size_t size) override {
+    const std::string text(static_cast<const char*>(message), size);
+    const int id = text.starts_with("{\"id\":") ? atoi(text.c_str() + 6) : 0;
+    if (id < kOwnMessages) {
+      if (devToolsReceiver_) devToolsReceiver_->Success(text);
+    } else if (id == inspectMessage_) {
+      RevealInspectedNode(text);
+    }
+    return true;
+  }
 
   // MARK: Display
 
@@ -509,7 +649,7 @@ class BrowserClient : public CefClient,
 
   // ⌘← and ⌘→ on a page, as in Safari, once it has passed on them: a text field in it keeps them.
   bool OnKeyEvent(CefRefPtr<CefBrowser> b, const CefKeyEvent& event, CefEventHandle os_event) override {
-    if (event.type != KEYEVENT_RAWKEYDOWN) return false;
+    if (event.type != KEYEVENT_RAWKEYDOWN || IsDevTools(b)) return false;
     const uint32_t keys = EVENTFLAG_COMMAND_DOWN | EVENTFLAG_SHIFT_DOWN | EVENTFLAG_CONTROL_DOWN | EVENTFLAG_ALT_DOWN;
     if ((event.modifiers & keys) != EVENTFLAG_COMMAND_DOWN) return false;
     if (event.windows_key_code == 0x25 /* VK_LEFT */) {
@@ -553,6 +693,13 @@ class BrowserClient : public CefClient,
 
   void OnAfterCreated(CefRefPtr<CefBrowser> b) override {
     CEF_REQUIRE_UI_THREAD();
+    if (expectingDevTools_ && mainID_ != 0) {
+      expectingDevTools_ = false;
+      devToolsID_ = b->GetIdentifier();
+      RegisterBrowser(b);
+      [owner_ didCreateDevTools:b];
+      return;
+    }
     RegisterBrowser(b);
     if (mainID_ == 0) {
       mainID_ = b->GetIdentifier();
@@ -563,7 +710,7 @@ class BrowserClient : public CefClient,
   bool DoClose(CefRefPtr<CefBrowser> b) override {
     CEF_REQUIRE_UI_THREAD();
     // Popups live in CEF's own window: let it close that window.
-    if (!IsMain(b)) return false;
+    if (!IsMain(b) && !IsDevTools(b)) return false;
     // Tab browsers live in Skylight's window. The default would send performClose: to that window,
     // so instead tear down the browser's view, which completes the close.
     NSView* view = (__bridge NSView*)b->GetHost()->GetWindowHandle();
@@ -574,6 +721,13 @@ class BrowserClient : public CefClient,
   void OnBeforeClose(CefRefPtr<CefBrowser> b) override {
     CEF_REQUIRE_UI_THREAD();
     router_->OnBeforeClose(b);
+    if (IsDevTools(b)) {
+      devToolsID_ = 0;
+      LeavePage();
+      UnregisterBrowser(b);
+      [owner_ didCloseDevTools];
+      return;
+    }
     UnregisterBrowser(b);
     if (IsMain(b)) [owner_ didClose];
   }
@@ -595,6 +749,10 @@ class BrowserClient : public CefClient,
 
   bool OnQuery(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> frame, int64_t query_id, const CefString& request,
                bool persistent, CefRefPtr<Callback> callback) override {
+    if (IsDevTools(b)) {
+      if (!frame->IsMain()) return false;
+      return OnQueryFromDevTools(query_id, request.ToString(), persistent, callback);
+    }
     // Only a tab's own page, never a frame inside it: an ad or embed from another site would
     // otherwise speak with the page's address.
     if (!IsMain(b) || !frame->IsMain()) return false;
@@ -605,6 +763,10 @@ class BrowserClient : public CefClient,
                          else callback->Success(ToCef(result ?: @"null"));
                        }];
     return true;
+  }
+
+  void OnQueryCanceled(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> frame, int64_t query_id) override {
+    if (query_id == devToolsQuery_) devToolsReceiver_ = nullptr;
   }
 
   // MARK: Permissions
@@ -676,8 +838,64 @@ class BrowserClient : public CefClient,
   }
 
  private:
+  /// DevTools hold one query open to hear from the page, and send each message as its own.
+  bool OnQueryFromDevTools(int64_t query_id, const std::string& message, bool persistent,
+                           CefRefPtr<Callback> callback) {
+    if (persistent) {
+      devToolsQuery_ = query_id;
+      devToolsReceiver_ = callback;
+      return true;
+    }
+    if (inspected_) inspected_->GetHost()->SendDevToolsMessage(message.data(), message.size());
+    callback->Success("");
+    // The last thing they turn on before they can show an element.
+    if (message.find("\"method\":\"Overlay.enable\"") != std::string::npos) {
+      devToolsReady_ = true;
+      InspectElementAt(inspectPoint_);
+    }
+    return true;
+  }
+
+  void RevealInspectedNode(const std::string& reply) {
+    CefRefPtr<CefValue> value = CefParseJSON(reply, JSON_PARSER_RFC);
+    CefRefPtr<CefDictionaryValue> result = value ? value->GetDictionary()->GetDictionary("result") : nullptr;
+    if (!result || !devToolsReceiver_) return;
+    devToolsReceiver_->Success("{\"method\":\"Overlay.inspectNodeRequested\",\"params\":{\"backendNodeId\":" +
+                               std::to_string(result->GetInt("backendNodeId")) + "}}");
+  }
+
+  /// The page stays attached after DevTools go, so undo what would still show in it: a paused
+  /// script, a highlight, an emulated screen, a turned-off cache.
+  void LeavePage() {
+    if (inspected_ && inspected_->IsValid()) {
+      CefRefPtr<CefBrowserHost> host = inspected_->GetHost();
+      host->ExecuteDevToolsMethod(NextOwnMessage(), "Debugger.disable", nullptr);
+      host->ExecuteDevToolsMethod(NextOwnMessage(), "Overlay.disable", nullptr);
+      host->ExecuteDevToolsMethod(NextOwnMessage(), "Emulation.clearDeviceMetricsOverride", nullptr);
+      CefRefPtr<CefDictionaryValue> cache = CefDictionaryValue::Create();
+      cache->SetBool("cacheDisabled", false);
+      host->ExecuteDevToolsMethod(NextOwnMessage(), "Network.setCacheDisabled", cache);
+    }
+    inspected_ = nullptr;
+    devToolsObserver_ = nullptr;
+    devToolsReceiver_ = nullptr;
+    devToolsQuery_ = 0;
+    devToolsReady_ = false;
+    inspectPoint_ = CefPoint();
+  }
+
   __weak SKBrowser* owner_;
   int mainID_ = 0;
+  int devToolsID_ = 0;
+  bool expectingDevTools_ = false;
+  bool devToolsReady_ = false;
+  CefRefPtr<CefBrowser> inspected_;
+  CefRefPtr<CefRegistration> devToolsObserver_;
+  CefRefPtr<Callback> devToolsReceiver_;
+  int64_t devToolsQuery_ = 0;
+  CefPoint inspectPoint_;
+  int inspectMessage_ = 0;
+  int nextOwnMessage_ = kOwnMessages;
   CefRefPtr<CefMessageRouterBrowserSide> router_;
 
   IMPLEMENT_REFCOUNTING(BrowserClient);
@@ -690,6 +908,7 @@ class BrowserClient : public CefClient,
 
 @implementation SKBrowser {
   CefRefPtr<CefBrowser> _browser;
+  CefRefPtr<CefBrowser> _devTools;
   CefRefPtr<skylight::BrowserClient> _client;
   NSString* _pendingURL;
   BOOL _pendingHidden;
@@ -719,6 +938,7 @@ class BrowserClient : public CefClient,
   NSView* child = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
   child.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
   child.frame = _view.bounds;
+  ((SKContainerView*)_view).pageView = child;
   if (_pendingURL) {
     [self loadURL:_pendingURL];
     _pendingURL = nil;
@@ -729,6 +949,7 @@ class BrowserClient : public CefClient,
 - (void)didClose {
   _isClosed = YES;
   _browser = nullptr;
+  _devTools = nullptr;
   [_view removeFromSuperview];
   [self.delegate browserDidClose:self];
   _client = nullptr;
@@ -778,7 +999,7 @@ class BrowserClient : public CefClient,
   params->SetString("expression", skylight::ToCef(script));
   params->SetBool("userGesture", true);
   params->SetBool("awaitPromise", false);
-  _browser->GetHost()->ExecuteDevToolsMethod(0, "Runtime.evaluate", params);
+  _browser->GetHost()->ExecuteDevToolsMethod(_client->NextOwnMessage(), "Runtime.evaluate", params);
 }
 
 - (void)exitFullscreen {
@@ -788,17 +1009,75 @@ class BrowserClient : public CefClient,
 - (void)setHidden:(BOOL)hidden {
   _pendingHidden = hidden;
   if (_browser) _browser->GetHost()->WasHidden(hidden);
+  if (_devTools) _devTools->GetHost()->WasHidden(hidden);
 }
 
 - (void)showDevTools {
   if (!_browser) return;
+  if (_devTools) {
+    _devTools->GetHost()->CloseBrowser(true);
+  } else {
+    [self dockDevToolsAt:CefPoint()];
+  }
+}
+
+// DevTools beside the page are an ordinary browser in a pane of this view, showing Chromium's
+// DevTools app. CEF stops the app if asked to open its own DevTools in a parent view, and they take
+// no clicks or keys anywhere but their own window. So the app is told to connect to a WebSocket that
+// is really `kDevToolsSocket`, which passes its messages to the page over CEF's protocol calls. No
+// port is opened. If they're open already, this just inspects `point`.
+- (void)dockDevToolsAt:(CefPoint)point {
+  if (!_browser) return;
+  if (_devTools) {
+    _client->InspectElementAt(point);
+    return;
+  }
+  SKContainerView* container = (SKContainerView*)_view;
+  if (container.sideView) return;  // On their way.
+  SKContainerView* side = [[SKContainerView alloc] initWithFrame:NSZeroRect];
+  side.autoresizesSubviews = YES;
+  container.sideView = side;
+  container.dividerView = [[SKPaneDivider alloc] initWithFrame:NSZeroRect];
+  [container addSubview:container.sideView];
+  [container addSubview:container.dividerView];
+  [container layoutPanes];
+
   CefWindowInfo info;
+  info.SetAsChild((__bridge void*)side, CefRect(0, 0, NSWidth(side.bounds), NSHeight(side.bounds)));
   CefBrowserSettings settings;
-  _browser->GetHost()->ShowDevTools(info, nullptr, settings, CefPoint());
+  CefRefPtr<CefListValue> scripts = CefListValue::Create();
+  scripts->SetString(0, skylight::kDevToolsSocket);
+  CefRefPtr<CefDictionaryValue> extra = CefDictionaryValue::Create();
+  extra->SetList(skylight::kScriptsKey, scripts);
+  _client->ExpectDevTools(_browser, point);
+  CefBrowserHost::CreateBrowser(info, _client, "devtools://devtools/bundled/devtools_app.html?ws=skylight", settings,
+                                extra, _browser->GetHost()->GetRequestContext());
+}
+
+- (void)didCreateDevTools:(CefRefPtr<CefBrowser>)browser {
+  _devTools = browser;
+  NSView* child = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
+  child.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+  [(SKContainerView*)((SKContainerView*)_view).sideView layoutPanes];
+  if (_pendingHidden) browser->GetHost()->WasHidden(true);
+}
+
+- (void)didCloseDevTools {
+  _devTools = nullptr;
+  SKContainerView* container = (SKContainerView*)_view;
+  [container.sideView removeFromSuperview];
+  [container.dividerView removeFromSuperview];
+  container.sideView = nil;
+  container.dividerView = nil;
+  [container layoutPanes];
+  [_view.window makeFirstResponder:_view];
 }
 
 - (void)close {
-  if (_browser) _browser->GetHost()->CloseBrowser(true);
+  if (_browser) {
+    if (_devTools) _devTools->GetHost()->CloseBrowser(true);
+    _browser->GetHost()->CloseBrowser(true);
+  }
 }
 
 @end

@@ -62,6 +62,8 @@ Rules the map implies:
 | Packages and boosts | `SkylightKit` (manifest, matching, scripts), `PackageService` in SkylightBrowser. |
 | Chrome extensions | Manifest parsing in `SkylightKit/Extensions`. Install, update and the store in `ExtensionService`. The tabs/windows shim in `SkylightCEF/CEFExtensions.swift`. UI in `SkylightUI/Extensions.swift`. |
 | Passwords | Storage and importers in `SkylightKit/Passwords`, flows (fill, save offer, Touch ID) in `PasswordService`, UI in `SkylightUI/Passwords.swift`. |
+| Addresses and cards | Storage, the Chromium importer and the fill script in `SkylightKit/Autofill`, flows in `AutofillService`, UI in `SkylightUI/Autofill.swift`. |
+| History | `HistoryStore` and the Chromium importer in `SkylightKit/History`, recorded by `Browser`, UI in `SkylightUI/Autofill.swift`. Never give agents a way to read it. |
 | An agent tool | `AgentService.builtInTools()` in SkylightBrowser, registered on `ToolHub`. Mark anything that changes something as a write, so the user gets an approval alert. Test the protocol side in `Tests/SkylightMCPTests`. |
 | MCP transport, auth, origin checks | `SkylightMCP`. |
 | A prompt (permission, dialog, approval) | A `Prompt` case in `PromptCenter`, shown by the alert host in `ContentArea.swift`. |
@@ -121,11 +123,21 @@ Rules the map implies:
   skylight`) signs every release; installed copies refuse anything else. Never commit or print
   it, and don't change `SUPublicEDKey` in `bundle.sh` without it, or installed copies stop
   updating.
+- **A card only goes where you just sent it.** Filling happens from Skylight's UI, never because a
+  page asked. A card takes Touch ID or the Mac's password, goes only to https, and is dropped if the
+  tab moved during the prompt. Choosing a fill hands those values to that page: the script skips
+  hidden fields, but it runs in the page, so don't treat that as a boundary. Listings hold no card
+  numbers; a fill reads one when it's needed.
 - **Never read or print secrets.** Password fields and card fields stay out of agent reads. When
   debugging the password code, use demo mode, never your own Keychain items. Never commit
   `.signing`.
 - **Chromium profile folders sit directly inside `Engine/`** (`Default`, `Profile-<id>`).
   Chromium rejects nested ones.
+- **Docked DevTools are an ordinary browser in a pane of the tab.** `dockDevToolsAt:` loads
+  Chromium's DevTools app with `ws=skylight`, and a script swaps its WebSocket for `cefQuery`, so
+  messages reach the page through `SendDevToolsMessage` and no port opens. `ShowDevTools` with a
+  parent view stops the app, and its view takes no input outside its own window, so only popups
+  use it. Skylight's own protocol calls take `NextOwnMessage()`, or DevTools get their replies.
 - **Every profile runs every extension, but only what Chromium got at launch.**
   `--load-extension` reaches all profiles and can't be undone while running; the DevTools pipe's
   `Extensions.loadUnpacked` reaches `Default` only, and `Extensions.uninstall` refuses anything

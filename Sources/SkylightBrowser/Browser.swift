@@ -32,6 +32,10 @@ public final class Browser {
     public var renameTab: TabID?
     /// Whether the keyboard shortcuts sheet is up.
     public var showShortcuts = false
+    /// The welcome sheet is up.
+    public var showsWelcome = false
+    /// The history sheet is up.
+    public var showHistory = false
     /// Whether Skylight's menu, from the Space button in the sidebar, is open.
     public var showsMainMenu = false
     /// The New Space sheet, while it's up.
@@ -44,16 +48,22 @@ public final class Browser {
     @ObservationIgnored public var showWindow: @MainActor () -> Void = {}
 
     public var omnibox: Omnibox { preferences.omnibox }
+    public let autofill: AutofillService
+    @ObservationIgnored public let history: HistoryStore
+    /// Where each tab last went, so a title lands on the right page and a reload isn't a visit.
+    @ObservationIgnored private var lastVisit: [TabID: URL] = [:]
     @ObservationIgnored private let engine: WebEngine
     @ObservationIgnored private let mcp: MCPServer
 
-    public init(engine: WebEngine, paths: AppPaths, version: String, credentials: CredentialStore) {
+    public init(engine: WebEngine, paths: AppPaths, version: String, credentials: CredentialStore, autofillStore: AutofillStore) {
         self.engine = engine
         let preferences = Preferences(fileURL: paths.preferencesFile)
         self.preferences = preferences
         self.passwords = PasswordService(store: credentials, toasts: toasts,
                                          neverFile: paths.root.appending(path: "password-exceptions.json"))
         self.extensions = ExtensionService(host: engine.extensions, root: paths.root, toasts: toasts)
+        self.autofill = AutofillService(store: autofillStore, toasts: toasts)
+        self.history = HistoryStore(file: paths.root.appending(path: "History.sqlite"))
         let store = BrowserStore(persistence: JSONFileStateStore(fileURL: paths.stateFile))
         self.store = store
         self.pages = PageCoordinator(engine: engine, paths: paths, store: store)
@@ -68,7 +78,11 @@ public final class Browser {
         pages.archiveAfter = { preferences.archiveAfterHours * 60 * 60 }
         store.effectHandler = pages
         pages.sink = self
+        pages.onVisit = { [weak self] id, url, title in self?.noteVisit(id, url: url, title: title) }
+        autofill.profiles = { store.state.profiles.filter { $0.passwordsFrom == nil }.map(\.id) }
+        autofill.reload()
         pages.onPageGone = { [weak self] id, tabClosed in
+            self?.lastVisit[id] = nil
             self?.agents.forgetTab(id)
             self?.passwords.pageWentAway(id)
             self?.media.pageWentAway(id)
@@ -118,7 +132,6 @@ public final class Browser {
     public func start() {
         // Settings used to open as a tab; it has its own window now.
         for tab in store.state.tabs.values where tab.url.isSkylightPage { store.send(.removeTab(tab.id)) }
-        preferences.applyAppearance()
         packages.start()
         updatePageScripts()
         startPages()
@@ -287,10 +300,40 @@ public final class Browser {
         passwords.fill(credential, in: page, url: store.state.tabs[id]?.url)
     }
 
-    /// Deletes a profile. Its Spaces and saved passwords move to the default one.
+    /// Fills the selected tab's form with a saved address.
+    public func fillAddress(_ address: AutofillAddress) {
+        guard let id = store.state.selectedTabID, let page = pages.page(for: id) else { return }
+        autofill.fill(address, in: page, url: store.state.tabs[id]?.url)
+    }
+
+    /// Fills the selected tab's form with a saved card, once you've confirmed it's you.
+    public func fillCard(_ card: AutofillCard) async {
+        guard let id = store.state.selectedTabID, let page = pages.page(for: id) else { return }
+        let profile = store.state.passwordProfile(for: store.state.profileID(forTab: id))
+        await autofill.fill(card, in: page, profile: profile, confirm: { await self.passwords.authenticate($0) },
+                            currentURL: { self.store.state.tabs[id]?.url })
+    }
+
+    private func noteVisit(_ id: TabID, url: URL?, title: String?) {
+        let profile = store.state.profileID(forTab: id)
+        if let url, !["http", "https"].contains(url.scheme ?? "") {
+            // Skylight's own pages aren't history, and their titles aren't the last page's.
+            lastVisit[id] = nil
+        } else if let url, url != lastVisit[id] {
+            lastVisit[id] = url
+            history.record(url, title: title ?? "", in: profile)
+        } else if let title, !title.isEmpty, let url = lastVisit[id] {
+            history.setTitle(title, of: url, in: profile)
+        }
+    }
+
+    /// Deletes a profile and its history. Its Spaces, passwords, addresses and cards move to the
+    /// default one.
     public func deleteProfile(_ id: ProfileID) {
         guard id != .standard else { return }
         passwords.moveLogins(from: id)
+        autofill.move(from: id)
+        history.clear(id)
         store.send(.deleteProfile(id))
     }
 
@@ -374,26 +417,51 @@ public final class Browser {
             }
         }
 
+        private static let everything = "passwords, sign-ins, extensions, history, addresses and cards"
+
         /// Where the same browser keeps its logins and cookies.
         public var chromium: ChromiumBrowser? { ChromiumBrowser.all.first { $0.id == rawValue.lowercased() } }
 
         public var isAvailable: Bool { FileManager.default.fileExists(atPath: file.path) || chromium?.isInstalled == true }
 
+        /// The browsers on this Mac that can be imported from.
+        public static var available: [ImportSource] { allCases.filter(\.isAvailable) }
+
+        /// The one to suggest: the Mac's default browser if it can be imported, else Chrome, as
+        /// the likeliest to hold someone's things.
+        public static var preferred: ImportSource? {
+            let current = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!)
+                .flatMap { Bundle(url: $0)?.bundleIdentifier }
+            let found = available
+            return found.first { $0.chromium?.bundleIDs.contains(current ?? "") == true }
+                ?? found.first { $0 == .chrome } ?? found.first
+        }
+
+        /// What can't leave, whichever the browser.
+        public static let staysBehind = "Passkeys and cards kept in Google Pay stay behind"
+
         /// What comes over, for the import screen.
         public var summary: String {
             switch self {
-            case .arc: "Spaces, profiles, pinned tabs, favorites, passwords and sign-ins"
-            case .aside: "Sidebar folders as Spaces, bookmarks, passwords and sign-ins"
-            default: "Bookmarks bar as favorites, folders as Spaces, passwords and sign-ins"
+            case .arc: "Spaces, pinned tabs, favorites, \(Self.everything)"
+            case .aside: "Sidebar folders as Spaces, bookmarks, \(Self.everything)"
+            default: "Bookmarks, \(Self.everything)"
             }
         }
     }
 
+    /// How an import went, in a sentence.
+    public struct ImportResult: Sendable {
+        public var message: String
+        /// Something didn't come over, and the message says what.
+        public var failed: Bool
+    }
+
     /// Brings Spaces, tabs, passwords and sign-ins over from another browser, into the Space on
     /// screen. Arc's other profiles become profiles here, keeping their own. macOS asks before
-    /// Skylight can read that browser's key. Returns a summary.
+    /// Skylight can read that browser's key. `announcing` shows the result as a toast too.
     @discardableResult
-    public func importBrowser(_ source: ImportSource) async -> String {
+    public func importBrowser(_ source: ImportSource, announcing: Bool = true) async -> ImportResult {
         var problem: String?
         var tabs = 0
         let profilesBefore = store.state.profiles.count
@@ -423,6 +491,9 @@ public final class Browser {
 
         var logins = 0
         var sites = Set<String>()
+        var addresses = 0
+        var cards = 0
+        var pagesFound = 0
         do {
             let found = try await passwords.signIns(from: targets.map(\.browser))
             for (target, signIns) in zip(targets, found) {
@@ -430,11 +501,25 @@ public final class Browser {
                 if await pages.addCookies(signIns.cookies, to: target.profile) > 0 {
                     sites.formUnion(signIns.cookies.map(\.host))
                 }
+                let added = autofill.merge(signIns.autofill, into: store.state.passwordProfile(for: target.profile))
+                addresses += added.addresses
+                cards += added.cards
             }
         } catch {
             let reason = (error as? LocalizedError)?.errorDescription ?? "Couldn't read them."
-            problem = "Passwords and sign-ins stayed behind. \(reason)"
+            problem = "Passwords, sign-ins, addresses and cards stayed behind. \(reason)"
         }
+
+        // These two need no key, so they come over even if that was refused.
+        for target in targets {
+            let file = target.browser.history
+            let entries = (try? await Task.detached { try ChromiumHistoryImporter.read(history: file) }.value) ?? []
+            pagesFound += history.add(entries, to: target.profile)
+        }
+        let wanted = targets.flatMap { target in
+            ChromiumExtensions.storeIDs(in: target.browser.preferenceFiles.compactMap { try? Data(contentsOf: $0) })
+        }
+        let adopted = await extensions.adopt(wanted)
 
         var parts: [String] = []
         let profiles = store.state.profiles.count - profilesBefore
@@ -442,15 +527,37 @@ public final class Browser {
         if tabs > 0 { parts.append("\(tabs) tab\(tabs == 1 ? "" : "s")") }
         if logins > 0 { parts.append("\(logins) password\(logins == 1 ? "" : "s")") }
         if !sites.isEmpty { parts.append("sign-ins for \(sites.count) site\(sites.count == 1 ? "" : "s")") }
+        if adopted > 0 { parts.append("\(adopted) extension\(adopted == 1 ? "" : "s")") }
+        if addresses > 0 { parts.append("\(addresses) address\(addresses == 1 ? "" : "es")") }
+        if cards > 0 { parts.append("\(cards) card\(cards == 1 ? "" : "s")") }
+        if pagesFound > 0 { parts.append("\(pagesFound.formatted()) page\(pagesFound == 1 ? "" : "s") of history") }
         let summary = parts.isEmpty ? nil : "Imported " + ListFormatter.localizedString(byJoining: parts) + " from \(source.rawValue)"
         let message = [summary, problem].compactMap(\.self).joined(separator: ". ")
         guard !message.isEmpty else {
             let same = "Everything from \(source.rawValue) is already here"
-            toasts.show(same, symbol: "square.and.arrow.down")
-            return same
+            if announcing { toasts.show(same, symbol: "square.and.arrow.down") }
+            return ImportResult(message: same, failed: false)
         }
-        toasts.show(message, symbol: problem == nil ? "square.and.arrow.down" : "exclamationmark.triangle")
-        return message
+        if announcing { toasts.show(message, symbol: problem == nil ? "square.and.arrow.down" : "exclamationmark.triangle") }
+        return ImportResult(message: message, failed: problem != nil)
+    }
+
+    /// Opens the welcome on a new install, and returns whether it did. Anyone else never needs it.
+    public func welcomeIfNew() -> Bool {
+        guard !preferences.finishedWelcome else { return false }
+        guard WelcomeStep.isDue(for: store.state) else {
+            preferences.finishedWelcome = true
+            return false
+        }
+        showsWelcome = true
+        return true
+    }
+
+    /// Closes the welcome, and leaves you ready to type if nothing's open.
+    public func finishWelcome() {
+        showsWelcome = false
+        preferences.finishedWelcome = true
+        if store.state.selectedTab == nil { presentCommandBar(.newTab) }
     }
 
 
@@ -595,6 +702,16 @@ extension Browser: CommandSource {
             }
         }
         rows += tabRows.sorted { $0.0 > $1.0 }.prefix(query.isEmpty ? 5 : 6).map(\.1)
+
+        // Where you've been, unless it's open already.
+        let open = Set(state.tabs.values.map(\.url))
+        for entry in history.suggestions(for: query, in: state.activeSpace.profileID, limit: 8).filter({ !open.contains($0.url) }).prefix(4) {
+            let url = entry.url
+            rows.append(CommandItem(id: "history-\(entry.id)", kind: .address, title: entry.displayTitle,
+                                    subtitle: url.host() ?? url.absoluteString, symbol: "clock", pageURL: url) { [weak self] in
+                if split { self?.openInSplit(url) } else { self?.open(url, inNewTab: newTab) }
+            })
+        }
 
         // Commands.
         var commands: [CommandItem] = []

@@ -223,12 +223,6 @@ struct AppearanceSettings: View {
 
         Form {
             Section {
-                Picker("Appearance", selection: $prefs.appearance) {
-                    ForEach(Preferences.Appearance.allCases) { Text($0.name).tag($0) }
-                }
-                .pickerStyle(.segmented)
-            }
-            Section {
                 if spaces.count > 1 {
                     ScrollView(.horizontal) {
                         HStack(spacing: 6) {
