@@ -79,6 +79,8 @@ public enum BrowserReducer {
             return state.tabs[id] == nil ? .ignored : ReduceResult(effects: [.goForward(id)])
         case let .reload(id):
             return state.tabs[id] == nil ? .ignored : ReduceResult(effects: [.reload(id)])
+        case let .hardReload(id):
+            return state.tabs[id] == nil ? .ignored : ReduceResult(effects: [.hardReload(id)])
         case let .stop(id):
             return state.tabs[id] == nil ? .ignored : ReduceResult(effects: [.stop(id)])
 

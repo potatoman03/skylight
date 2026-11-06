@@ -10,6 +10,7 @@ struct ContentArea: View {
     @Environment(Browser.self) private var browser
     @Environment(TabDragSession.self) private var drag
     @Environment(AddressAnchor.self) private var anchor
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let state = browser.store.state
@@ -17,13 +18,16 @@ struct ContentArea: View {
         let split = tab.flatMap { state.activeSpace.split(containing: $0.id) }
         let bar = browser.commandBar
         // An empty page is always ready for an address, whether or not you're typing yet.
-        let palette = tab == nil || bar.isPresented && bar.mode != .editCurrent
+        let empty = browser.showsEmptyPage
+        let palette = empty || bar.isPresented && bar.mode != .editCurrent
+        // With no tab, the window's own backdrop is the scene, so it stays put when the page moves.
+        let scene = tab == nil && browser.preferences.showsScene(in: state.activeSpace, dark: scheme == .dark)
 
         GeometryReader { geo in
             let layout = PaneLayout(split: split, focused: tab?.id, size: geo.size, gap: PaneStyle.gap)
             ZStack(alignment: .topLeading) {
                 // A split's panes sit on the window's backdrop, which shows around them.
-                if !layout.isSplit { Color(nsColor: .windowBackgroundColor) }
+                if !layout.isSplit, !scene { Color(nsColor: .windowBackgroundColor) }
                 PageHost(view: browser.pages.hostView)
 
                 if let split, layout.isSplit, browser.pages.fullscreenTabID == nil {
@@ -43,10 +47,9 @@ struct ContentArea: View {
         .overlay(alignment: .topLeading) { SuggestionsList() }
         .overlay {
             ZStack {
-                // A new tab opens on an empty page, not over the one you were reading. There's one
-                // of these, and it doesn't fade: fading reaches a picture's wash but not the
-                // picture, which is an AppKit view, so the picture would flash without it.
-                if tab == nil || bar.isPresented && bar.mode == .newTab {
+                // There's one of these, and it doesn't fade: fading reaches a picture's wash but
+                // not the picture, which is an AppKit view, so the picture would flash without it.
+                if !scene, empty {
                     PageGround { Color(nsColor: .textBackgroundColor) }.transition(.identity)
                 }
                 if palette { CommandPalette() }
@@ -54,7 +57,9 @@ struct ContentArea: View {
         }
         .animation(Motion.resolved(palette ? Motion.arrive : Motion.exit), value: palette)
         // A tab picked from the sidebar, say, is what you came for instead.
-        .onChange(of: tab?.id) { if bar.isPresented, bar.mode == .newTab { browser.dismissCommandBar() } }
+        .onChange(of: tab?.id) {
+            if bar.isPresented, bar.mode == .editCurrent || bar.mode == .newTab && !empty { browser.dismissCommandBar() }
+        }
         .overlay(alignment: .bottom) { ToastView() }
         .modifier(PromptAlerts())
     }

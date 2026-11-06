@@ -38,6 +38,15 @@ public struct Omnibox: Sendable {
         return searchURL(for: input).map { .search(input, $0) }
     }
 
+    /// The address as you'd type it, without `https://` or a lone `/`, if typing that leads back.
+    public func short(_ url: URL) -> String {
+        guard let scheme = url.scheme, scheme == "https" || scheme == "http" else { return url.absoluteString }
+        var short = String(url.absoluteString.dropFirst(scheme.count + 3))
+        if url.path() == "/", url.query() == nil, url.fragment() == nil { short.removeLast() }
+        if case let .address(typed) = interpret(short), typed.scheme == scheme { return short }
+        return url.absoluteString
+    }
+
     public func searchURL(for query: String) -> URL? {
         var allowed = CharacterSet.urlQueryAllowed
         allowed.remove(charactersIn: "&+=?#")

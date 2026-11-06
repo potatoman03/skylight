@@ -99,9 +99,15 @@ public struct Tab: Identifiable, Codable, Equatable, Sendable {
         self.lastActiveAt = now
     }
 
+    /// Where a new tab sits until you say where it's going.
+    public static let blankURL = URL(string: "about:blank")!
+
+    public var isBlank: Bool { url == Self.blankURL }
+
     /// The title to show, falling back to the host while a page has none yet.
     public var displayTitle: String {
         if let customTitle { return customTitle }
+        if isBlank { return "New Tab" }
         if !title.isEmpty { return title }
         return url.host(percentEncoded: false) ?? url.absoluteString
     }
@@ -109,7 +115,7 @@ public struct Tab: Identifiable, Codable, Equatable, Sendable {
     /// The title without the site's name around it, for the sidebar, where the favicon already says
     /// which site it is: "Page not found · GitHub · GitHub" is "Page not found".
     public var shortTitle: String {
-        guard customTitle == nil, !title.isEmpty else { return displayTitle }
+        guard customTitle == nil, !isBlank, !title.isEmpty else { return displayTitle }
         let labels = Self.siteLabels(url)
         guard !labels.isEmpty else { return title }
         func isSite(_ part: Substring) -> Bool {

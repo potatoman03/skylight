@@ -12,9 +12,13 @@ public struct RootView: View {
     @State private var anchor = AddressAnchor()
     @State private var newName = ""
     @State private var leaving: Task<Void, Never>?
-    /// The hidden sidebar has finished sliding away, so the page can have its room.
-    @State private var pageTookRoom = false
-    @State private var takingRoom: Task<Void, Never>?
+    /// The page sits beside the sidebar.
+    @State private var open = true
+    /// The page is on its way over the sidebar or off it.
+    @State private var sliding = false
+    /// The page has been made to fit beside the sidebar. It's the window's width while it moves.
+    @State private var fitted = true
+    @State private var slide: Task<Void, Never>?
     @State private var backdropFrame = CGRect.zero
     @Environment(\.colorScheme) private var scheme
 
@@ -34,8 +38,15 @@ public struct RootView: View {
         let accent = prefs.skyBackdrop ? prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue).accent : nil
         let sidebarWidth = max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound)
         let sidebarOnScreen = browser.showsSidebar && !fullscreen
-        // A peeking sidebar lies over the page, which keeps its width.
-        let sidebarRoom = pageTookRoom || fullscreen ? 0 : sidebarWidth
+        // A peeking sidebar lies over the page, which stays where it is.
+        let beside = open && !fullscreen ? sidebarWidth : 0
+        // A site can't lay itself out as fast as its edge moves, and what it draws arrives a few
+        // frames behind the view, so resizing on the way would shake it. It moves as one piece,
+        // and is resized once, where its right edge is out of sight. An empty page has no site.
+        let rigid = !fitted && !browser.showsEmptyPage
+        let sidebarRoom = rigid ? 0 : beside
+        let emptyPage = state.selectedTab == nil
+        let scene = prefs.showsScene(in: space, dark: scheme == .dark)
 
         // Our own sidebar column, flush with the page: the system's floating glass sidebar casts a
         // shadow on the page, and moves its toggle about.
@@ -45,19 +56,21 @@ public struct RootView: View {
                 // Up under the hidden toolbar, edge to edge.
                 .ignoresSafeArea(.container, edges: fullscreen ? .top : [])
                 // A split's rounded panes sit on the window's backdrop, like the sidebar.
-                .background(showsSplit ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
+                .background(showsSplit || emptyPage && scene ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
                 .padding(.leading, sidebarRoom)
-                // The page takes its new width in one step: each width on the way would lay the
-                // site out again. The sidebar slides on its own.
-                .animation(nil, value: sidebarRoom)
+                .offset(x: rigid ? beside : 0)
             // Off to the side when it's hidden, not gone, so it can peek straight back.
             Sidebar()
                 .frame(width: sidebarWidth)
                 // Without its room, it's over the page rather than the window's backdrop.
-                .background { if sidebarRoom == 0 { SidebarGround() } }
+                .background { if !open, !sliding { SidebarGround() } }
                 .overlay(alignment: .trailing) { SidebarEdge() }
+                // It stays still while the page's edge crosses it, like a card sliding over it.
+                .mask(alignment: .leading) {
+                    Rectangle().frame(width: sliding && !open ? 0 : sidebarWidth).ignoresSafeArea()
+                }
                 .onHover { if browser.sidebarPeeking { peek($0) } }
-                .offset(x: sidebarOnScreen ? 0 : -sidebarWidth - 1)
+                .offset(x: (open || sliding || browser.sidebarPeeking) && !fullscreen ? 0 : -sidebarWidth - 1)
                 .allowsHitTesting(sidebarOnScreen)
                 .accessibilityHidden(!sidebarOnScreen)
         }
@@ -78,18 +91,25 @@ public struct RootView: View {
         // Showing or hiding it for good ends the peek.
         .onChange(of: prefs.sidebarCollapsed) { _, collapsed in
             leaving?.cancel()
-            takingRoom?.cancel()
-            // The page narrows first and widens last, so the sidebar never crosses it.
-            if collapsed {
-                takingRoom = Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(350))
-                    if !Task.isCancelled { pageTookRoom = true }
+            slide?.cancel()
+            // Everything in place first, so the move starts from there.
+            withTransaction(Transaction(animation: nil)) {
+                sliding = true
+                fitted = false
+            }
+            slide = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(1))
+                guard !Task.isCancelled else { return }
+                animate(Motion.sidebar) { open = !collapsed }
+                try? await Task.sleep(for: Motion.sidebarTime)
+                guard !Task.isCancelled else { return }
+                withTransaction(Transaction(animation: nil)) {
+                    sliding = false
+                    fitted = true
                 }
-            } else {
-                pageTookRoom = false
             }
         }
-        .onAppear { pageTookRoom = prefs.sidebarCollapsed }
+        .onAppear { open = !prefs.sidebarCollapsed }
         // One backdrop behind the toolbar and sidebar, translucent or the theme's; only the page is opaque.
         .background {
             WindowBackdrop().ignoresSafeArea()
@@ -137,11 +157,11 @@ public struct RootView: View {
     private func peek(_ inside: Bool) {
         leaving?.cancel()
         let opening = inside && !browser.sidebarPeeking
-        if opening { withAnimation { browser.sidebarPeeking = true } }
+        if opening { animate(Motion.sidebar) { browser.sidebarPeeking = true } }
         guard !inside || opening else { return }
         leaving = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(opening ? 1500 : 300))
-            if !Task.isCancelled, !browser.showsMainMenu { withAnimation { browser.sidebarPeeking = false } }
+            if !Task.isCancelled, !browser.showsMainMenu { animate(Motion.sidebar) { browser.sidebarPeeking = false } }
         }
     }
 }
@@ -190,9 +210,7 @@ private struct BrowserToolbar: ToolbarContent {
         .sharedBackgroundVisibility(.hidden)
 
         // On an extension's page in the Chrome Web Store, whose own button only works in Chrome.
-        // Not over a new tab's empty page, which isn't the store.
-        if let id = browser.store.state.selectedTab.flatMap({ WebStore.extensionID(from: $0.url.absoluteString) }), browser.extensions.isAvailable,
-           !(browser.commandBar.isPresented && browser.commandBar.mode == .newTab) {
+        if let id = browser.store.state.selectedTab.flatMap({ WebStore.extensionID(from: $0.url.absoluteString) }), browser.extensions.isAvailable {
             ToolbarItem(placement: .primaryAction) {
                 StoreAddButton(id: id)
             }

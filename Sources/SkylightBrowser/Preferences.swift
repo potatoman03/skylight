@@ -30,6 +30,15 @@ public final class Preferences {
             }
         }
 
+        /// What a row that searches calls it.
+        public var searchName: String {
+            switch self {
+            case .brave: name
+            case .custom: "Search"
+            default: "\(name) Search"
+            }
+        }
+
         /// The search address, with `%s` for what you typed. Custom's is in preferences.
         public var template: String {
             switch self {

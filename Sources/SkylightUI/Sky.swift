@@ -66,6 +66,13 @@ extension ThemePalette {
     var fillsNewTab: Bool { image != nil || ascii != nil }
 }
 
+extension Preferences {
+    /// An empty page in this Space opens onto the theme's picture or characters.
+    func showsScene(in space: Space, dark: Bool) -> Bool {
+        skyBackdrop && sceneOnNewTab && theme(for: space).palette(dark: dark, spaceHue: space.hue).fillsNewTab
+    }
+}
+
 /// What's behind a page with nothing on it: the theme's picture or characters, lined up with the rest of the
 /// window so the page seems to open onto it, or else `fallback`.
 struct PageGround<Fallback: View>: View {
@@ -77,8 +84,7 @@ struct PageGround<Fallback: View>: View {
     var body: some View {
         let prefs = browser.preferences
         let space = browser.store.state.activeSpace
-        if prefs.skyBackdrop, prefs.sceneOnNewTab, backdrop != .zero,
-           prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue).fillsNewTab {
+        if backdrop != .zero, prefs.showsScene(in: space, dark: scheme == .dark) {
             GeometryReader { geo in
                 let frame = geo.frame(in: .global)
                 ThemeBackdrop()

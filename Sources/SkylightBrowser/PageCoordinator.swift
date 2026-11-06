@@ -94,6 +94,7 @@ public final class PageCoordinator: BrowserEffectHandler {
             case let .goBack(id): pages[id]?.goBack()
             case let .goForward(id): pages[id]?.goForward()
             case let .reload(id): if let page = pages[id] { page.reload() } else { wake(id) }
+            case let .hardReload(id): if let page = pages[id] { page.hardReload() } else { wake(id) }
             case let .stop(id): pages[id]?.stop()
             case let .discardPage(id): sleep(id)
             case let .releaseProfile(id): profiles[id] = nil
@@ -212,8 +213,10 @@ public final class PageCoordinator: BrowserEffectHandler {
 
     /// Gives keyboard focus back to the visible page.
     public func focusVisiblePage() {
-        guard let id = visibleTabID, let page = pages[id] else { return }
-        hostView.window?.makeFirstResponder(page.view)
+        guard let id = visibleTabID, let page = pages[id], let window = hostView.window else { return }
+        window.makeFirstResponder(page.view)
+        // In full screen the address field was in the toolbar's own window.
+        window.makeKey()
     }
 
     /// Closes the tab's page but keeps the tab. It reloads when shown again.

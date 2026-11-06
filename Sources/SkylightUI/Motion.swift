@@ -11,6 +11,9 @@ enum Motion {
     static let feedback = Animation.easeOut(duration: 0.12)
     /// Something already on screen moving to a new place: rows making room, the selection.
     static let travel = Animation.smooth(duration: 0.28)
+    /// The page moving over the sidebar or off it: most of the way at once, then settling.
+    static let sidebar = Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.18)
+    static let sidebarTime = Duration.milliseconds(190)
     /// Something arriving: palettes, toasts, results.
     static let arrive = Animation.snappy(duration: 0.26)
     /// Leaving is quicker than arriving.

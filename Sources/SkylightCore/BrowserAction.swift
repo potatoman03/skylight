@@ -18,6 +18,7 @@ public enum BrowserAction: Equatable, Sendable {
     case goBack(TabID)
     case goForward(TabID)
     case reload(TabID)
+    case hardReload(TabID)
     case stop(TabID)
     case togglePin(TabID)
     /// Closes any tab for good, pinned and favorites included. (`closeTab` only unloads those.)
@@ -100,6 +101,7 @@ public enum BrowserEffect: Equatable, Sendable {
     case goBack(TabID)
     case goForward(TabID)
     case reload(TabID)
+    case hardReload(TabID)
     case stop(TabID)
     /// Tear down the tab's page, if it has one.
     case discardPage(TabID)

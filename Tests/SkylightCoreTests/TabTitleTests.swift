@@ -7,6 +7,13 @@ import Testing
         Tab(url: URL(string: url)!, title: title, now: .distantPast).shortTitle
     }
 
+    @Test func aBlankTabIsANewTab() {
+        #expect(short("about:blank", "about:blank") == "New Tab")
+        #expect(Tab(url: Tab.blankURL, now: .distantPast).displayTitle == "New Tab")
+        #expect(Tab(url: Tab.blankURL, now: .distantPast).isBlank)
+        #expect(!Tab(url: URL(string: "https://example.com")!, now: .distantPast).isBlank)
+    }
+
     @Test func dropsTheSiteNameAtTheEnd() {
         #expect(short("Page not found · GitHub · GitHub", "https://github.com/x") == "Page not found")
         #expect(short("Lo-fi beats - YouTube", "https://www.youtube.com/watch?v=1") == "Lo-fi beats")

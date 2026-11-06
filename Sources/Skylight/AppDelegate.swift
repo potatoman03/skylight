@@ -162,7 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var store: BrowserStore? { browser?.store }
     private var selected: TabID? { store?.state.selectedTabID }
 
-    @objc func newTab(_ sender: Any?) { browser?.presentCommandBar(.newTab) }
+    @objc func newTab(_ sender: Any?) { browser?.newTab() }
     @objc func openLocation(_ sender: Any?) { browser?.presentCommandBar(.editCurrent) }
 
     @objc func closeTab(_ sender: Any?) {
@@ -173,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func reopenTab(_ sender: Any?) { store?.send(.reopenClosedTab) }
     @objc func reload(_ sender: Any?) { if let id = selected { store?.send(.reload(id)) } }
+    @objc func hardReload(_ sender: Any?) { if let id = selected { store?.send(.hardReload(id)) } }
     @objc func stopLoading(_ sender: Any?) { if let id = selected { store?.send(.stop(id)) } }
     @objc func goBack(_ sender: Any?) { if let id = selected { store?.send(.goBack(id)) } }
     @objc func goForward(_ sender: Any?) { if let id = selected { store?.send(.goForward(id)) } }
@@ -201,12 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         withAnimation(.smooth(duration: 0.28)) { browser?.newFolder() }
     }
     @objc func developerTools(_ sender: Any?) { browser?.showDeveloperTools() }
-    @objc func copyURL(_ sender: Any?) {
-        guard let url = store?.state.selectedTab?.url else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url.absoluteString, forType: .string)
-        browser?.toasts.show("Copied link", symbol: "link")
-    }
+    @objc func copyURL(_ sender: Any?) { browser?.copyLink() }
     @objc func boostSite(_ sender: Any?) { browser?.createBoostForCurrentSite() }
     @objc func showPackages(_ sender: Any?) { browser?.packages.revealInFinder() }
     @objc func copyAgentCommand(_ sender: Any?) { browser?.copyMCPCommand() }
