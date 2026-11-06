@@ -2,6 +2,8 @@
 # Publishes a release that installed copies of Skylight update to: builds it, zips it, signs the
 # zip with the update key, writes the update feed, and puts both on a GitHub release. Skylight
 # reads the feed from the latest release (SUFeedURL in bundle.sh), so the newest release wins.
+# The release also gets Skylight.dmg for new people: its name never changes, so the website's
+# link to releases/latest/download/Skylight.dmg is always the newest.
 #
 #   scripts/publish.sh 0.2.0
 #
@@ -25,6 +27,7 @@ REPO="${SKYLIGHT_REPO:-potatoman03/skylight}"
 APP="$ROOT/build/Skylight.app"
 OUT="$ROOT/build/releases/$VERSION"
 ZIP="$OUT/Skylight-$VERSION.zip"
+DMG="$OUT/Skylight.dmg"
 SPARKLE_BIN="$ROOT/.build/artifacts/sparkle/Sparkle/bin"
 
 cd "$ROOT"
@@ -45,6 +48,11 @@ SKYLIGHT_VERSION="$VERSION" SKYLIGHT_BUILD="$BUILD" scripts/bundle.sh release
 mkdir -p "$OUT"
 rm -f "$ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+STAGE="$(mktemp -d)"
+ditto "$APP" "$STAGE/Skylight.app"
+ln -s /Applications "$STAGE/Applications"
+rm -f "$DMG"
+hdiutil create -volname "Skylight $VERSION" -srcfolder "$STAGE" -fs APFS -format ULMO -quiet "$DMG"
 # Prints: sparkle:edSignature="…" length="…"
 SIGNATURE="$("$SPARKLE_BIN/sign_update" --account skylight "$ZIP")"
 
@@ -66,6 +74,6 @@ cat > "$OUT/appcast.xml" <<XML
 </rss>
 XML
 
-gh release create "v$VERSION" "$ZIP" "$OUT/appcast.xml" --repo "$REPO" --target "$(git rev-parse HEAD)" \
+gh release create "v$VERSION" "$ZIP" "$DMG" "$OUT/appcast.xml" --repo "$REPO" --target "$(git rev-parse HEAD)" \
   --title "Skylight $VERSION" --generate-notes
-echo "Published Skylight $VERSION (build $BUILD). Send new people $ZIP; everyone else gets it as an update."
+echo "Published Skylight $VERSION (build $BUILD). New people get it from the website; everyone else gets it as an update."

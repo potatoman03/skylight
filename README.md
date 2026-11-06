@@ -7,6 +7,13 @@ shell is stock macOS: a source-list sidebar, one unified toolbar, a Settings win
 alerts, so it looks and behaves like Safari or Finder. Built to be light, easy to extend, and
 usable by AI agents as a first-class citizen.
 
+## Download
+
+[Download Skylight for Mac](https://github.com/potatoman03/skylight/releases/latest/download/Skylight.dmg)
+(macOS 26 or later, Apple silicon), or see [the website](https://potatoman03.github.io/skylight/).
+Skylight isn't notarized yet, so the first time you open it, go to System Settings → Privacy &
+Security and choose Open Anyway. It updates itself after that.
+
 ## Build and run
 
 ### Requirements
