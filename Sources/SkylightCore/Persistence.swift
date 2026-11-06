@@ -69,6 +69,12 @@ extension JSONDecoder {
 
 /// Well-known locations under Application Support.
 public struct AppPaths: Sendable {
+    /// The settings a run may take from its environment. A published build takes none: anything
+    /// able to launch it could otherwise swap its data, drop the Keychain or open a debugging port.
+    public static func launchEnvironment(_ environment: [String: String], published: Bool) -> [String: String] {
+        published ? [:] : environment
+    }
+
     public let root: URL
 
     public init(root: URL) { self.root = root }

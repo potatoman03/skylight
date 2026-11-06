@@ -17,6 +17,8 @@ public struct ExtensionManifest: Equatable, Sendable {
     public var sidePanel: String?
     public var permissions: [String]
     public var hostPermissions: [String]
+    /// The sites its content scripts run on, which is access even without a host permission.
+    public var contentScriptMatches: [String] = []
     /// The public key that fixes the extension's id (store installs carry one).
     public var key: String?
 
@@ -77,6 +79,7 @@ public struct ExtensionManifest: Equatable, Sendable {
             sidePanel: (object["side_panel"] as? [String: Any])?["default_path"] as? String,
             permissions: object["permissions"] as? [String] ?? [],
             hostPermissions: object["host_permissions"] as? [String] ?? [],
+            contentScriptMatches: (object["content_scripts"] as? [[String: Any]] ?? []).flatMap { $0["matches"] as? [String] ?? [] },
             key: object["key"] as? String)
     }
 
@@ -91,15 +94,29 @@ public struct ExtensionManifest: Equatable, Sendable {
 
     public var title: String { action?.title ?? name }
 
+    /// Every site it can reach, however the manifest asks for them.
+    var hosts: Set<String> {
+        Set(hostPermissions + contentScriptMatches + permissions.filter { $0.contains("://") || $0 == "<all_urls>" })
+    }
+
+    private var reachesEverySite: Bool {
+        hosts.contains { $0 == "<all_urls>" || $0.hasPrefix("*://*/") || $0.hasPrefix("http://*/") || $0.hasPrefix("https://*/") }
+    }
+
     /// Permissions people should know about before installing, in plain words.
     public var warnings: [String] {
         var out: [String] = []
-        let hosts = hostPermissions + permissions.filter { $0.contains("://") || $0 == "<all_urls>" }
-        if hosts.contains(where: { $0 == "<all_urls>" || $0.hasPrefix("*://*/") || $0.hasPrefix("http://*/") || $0.hasPrefix("https://*/") }) {
-            out.append("Read and change everything on every website")
+        if reachesEverySite {
+            out.append(Self.everySite)
         } else if !hosts.isEmpty {
             out.append("Read and change your data on \(hosts.count == 1 ? "one site" : "\(hosts.count) sites")")
         }
+        return out + permissionWarnings
+    }
+
+    private static let everySite = "Read and change everything on every website"
+
+    private var permissionWarnings: [String] {
         let named: [String: String] = [
             "tabs": "See your open tabs and their addresses", "history": "Read your browsing history",
             "bookmarks": "Read and change your bookmarks", "cookies": "Read and change cookies",
@@ -107,8 +124,17 @@ public struct ExtensionManifest: Equatable, Sendable {
             "nativeMessaging": "Talk to apps on your Mac", "webRequest": "Watch your network requests",
             "debugger": "Debug and control pages", "management": "Manage your other extensions",
         ]
-        out += permissions.compactMap { named[$0] }
-        return out
+        return permissions.compactMap { named[$0] }
+    }
+
+    /// What an update asks for beyond `old`. Sites are compared themselves: `warnings` only
+    /// counts them, and swapping one site for another keeps the count.
+    public func addedWarnings(since old: ExtensionManifest) -> [String] {
+        let added = permissionWarnings.filter { !old.permissionWarnings.contains($0) }
+        let newHosts = hosts.subtracting(old.hosts)
+        if old.reachesEverySite || newHosts.isEmpty { return added }
+        if reachesEverySite { return [Self.everySite] + added }
+        return ["Read and change your data on \(newHosts.count == 1 ? "one more site" : "\(newHosts.count) more sites")"] + added
     }
 
     // MARK: - Helpers

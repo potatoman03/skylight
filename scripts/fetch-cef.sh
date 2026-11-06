@@ -4,6 +4,9 @@
 set -euo pipefail
 
 CEF_VERSION="${CEF_VERSION:-156.0.15+gcf671c0+chromium-156.0.8078.80}"
+# The archive this version must be. A new version needs a new sum: take it from a download whose
+# SHA-1 matches the .sha1 file next to it on the CDN.
+CEF_SHA256="${CEF_SHA256:-938081b5bb552b4990b9667662d9909429d2c113d862c83826322310835666f9}"
 PLATFORM="macosarm64"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/Vendor/cef"
@@ -19,6 +22,10 @@ else
   # stops with "unbound variable", and still exits 0.
   echo "Downloading ${name}…"
   curl --fail --location --progress-bar "$url" -o "$work/cef.tar.bz2"
+  echo "$CEF_SHA256  $work/cef.tar.bz2" | shasum -a 256 --check --status || {
+    echo "The CEF download doesn't match CEF_SHA256, so it wasn't used." >&2
+    exit 1
+  }
   mkdir -p "$work/x"
   tar -xjf "$work/cef.tar.bz2" -C "$work/x"
   rm -rf "$DEST"

@@ -227,3 +227,11 @@ struct ThemeTests {
         #expect(imported.dark.scrim?.opacity == 1)
     }
 }
+
+@Suite struct LaunchEnvironmentTests {
+    @Test func aPublishedBuildIgnoresTheEnvironment() {
+        let environment = ["SKYLIGHT_DEBUG_PORT": "9222", "SKYLIGHT_DEV": "1"]
+        #expect(AppPaths.launchEnvironment(environment, published: true).isEmpty)
+        #expect(AppPaths.launchEnvironment(environment, published: false) == environment)
+    }
+}

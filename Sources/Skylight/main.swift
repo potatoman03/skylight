@@ -6,17 +6,20 @@ import SkylightKit
 
 // Chromium needs its own NSApplication subclass, created before anything touches NSApp.
 let app = CEFRuntime.makeApplication()
+let info = Bundle.main.infoDictionary ?? [:]
+let environment = AppPaths.launchEnvironment(ProcessInfo.processInfo.environment,
+                                             published: info["SkylightPublished"] as? Bool ?? false)
 // SKYLIGHT_DATA_DIR keeps a development run away from your real tabs.
 // Symlinks are resolved: Chromium compares its cache paths literally (/var vs /private/var).
-let paths = ProcessInfo.processInfo.environment["SKYLIGHT_DATA_DIR"]
+let paths = environment["SKYLIGHT_DATA_DIR"]
     .map { AppPaths(root: URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath()) }
     ?? AppPaths.standard()
-let delegate = AppDelegate(paths: paths)
+let demo = environment["SKYLIGHT_DEV"] != nil
+let devBuild = demo || (info["SkylightDevBuild"] as? Bool ?? false)
+let debugPort = Int(environment["SKYLIGHT_DEBUG_PORT"] ?? "") ?? 0
+let delegate = AppDelegate(paths: paths, demo: demo, development: devBuild)
 app.delegate = delegate
 
-let info = Bundle.main.infoDictionary ?? [:]
-let devBuild = ProcessInfo.processInfo.environment["SKYLIGHT_DEV"] != nil || (info["SkylightDevBuild"] as? Bool ?? false)
-let debugPort = Int(ProcessInfo.processInfo.environment["SKYLIGHT_DEBUG_PORT"] ?? "") ?? 0
 // Password managers and other apps' extensions reach their apps through hosts made for other browsers.
 NativeMessagingHosts.adopt(into: paths.engineRoot.appending(path: "NativeMessagingHosts", directoryHint: .isDirectory))
 

@@ -21,7 +21,8 @@ public enum AgentPageScripts {
         el.setAttribute('data-skylight-ref', ref);
         const role = el.getAttribute('role') || roles[el.tagName] || (el.tagName === 'INPUT' ? (el.type || 'text') : el.tagName.toLowerCase());
         // What's typed in a password or card field never leaves the page.
-        const secret = el.type === 'password' || /(^|\\s)(current-password|new-password|one-time-code|cc-)/.test(el.autocomplete || '');
+        const secret = el.type === 'password' || /(^|\\s)(current-password|new-password|one-time-code|cc-)/.test(el.autocomplete || '')
+          || /pass|pwd|card|cc-?(num|csc|exp)|cvc|cvv|otp|ssn/i.test(`${el.name} ${el.id}`);
         const name = (el.getAttribute('aria-label') || el.innerText || (secret ? '' : el.value) || el.placeholder || el.title || el.getAttribute('alt') || '')
           .trim().replace(/\\s+/g, ' ').slice(0, 100);
         const item = { ref, role, name };
@@ -40,7 +41,7 @@ public enum AgentPageScripts {
         """
         (() => {
           const el = document.querySelector('[data-skylight-ref=' + \(JSONValue.jsLiteral(ref)) + ']');
-          if (!el) throw new Error('No element with ref \(ref). Call read_page again; the page may have changed.');
+          if (!el) throw new Error('No element with ref ' + \(JSONValue.jsLiteral(ref)) + '. Call read_page again; the page may have changed.');
           el.scrollIntoView({ block: 'center', inline: 'center' });
           el.focus({ preventScroll: true });
           el.click();
@@ -53,7 +54,7 @@ public enum AgentPageScripts {
         """
         (() => {
           const el = document.querySelector('[data-skylight-ref=' + \(JSONValue.jsLiteral(ref)) + ']');
-          if (!el) throw new Error('No element with ref \(ref). Call read_page again; the page may have changed.');
+          if (!el) throw new Error('No element with ref ' + \(JSONValue.jsLiteral(ref)) + '. Call read_page again; the page may have changed.');
           const text = \(JSONValue.jsLiteral(text));
           el.scrollIntoView({ block: 'center' });
           el.focus();
@@ -98,7 +99,6 @@ public enum WebMCP {
         name: t.name,
         description: String(t.description || ''),
         inputSchema: t.inputSchema || { type: 'object', properties: {} },
-        readOnly: !!(t.annotations && t.annotations.readOnlyHint),
       });
       let queued = false;
       const announce = () => {
@@ -150,21 +150,26 @@ public enum WebMCP {
         public var name: String
         public var description: String
         public var inputSchema: JSONValue
-        public var readOnly: Bool
 
-        public init(name: String, description: String, inputSchema: JSONValue, readOnly: Bool) {
+        public init(name: String, description: String, inputSchema: JSONValue) {
             self.name = name
             self.description = description
             self.inputSchema = inputSchema
-            self.readOnly = readOnly
         }
 
         public init?(json: JSONValue) {
             guard let name = json["name"]?.stringValue, !name.isEmpty else { return nil }
             self.init(name: name, description: json["description"]?.stringValue ?? "",
-                      inputSchema: json["inputSchema"] ?? ["type": "object", "properties": [:]],
-                      readOnly: json["readOnly"]?.boolValue ?? false)
+                      inputSchema: json["inputSchema"] ?? ["type": "object", "properties": [:]])
         }
+    }
+
+    /// A page's tool as agents see it. Always a write, whatever the page says about it: approval
+    /// is there to protect you from pages, so a page can't vouch for its own tools.
+    public static func definition(host: String, tool: PageTool) -> ToolDefinition {
+        ToolDefinition(name: exposedName(host: host, tool: tool.name),
+                       description: "[\(host), offered by the page] \(tool.description)",
+                       inputSchema: tool.inputSchema, risk: .write, offeredBy: host)
     }
 
     public static func parseTools(_ message: JSONValue) -> [PageTool] {

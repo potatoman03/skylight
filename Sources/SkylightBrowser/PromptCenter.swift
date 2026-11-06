@@ -57,6 +57,8 @@ public final class PromptCenter: ApprovalProvider {
     /// The names of agents allowed to act without asking, to show.
     public private(set) var trustedClients: Set<String> = []
     @ObservationIgnored private var approvalContinuations: [UUID: CheckedContinuation<Bool, Never>] = [:]
+    /// The site a tool call would act on, to name when asking.
+    @ObservationIgnored public var siteOfCall: @MainActor (JSONValue) -> String? = { _ in nil }
 
     public init() {}
 
@@ -98,7 +100,7 @@ public final class PromptCenter: ApprovalProvider {
     public func approve(tool: ToolDefinition, arguments: JSONValue, client: AgentClient) async -> Bool {
         if let session = client.session, trustedSessions[session] != nil { return true }
         let approval = AgentApproval(client: client.name, session: client.session, tool: tool,
-                                     summary: Self.describe(tool: tool, arguments: arguments))
+                                     summary: tool.request(arguments: arguments, site: siteOfCall(arguments)))
         // Agents give up on slow calls; don't leave a stale card behind.
         Task { [weak self] in
             try? await Task.sleep(for: Self.approvalTimeout)
@@ -130,18 +132,6 @@ public final class PromptCenter: ApprovalProvider {
             }
         }
         prompts.removeAll { $0.tabID == tab }
-    }
-
-    static func describe(tool: ToolDefinition, arguments: JSONValue) -> String {
-        let a = arguments
-        switch tool.name {
-        case "open_tab": return "Open \(a["url"]?.stringValue ?? a["query"]?.stringValue ?? "a new tab")"
-        case "navigate": return "Go to \(a["url"]?.stringValue ?? "a page")"
-        case "close_tab": return "Close a tab"
-        case "click": return "Click element \(a["ref"]?.stringValue ?? "?") on the page"
-        case "type_text": return "Type “\(String((a["text"]?.stringValue ?? "").prefix(80)))”"
-        default: return tool.description
-        }
     }
 }
 

@@ -52,12 +52,8 @@ public final class AgentService {
         guard let tab = store.state.selectedTab, let tools = siteTools[tab.id] else { return [] }
         let host = tab.url.host() ?? "site"
         return tools.map { tool in
-            let definition = ToolDefinition(
-                name: WebMCP.exposedName(host: host, tool: tool.name),
-                description: "[\(host), offered by the page] \(tool.description)",
-                inputSchema: tool.inputSchema, risk: tool.readOnly ? .read : .write)
             let tabID = tab.id
-            return AgentTool(definition) { [weak self] input in
+            return AgentTool(WebMCP.definition(host: host, tool: tool)) { [weak self] input in
                 guard let self else { throw ToolError("Skylight is shutting down.") }
                 return try await self.callSiteTool(tab: tabID, name: tool.name, input: input)
             }
@@ -79,6 +75,20 @@ public final class AgentService {
         }
         guard let id = store.state.selectedTabID else { throw ToolError("No tab is selected. Pass tab_id or open_tab first.") }
         return id
+    }
+
+    /// The site a tool call would act on, or nil if it names no tab that exists.
+    public func site(of arguments: JSONValue) -> String? {
+        guard let id = try? resolveTab(arguments), let url = store.state.tabs[id]?.url else { return nil }
+        return url.host() ?? String(url.absoluteString.prefix(60))
+    }
+
+    /// An address for agents. The omnibox also takes file:, chrome: and the like, which are for
+    /// people to type.
+    private func webAddress(_ input: String) throws -> URL {
+        guard let address = omnibox.interpret(input) else { throw ToolError("Couldn't make a URL from \(input).") }
+        guard address.isWeb else { throw ToolError("Agents can only open http and https pages.") }
+        return address.url
     }
 
     private func describe(_ tab: Tab, in space: Space) -> JSONValue {
@@ -129,8 +139,7 @@ public final class AgentService {
                     "background": ["type": "boolean", "description": "Open without selecting it."],
                 ], "required": ["url"]],
                 risk: .write)) { [unowned self] args in
-                let input = try args.requireString("url")
-                guard let url = self.omnibox.interpret(input)?.url else { throw ToolError("Couldn't make a URL from \(input).") }
+                let url = try self.webAddress(try args.requireString("url"))
                 let result = self.store.send(.openTab(url, select: !(args["background"]?.boolValue ?? false)))
                 guard let id = result.openedTabID else { throw ToolError("Couldn't open the tab.") }
                 return ["tab_id": .string(id.rawValue), "url": .string(url.absoluteString)]
@@ -140,8 +149,7 @@ public final class AgentService {
                 inputSchema: ["type": "object", "properties": ["tab_id": Self.tabArg, "url": ["type": "string"]], "required": ["url"]],
                 risk: .write)) { [unowned self] args in
                 let id = try self.resolveTab(args)
-                let input = try args.requireString("url")
-                guard let url = self.omnibox.interpret(input)?.url else { throw ToolError("Couldn't make a URL from \(input).") }
+                let url = try self.webAddress(try args.requireString("url"))
                 self.store.send(.navigate(id, url))
                 await self.pages.waitUntilLoaded(id)
                 return ["tab_id": .string(id.rawValue), "url": .string(self.store.state.tabs[id]?.url.absoluteString ?? url.absoluteString)]

@@ -14,12 +14,44 @@ public struct ToolDefinition: Equatable, Sendable {
     public var description: String
     public var inputSchema: JSONValue
     public var risk: Risk
+    /// The site that offered this tool, which wrote its name and description. Nil for Skylight's own.
+    public var offeredBy: String?
 
-    public init(name: String, description: String, inputSchema: JSONValue = ["type": "object", "properties": [:]], risk: Risk) {
+    public init(name: String, description: String, inputSchema: JSONValue = ["type": "object", "properties": [:]], risk: Risk,
+                offeredBy: String? = nil) {
         self.name = name
         self.description = description
         self.inputSchema = inputSchema
         self.risk = risk
+        self.offeredBy = offeredBy
+    }
+
+    /// What the user is asked to allow, in Skylight's words: a page's own description of its tool
+    /// could say anything. `site` is the page the call acts on.
+    public func request(arguments a: JSONValue, site: String?) -> String {
+        let on = site.map { " on \($0)" } ?? ""
+        func text(_ key: String, _ fallback: String) -> String { a[key]?.stringValue.map { String($0.prefix(80)) } ?? fallback }
+        func run(_ tool: String, _ site: String?, _ input: JSONValue) -> String {
+            let details = ToolHub.summary(of: input)
+            return "Run “\(tool.prefix(60))” on \(site ?? "this page")" + (details.isEmpty ? "" : " (\(details.prefix(160)))")
+        }
+        if let offeredBy { return run(name.components(separatedBy: "__").last ?? name, offeredBy, a) }
+        switch name {
+        case "open_tab": return "Open \(text("url", "a new tab"))"
+        case "navigate": return "Go to \(text("url", "a page"))" + (site.map { " from \($0)" } ?? "")
+        case "go_back": return "Go back\(on)"
+        case "go_forward": return "Go forward\(on)"
+        case "reload": return "Reload \(site ?? "a page")"
+        case "select_tab": return "Switch to \(site ?? "a tab")"
+        case "close_tab": return "Close \(site ?? "a tab")"
+        case "switch_space": return "Switch to the \(text("space", "other")) Space"
+        case "click": return "Click element \(text("ref", "?"))\(on)"
+        case "type_text": return "Type “\(text("text", ""))”\(on)"
+        case "scroll": return "Scroll \(site ?? "a page")"
+        case "call_site_tool": return run(text("name", "a tool"), site, a["input"] ?? [:])
+        case "run_package_command": return "Run \(text("command", "a command")) from \(text("package", "a package"))\(on)"
+        default: return description
+        }
     }
 }
 
@@ -148,7 +180,7 @@ public final class ToolHub: ToolCatalog {
         onActivity?(AgentActivity(client: client.name, tool: tool, summary: summary, succeeded: ok, date: .now))
     }
 
-    static func summary(of arguments: JSONValue) -> String {
+    nonisolated static func summary(of arguments: JSONValue) -> String {
         guard let object = arguments.objectValue, !object.isEmpty else { return "" }
         return object.keys.sorted().compactMap { key in
             guard let value = object[key] else { return nil }

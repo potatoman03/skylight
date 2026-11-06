@@ -40,6 +40,28 @@ import Testing
         #expect(manifest.title == "Old")
     }
 
+    @Test func anUpdateCantQuietlyWidenItsAccess() throws {
+        func manifest(_ fields: String) throws -> ExtensionManifest {
+            try ExtensionManifest.parse(Data(#"{"name":"E","version":"1",\#(fields)}"#.utf8))
+        }
+        let one = try manifest(#""host_permissions":["https://a.example/*"]"#)
+        // Content scripts are access too, and every site is warned about.
+        let everywhere = try manifest(#""host_permissions":["https://a.example/*"],"content_scripts":[{"matches":["<all_urls>"]}]"#)
+        #expect(everywhere.addedWarnings(since: one) == ["Read and change everything on every website"])
+        // The count stays at one site, but the site is a different one.
+        let swapped = try manifest(#""host_permissions":["https://bank.example/*"]"#)
+        #expect(swapped.warnings == one.warnings)
+        #expect(swapped.addedWarnings(since: one) == ["Read and change your data on one more site"])
+        // A content script on a site it already had adds nothing.
+        let same = try manifest(#""host_permissions":["https://a.example/*"],"content_scripts":[{"matches":["https://a.example/*"]}]"#)
+        #expect(same.addedWarnings(since: one).isEmpty)
+        // Adding a site says so once, with any new permission after it.
+        let two = try manifest(#""host_permissions":["https://a.example/*","https://b.example/*"],"permissions":["history"]"#)
+        #expect(two.addedWarnings(since: one) == ["Read and change your data on one more site", "Read your browsing history"])
+        // Nothing is left to add once it has every site.
+        #expect(try manifest(#""host_permissions":["https://b.example/*"]"#).addedWarnings(since: everywhere).isEmpty)
+    }
+
     @Test func rejectsWhatIsntAManifest() {
         #expect(throws: ExtensionManifest.Failure.self) { try ExtensionManifest.parse(Data("[]".utf8)) }
         #expect(throws: ExtensionManifest.Failure.self) { try ExtensionManifest.parse(Data(#"{"version":"1"}"#.utf8)) }

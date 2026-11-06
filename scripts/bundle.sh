@@ -34,6 +34,8 @@ IDENTITY="${SKYLIGHT_SIGN_IDENTITY:--}"
 PROFILE="${SKYLIGHT_PROVISIONING_PROFILE:-}"
 # An ad hoc signature changes every build, so the real Keychain would ask on every launch.
 if [[ "$IDENTITY" == "-" ]]; then DEV_BUILD="<true/>"; else DEV_BUILD="<false/>"; fi
+# release.sh sets this. A published build ignores the SKYLIGHT_ environment switches.
+if [[ -n "${SKYLIGHT_PUBLISHED:-}" ]]; then PUBLISHED="<true/>"; else PUBLISHED="<false/>"; fi
 
 [[ -d "$CEF/Release" ]] || "$ROOT/scripts/fetch-cef.sh"
 [[ -f "$CEF/build/libcef_dll_wrapper/libcef_dll_wrapper.a" ]] || "$ROOT/scripts/build-cef-wrapper.sh"
@@ -75,6 +77,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>SkylightDevBuild</key>$DEV_BUILD
+  <key>SkylightPublished</key>$PUBLISHED
   <key>SUFeedURL</key><string>$FEED</string>
   <key>SUPublicEDKey</key><string>$UPDATE_KEY</string>
   <key>SUEnableAutomaticChecks</key><true/>
