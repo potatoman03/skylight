@@ -47,13 +47,16 @@ public struct ExtensionManifest: Equatable, Sendable {
         return try parse(data, messages: messages(in: directory, data: data))
     }
 
-    public static func parse(_ data: Data, messages: [String: String] = [:]) throws -> ExtensionManifest {
-        // Chrome tolerates comments in manifests; strip whole-line ones.
-        let cleaned = String(decoding: data, as: UTF8.self)
+    /// Chrome tolerates comments in manifests, so whole-line ones come out before parsing.
+    static func withoutComments(_ data: Data) -> Data {
+        Data(String(decoding: data, as: UTF8.self)
             .split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
-            .joined(separator: "\n")
-        guard let object = try? JSONSerialization.jsonObject(with: Data(cleaned.utf8)) as? [String: Any] else {
+            .joined(separator: "\n").utf8)
+    }
+
+    public static func parse(_ data: Data, messages: [String: String] = [:]) throws -> ExtensionManifest {
+        guard let object = try? JSONSerialization.jsonObject(with: withoutComments(data)) as? [String: Any] else {
             throw Failure.malformed("not a JSON object")
         }
         func text(_ value: Any?) -> String? {
@@ -418,16 +421,5 @@ enum Protobuf {
             }
         }
         return out
-    }
-}
-
-/// The folders Chromium can load at launch.
-public enum ExtensionFolders {
-    /// Leaves out what can't be loaded that way. Chromium's switch takes a comma-separated list, so
-    /// a folder with a comma in its path would be read as two, and a missing folder is an error.
-    public static func launchable(_ folders: [URL]) -> [URL] {
-        folders.filter { folder in
-            !folder.path.contains(",") && FileManager.default.fileExists(atPath: folder.appending(path: "manifest.json").path)
-        }
     }
 }

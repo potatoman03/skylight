@@ -242,6 +242,12 @@ public final class PageCoordinator: BrowserEffectHandler {
         return profile
     }
 
+    /// Deletes what the profile kept. Its Spaces are already gone.
+    func deleteProfile(_ id: ProfileID) async {
+        guard let profile = profiles.removeValue(forKey: id) else { return }
+        await engine.deleteProfile(profile)
+    }
+
     /// The sites this profile is signed in to.
     func signedInSites(in id: ProfileID) async -> [SignInSite] {
         let names = await profile(for: id).cookieNames(domains: SignInSite.allCases.flatMap(\.domains))
@@ -280,11 +286,11 @@ public final class PageCoordinator: BrowserEffectHandler {
         }
     }
 
-    public func closeAll(completion: @escaping @MainActor () -> Void) {
+    public func closeAll() {
         sweepTimer?.invalidate()
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         for page in pages.values { closing.insert(ObjectIdentifier(page)) }
-        engine.closeAll(completion: completion)
+        engine.closeAll()
     }
 }
 
@@ -298,7 +304,7 @@ extension PageCoordinator: WebPageDelegate {
         if event.url != nil || event.title != nil || event.faviconURL != nil {
             store.send(.pageDidUpdate(id, PageMetadata(url: event.url, title: event.title, faviconURL: event.faviconURL)))
         }
-        if event.url != nil || event.extensionTabID != nil { onPagesChange?() }
+        if event.url != nil { onPagesChange?() }
         if event.url != nil || event.title != nil { onVisit?(id, event.url, event.title) }
         if let full = event.isFullscreen {
             if full, visibleTabIDs.contains(id) { setFullscreen(id) } else if !full, fullscreenTabID == id { setFullscreen(nil) }

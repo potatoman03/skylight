@@ -227,6 +227,7 @@ public final class Preferences {
         var shortcuts: [String: KeyBinding]?
         var newSpaceSetup: SpaceSetup?
         var finishedWelcome: Bool?
+        var movedChromiumSessions: Bool?
     }
 
     /// A shortcut you set yourself: the key, and the modifier flags' raw value. An empty key takes
@@ -291,6 +292,7 @@ public final class Preferences {
     public var newSpaceSetup = SpaceSetup() { didSet { save() } }
     /// The welcome a new install opens with has been seen, or wasn't needed.
     public var finishedWelcome = false { didSet { save() } }
+    public var movedChromiumSessions = false { didSet { save() } }
 
     /// Every theme you can pick: the presets, then your own.
     public var themes: [SkyTheme] { SkyTheme.presets + customThemes }
@@ -518,6 +520,7 @@ public final class Preferences {
         shortcuts = stored.shortcuts ?? shortcuts
         newSpaceSetup = stored.newSpaceSetup ?? newSpaceSetup
         finishedWelcome = stored.finishedWelcome ?? finishedWelcome
+        movedChromiumSessions = stored.movedChromiumSessions ?? movedChromiumSessions
     }
 
     private func save() {
@@ -532,7 +535,8 @@ public final class Preferences {
                             extensionPlacement: extensionPlacement, skyBackdrop: skyBackdrop,
                             highlightFocusedPane: highlightFocusedPane, autoPictureInPicture: autoPictureInPicture,
                             showMediaControls: showMediaControls, tidyInstruction: tidyInstruction, sidebarWidth: sidebarWidth,
-                            shortcuts: shortcuts, newSpaceSetup: newSpaceSetup, finishedWelcome: finishedWelcome)
+                            shortcuts: shortcuts, newSpaceSetup: newSpaceSetup, finishedWelcome: finishedWelcome,
+                            movedChromiumSessions: movedChromiumSessions)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)

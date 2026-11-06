@@ -12,7 +12,7 @@ something to fold into a feature.
   called them from there. They use only the store, the command bar model and the page
   coordinator, so they now live in `Browser.swift`, with the same names and signatures.
 - **Undeclared dependencies.** The `Skylight` app imported SkylightBrowser, SkylightCore and
-  SkylightKit, and SkylightCEF imported SkylightCore, without declaring them. They built only
+  SkylightKit, without declaring them. They built only
   because the modules came in transitively. `Package.swift` now lists them.
 - **SkylightKit's description.** `Package.swift` and the README called it "packages", but it also
   holds extension manifests, native messaging hosts and passwords. The descriptions now say so.
@@ -20,8 +20,6 @@ something to fold into a feature.
 - **A flaky test.** `storeSavesAfterChanges` waited a fixed 100 ms for a save that runs on the main
   actor, which the benchmarks can hold for seconds when suites run in parallel. It failed about 1
   run in 10. It now waits for the save, with a deadline.
-- **`.gitignore`** ignores `/Vendor` (file or folder), so a git worktree with `Vendor` symlinked
-  to the main checkout's CEF stays clean.
 
 ## Proposals
 
@@ -43,7 +41,7 @@ for each target, including the off-by-one cases the current code comments on.
 SkylightBrowser has no test target, though it holds most of the behavior that isn't the reducer:
 hibernation, which pages are visible, prompts, agent tools, package reloads, the password flows.
 `WebEngine` was designed to be swappable, so a `FakeEngine`/`FakePage` (recording calls,
-returning canned `evaluate` results) would make it testable without CEF.
+returning canned `evaluate` results) would make it testable without WebKit.
 
 Proposal: add `Tests/SkylightBrowserTests` with a fake engine, starting with `PageCoordinator`
 (wake, sleep, the visible set, `discardPage`) and `AgentService` tool calls end to end against
@@ -79,15 +77,10 @@ test target from the current `SkylightKitTests` files. It's mechanical but touch
 
 ### 5. Parse launch options once
 
-`main.swift` works out `devBuild` (`SKYLIGHT_DEV` or `SkylightDevBuild` in Info.plist) and passes
-it to CEF as the mock keychain. `AppDelegate.engineDidStart` checks `SKYLIGHT_DEV` again on its own
-to pick `MemoryCredentialStore.demo()`. So an ad hoc build without `SKYLIGHT_DEV` uses Chromium's
-mock keychain, but the real login Keychain for passwords. That may be intended, so passwords
-saved in a development build persist, but nothing says so.
-
-Proposal: a `LaunchOptions` struct (data folder, dev build, demo passwords, debug port) parsed
-once in `main.swift` and passed to `AppDelegate`, with the ad hoc-build password behavior decided
-and written down there. Behavior doesn't change until someone decides it should.
+`main.swift` works out `devBuild` (`SKYLIGHT_DEV` or `SkylightDevBuild` in Info.plist) for the
+updater, and `demo` (`SKYLIGHT_DEV`) for the password and card stores. Proposal: a `LaunchOptions`
+struct (data folder, dev build, demo stores) parsed once in `main.swift` and passed to
+`AppDelegate`.
 
 ### 6. Default browser handling out of Settings
 
@@ -98,7 +91,7 @@ an agent tool can't reach it from there. Proposal: move it to SkylightBrowser, b
 
 ## Changes to files under edit
 
-`Sidebar.swift`, `ContentArea.swift`, `Motion.swift` and `CEFBridge/SKBrowser.mm` were being
+`Sidebar.swift`, `ContentArea.swift` and `Motion.swift` were being
 changed on another branch while this was written, so nothing here touched them. Once that work
 lands:
 
@@ -110,7 +103,6 @@ lands:
   which is fine.
 - **`Motion.swift`**: no boundary issues. Its rule (only SwiftUI views animate, pages resize at
   once) is now in AGENTS.md, so keep the two in step.
-- **`SKBrowser.mm`**: no boundary issues found.
 
 ## Future work: releases
 

@@ -2,8 +2,8 @@
 
 ![Skylight](docs/screenshot.png)
 
-An open-source browser for macOS with Spaces and a vertical sidebar, around Chromium (via CEF). The
-shell is stock macOS: a source-list sidebar, one unified toolbar, a Settings window and system
+An open-source browser for macOS with Spaces and a vertical sidebar, built in Swift on the system's
+WebKit. The shell is stock macOS: a source-list sidebar, one unified toolbar, a Settings window and system
 alerts, so it looks and behaves like Safari or Finder. Built to be light, easy to extend, and
 usable by AI agents as a first-class citizen.
 
@@ -17,30 +17,18 @@ It updates itself after that.
 
 ### Requirements
 
-- macOS 26 on Apple silicon (the CEF build Skylight uses is `macosarm64`).
+- macOS 26 on Apple silicon.
 - Xcode 26 with Swift 6.2 or later (`swift --version`).
-- `cmake` and `ninja` for CEF's C++ wrapper: `brew install cmake ninja`. `python3` and `curl`,
-  which macOS already has.
-- CEF 156 (Chromium 156). You don't install it yourself: the scripts download the exact version
-  named in `scripts/fetch-cef.sh` into `Vendor/cef`, which git ignores.
 
-### Fetch CEF, build, run
+### Build and run
 
 ```bash
 scripts/bundle.sh
-```
-
-The first run downloads CEF (about 300 MB) into `Vendor/cef` and builds `libcef_dll_wrapper`
-(`scripts/fetch-cef.sh`, then `scripts/build-cef-wrapper.sh`; you can run either on its own). Later
-runs only rebuild Skylight. The result is `build/Skylight.app`:
-
-```bash
 open build/Skylight.app
 ```
 
 `scripts/bundle.sh release` makes an optimized build, and `OPEN=1 scripts/bundle.sh` builds, then
-launches. `swift build` alone compiles everything but doesn't make an app Chromium can run: the
-framework and the five helper apps only come together in the bundle.
+launches.
 
 If you already run a copy of Skylight, `open` brings that one to the front instead, since both
 have the same bundle id. Start the new build's executable directly instead (see the next section).
@@ -55,10 +43,10 @@ SKYLIGHT_DEV=1 SKYLIGHT_DATA_DIR="$(mktemp -d)" build/Skylight.app/Contents/MacO
 
 - `SKYLIGHT_DATA_DIR` puts every file Skylight writes in that folder instead of
   `~/Library/Application Support/Skylight` (`state.json`, `preferences.json`, `Packages/`,
-  `Engine/`, `mcp.json`, `engine.log`).
+  `Engine/`, `mcp.json`). Cookies and site data are the exception: WebKit keeps those in its own
+  stores under `~/Library/WebKit`, and each data folder gets its own.
 - `SKYLIGHT_DEV=1` keeps passwords in memory, with three made-up logins, instead of your login
-  Keychain, and gives Chromium a mock keychain for its cookie key.
-- `SKYLIGHT_DEBUG_PORT=9333` also exposes the Chrome DevTools Protocol on that port.
+  Keychain.
 
 ### Tests
 
@@ -66,24 +54,14 @@ SKYLIGHT_DEV=1 SKYLIGHT_DATA_DIR="$(mktemp -d)" build/Skylight.app/Contents/MacO
 swift test
 ```
 
-116 tests in Swift Testing, over SkylightCore, SkylightKit and SkylightMCP. They use temporary
+243 tests in Swift Testing, over SkylightCore, SkylightKit and SkylightMCP. They use temporary
 folders and in-memory stores only. `swift test -c release --filter Performance` prints the timings
 quoted under Performance below.
-
-`swift test` builds the whole package, CEFBridge included, so it needs CEF in `Vendor/cef` (run
-`scripts/fetch-cef.sh` once). No test needs CEF, though, so without it you can build only the test
-bundle and run that:
-
-```bash
-swift build --product SkylightPackageTests
-swift test --skip-build
-```
 
 ### Signing
 
 By default `bundle.sh` signs ad hoc. That's enough to run on your own Mac. An ad hoc build is a
-development build (`SkylightDevBuild` in its Info.plist): its signature changes on every build,
-so it uses Chromium's mock keychain rather than asking for your login Keychain at every launch.
+development build (`SkylightDevBuild` in its Info.plist), which doesn't update itself.
 
 To sign with your own certificate, put it in `.signing` at the top of the repo. Git ignores the
 file, so never commit it, and never put anything other than these variables in it:
@@ -95,9 +73,7 @@ SKYLIGHT_PROVISIONING_PROFILE=path/to/Skylight.provisionprofile
 ```
 
 `bundle.sh` reads it on every build (variables already set in your shell win). A signed build uses
-the hardened runtime and your real Keychain. Keep to one identity, the one your releases use: a
-build signed differently from the last re-keys Chromium's cookies, and you are signed out of sites
-once.
+the hardened runtime and your real Keychain.
 
 The app icon is drawn in code: edit `scripts/make-icon.swift` and run it to regenerate
 `Resources/AppIcon.icns`.
@@ -135,8 +111,8 @@ modules above it in this list:
 | `SkylightMCP` | The Model Context Protocol server on `127.0.0.1`. |
 | `SkylightBrowser` | `Browser`, the object that owns every service and connects them: the store, pages, prompts, packages, agents, passwords, extensions, media. |
 | `SkylightUI` | The SwiftUI window: sidebar, toolbar, address field, page area, Settings. |
-| `SkylightCEF`, `CEFBridge` | The CEF engine: a Swift adapter over an Objective-C++ bridge. Only these two know about Chromium. |
-| `Skylight`, `SkylightHelper` | The app executable, and Chromium's sub-process executable. |
+| `SkylightWebKit` | The engine, over WebKit. Only this module knows about it. |
+| `Skylight` | The app executable. |
 
 [AGENTS.md](AGENTS.md) has the full map, where each kind of change goes, and the rules that keep it
 working. [CONTRIBUTING.md](CONTRIBUTING.md) covers branches, commits and pull requests.
@@ -211,7 +187,7 @@ new, Skylight offers to save the login; a key in the address field fills a saved
 it, and only offers the current Space's. Filling only happens from Skylight's own UI, and only into
 a page on the login's site. Passkeys in iCloud Keychain aren't available in Skylight yet, and would
 follow your Apple ID rather than a Space. Settings → Passwords imports from
-Aside, Arc, Chrome, Dia, Brave, Edge and other Chromium browsers on this Mac (macOS asks before
+Aside, Arc, Helium, Chrome, Dia, Brave, Edge and other Chromium browsers on this Mac (macOS asks before
 Skylight can read that browser's key), or from a CSV export (Chrome, Safari, 1Password, Bitwarden).
 Copying and exporting ask for Touch ID or your password.
 
@@ -257,12 +233,14 @@ back and it returns to the page. Tabs playing sound show a speaker you can click
 Store button) or from an unpacked folder. Pinned extensions get a button in the toolbar; the rest
 are in the Extensions menu (puzzle piece) next to them, where you pin and unpin. Settings can put
 them all in the menu. Right-click a button to open its options or remove it. Popups open as bubbles sized to
-their content. Extensions get Chrome's tabs and windows API (`tabs.query`, `tabs.update`,
-`tabs.create`, `windows.getCurrent` and the rest), backed by Skylight's own tabs. Every profile
-runs them, each with its own storage and its own tabs, so a password manager extension signs in
-separately in each. One you add while Skylight is open reaches the Spaces on Default straight away
-and the rest after a relaunch; turning one off or removing it finishes at the next launch. Badges,
-tab events (`tabs.onActivated`) and buttons with no popup (`action.onClicked`) don't work yet.
+their content. They run on WebKit's own support for web extensions, so they get the standard APIs
+(`tabs`, `windows`, `storage`, `runtime` and the rest) over Skylight's own tabs. Every profile runs
+them, each with its own storage and its own tabs, so a password manager extension signs in
+separately in each. Adding, turning off and removing one all take effect straight away. WebKit
+leaves out a few Chrome APIs (`runtime.onUpdateAvailable`, `offscreen` and others), so extensions
+with a service worker run from a private copy that stands in for them. Offscreen documents don't
+work, which for Proton Pass means it can't clear the clipboard after a delay. Badges don't show yet, `tabs.create` opens the tab without returning it, and extensions can't talk to a companion
+app on your Mac (native messaging), which some password managers need to unlock.
 
 ## Packages
 
@@ -322,23 +300,9 @@ The token in `mcp.json` (mode 600) is required on every request, and requests wi
 
 ## Performance
 
-Measured on an M5 Pro, release build, with `scripts/bench.py` (median of 3 launches, fresh data
-folder each time) and `swift test -c release --filter Performance`.
-
-| Bundle | |
-|---|---|
-| Skylight.app | 334 MB (Chromium is 326 MB of it; Skylight's own code is 4 MB) |
-| Arc.app, for comparison | 870 MB |
-
-| Runtime | window up | memory | idle CPU | processes |
-|---|---|---|---|---|
-| Empty tab | 0.45 s | 138 MB | 0.8% | 4 |
-| One light page (example.com) | 0.45 s | 242 MB | 0.9% | 6 |
-| One heavy page (swift.org, animated) | 0.44 s | 621 MB | 6.0% | 6 |
-| Five tabs, one awake | 0.45 s | 286 MB | 0.7% | 6 |
-
-Memory is physical footprint summed over Skylight and its helpers. Sleeping tabs cost almost
-nothing: five tabs with one awake use about as much as one page.
+Measured on an M5 Pro, release build, with `swift test -c release --filter Performance`.
+`scripts/bench.py` measures launches, memory and bundle size on your own Mac. Skylight.app is 18 MB:
+the engine is part of macOS.
 
 | Hot paths | |
 |---|---|
@@ -357,8 +321,7 @@ Skylight (app) ─┬─> SkylightUI ──> SkylightBrowser ─┬─> Skylight
                 │                                   ├─> SkylightKit      packages, extensions, passwords
                 │                                   ├─> SkylightAgent    tool hub, page scripts, WebMCP
                 │                                   └─> SkylightMCP      MCP over local HTTP
-                └─> SkylightCEF ──> CEFBridge (Objective-C++) ──> CEF
-SkylightHelper: Chromium's sub-process executable.
+                └─> SkylightWebKit ──> WebKit
 ```
 
 - **One source of truth.** Every change, from a click, a shortcut, a package or an agent, is a
@@ -366,7 +329,7 @@ SkylightHelper: Chromium's sub-process executable.
   never touches the engine. `PageCoordinator` turns effects into engine calls.
 - **Tabs are not pages.** A tab is a saved place; a page is a live engine object that exists only
   while the tab is awake. Pages are created lazily and put to sleep by `HibernationPolicy`.
-- **The engine is swappable.** Only `SkylightCEF` and `CEFBridge` know about Chromium.
+- **The engine is swappable.** Only `SkylightWebKit` knows about WebKit.
 - **System components first.** The window is a `NavigationSplitView` whose SwiftUI toolbar is
   bridged into the window's `NSToolbar`; the sidebar is a `List` with system drag and drop;
   Settings is an `NSTabViewController` of grouped `Form`s; prompts are alerts. Custom drawing is
@@ -374,24 +337,17 @@ SkylightHelper: Chromium's sub-process executable.
 
 ## Roadmap
 
-1. **Now:** stock CEF 156 in Alloy style (embedded in our window).
-2. **Self-built CEF** with ungoogled-chromium's privacy patches and proprietary codecs.
-3. **Small patches toward full Chrome:** Chrome-style browsers inside a native parent view, so
-   extensions get Chrome's own tab model (badges, tab events, adding one without a relaunch) instead of
-   Skylight's shim. Today they're loaded over a private DevTools pipe (no port is opened) and a
-   small shim maps Chrome's tabs and windows API onto Skylight's tabs. Passkeys.
-4. Tab sync between machines, easels, notes and highlights as built-in packages, an in-app agent.
+1. **Now:** the system's WebKit, with video codecs and DRM from macOS.
+2. Native messaging for extensions, badges, web notifications, and passkeys (they need an Apple
+   entitlement for browsers).
+3. Tab sync between machines, easels, notes and highlights as built-in packages, an in-app agent.
 
-Profiles: Chromium only accepts profile folders directly inside its root, so the default profile
-is now `Engine/Default` and others `Engine/Profile-<id>`. Earlier builds used `Engine/Profiles/<id>`,
-which Chromium rejected ("Cannot create profile"), so pages there most likely never kept cookies;
-you may need to sign in to sites again once.
-
-Known limits: stock CEF has no H.264, AAC or HEVC, so video on X and other H.264 sites won't play
-until the self-built CEF above; Google account sync is unavailable to third-party Chromium builds;
-Widevine (Netflix and similar) needs Google's signing; iCloud passkeys need an Apple entitlement for
-browsers.
+Known limits: extensions' data doesn't carry over from another browser or between Spaces; Google
+account sync is unavailable; Widevine isn't available, so DRM video depends on a site offering
+FairPlay. Older versions ran on Chromium: the first launch of this one moves your sign-ins across
+from them, and saved site data other than cookies stays behind. Docked Web Inspector uses a private
+WebKit call.
 
 ## License
 
-MIT. CEF and Chromium are under their own BSD-style licenses (`Vendor/cef/LICENSE.txt`).
+MIT.

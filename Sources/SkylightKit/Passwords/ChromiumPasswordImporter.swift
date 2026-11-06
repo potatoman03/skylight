@@ -62,6 +62,8 @@ public struct ChromiumBrowser: Sendable, Identifiable, Equatable {
             browser("aside", "Aside", "Aside/Default",
                     ["Aside Safe Storage", "Aside Browser Safe Storage", "Chromium Safe Storage"], ["at.studio.AsideBrowser"]),
             browser("arc", "Arc", "Arc/User Data/Default", ["Arc Safe Storage"], ["company.thebrowser.Browser"]),
+            // Helium renames the usual "… Safe Storage" item.
+            browser("helium", "Helium", "net.imput.helium/Default", ["Helium Storage Key"], ["net.imput.helium"]),
             browser("dia", "Dia", "Dia/User Data/Default", ["Dia Safe Storage"], ["company.thebrowser.dia"]),
             browser("chrome", "Chrome", "Google/Chrome/Default", ["Chrome Safe Storage"], ["com.google.Chrome"]),
             browser("brave", "Brave", "BraveSoftware/Brave-Browser/Default", ["Brave Safe Storage"], ["com.brave.Browser"]),

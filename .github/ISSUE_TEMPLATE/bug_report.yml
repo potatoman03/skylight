@@ -50,6 +50,6 @@ body:
     attributes:
       label: Logs
       description: >
-        For page problems, the relevant part of `engine.log` in the data folder
-        (`~/Library/Application Support/Skylight`). Remove anything private first.
+        For page problems, anything from Develop → Inspect's console.
+        Remove anything private first.
       render: text

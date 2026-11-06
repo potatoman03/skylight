@@ -5,7 +5,8 @@
 
 Runs the built app against a throwaway data folder (your tabs are never touched), once per
 scenario, and prints a table. Memory is each process's physical footprint (what Activity Monitor
-calls Memory), summed over Skylight and its helpers. CPU is the share of one core used while idle.
+calls Memory), for Skylight's own process. WebKit's web, GPU and network processes
+belong to macOS, not to Skylight's process tree, so they aren't counted. CPU is the share of one core used while idle.
 """
 import json, os, re, shutil, subprocess, sys, tempfile, time
 
@@ -141,14 +142,9 @@ def main():
         sys.exit(f"Build the app first: scripts/bundle.sh release ({EXE} is missing)")
     window_ready(0)  # Compile the helper before timing anything.
 
-    fw = os.path.join(APP, "Contents/Frameworks")
-    cef = os.path.join(fw, "Chromium Embedded Framework.framework")
     print("Bundle")
     print(f"  Skylight.app            {mb(du(APP))}")
-    print(f"  Chromium (CEF)          {mb(du(cef))}")
     print(f"  Skylight's own code     {mb(os.path.getsize(EXE))} (main binary)")
-    helpers = [d for d in os.listdir(fw) if d.endswith(".app")]
-    print(f"  Helper apps             {len(helpers)} × {mb(du(os.path.join(fw, helpers[0])))}" if helpers else "")
     for other in ["/Applications/Arc.app", "/Applications/Google Chrome.app", "/Applications/Microsoft Edge.app",
                   "/Applications/Brave Browser.app", "/Applications/Firefox.app"]:
         if os.path.exists(other):

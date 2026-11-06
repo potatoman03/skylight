@@ -18,6 +18,7 @@ public final class Browser {
     public let agents: AgentService
     public let commandBar = CommandBarModel()
     public let preferences: Preferences
+    private let paths: AppPaths
     public let passwords: PasswordService
     public let extensions: ExtensionService
     public let media = MediaService()
@@ -57,6 +58,7 @@ public final class Browser {
 
     public init(engine: WebEngine, paths: AppPaths, version: String, credentials: CredentialStore, autofillStore: AutofillStore) {
         self.engine = engine
+        self.paths = paths
         let preferences = Preferences(fileURL: paths.preferencesFile)
         self.preferences = preferences
         self.passwords = PasswordService(store: credentials, toasts: toasts,
@@ -89,10 +91,6 @@ public final class Browser {
             if tabClosed { self?.prompts.dismissAll(for: id) }
         }
         commandBar.source = self
-        extensions.makePage = { [weak self] url, delegate in
-            guard let self else { return nil }
-            return self.engine.makePage(url: url, profile: self.pages.profile(for: self.store.state.activeSpace.profileID), delegate: delegate)
-        }
         extensions.openTab = { [weak self] url in self?.store.send(.openTab(url)) }
         extensions.currentTabs = { [weak self] in
             guard let self else { return ([], nil) }
@@ -110,8 +108,6 @@ public final class Browser {
         }
         passwords.profiles = { [weak self] in self?.store.state.profiles.map(\.id) ?? [.standard] }
         passwords.reload()
-        extensions.showingDefaultProfile = { [weak self] in self?.store.state.activeSpace.profileID == .standard }
-        extensions.hasOtherProfiles = { [weak self] in (self?.store.state.profiles.count ?? 0) > 1 }
         media.page = { [weak self] id in self?.pages.page(for: id) }
         media.autoPictureInPicture = { preferences.autoPictureInPicture }
         var shown: [TabID] = []
@@ -130,6 +126,7 @@ public final class Browser {
     }
 
     public func start() {
+        moveChromiumSessions(from: paths)
         // Settings used to open as a tab; it has its own window now.
         for tab in store.state.tabs.values where tab.url.isSkylightPage { store.send(.removeTab(tab.id)) }
         packages.start()
@@ -156,11 +153,11 @@ public final class Browser {
         Task { try? await Task.sleep(for: .seconds(1.5)); begin() }
     }
 
-    /// Closes every page, saves, then calls `completion` once the engine may shut down.
-    public func shutdown(completion: @escaping @MainActor () -> Void) {
+    /// Saves and closes every page.
+    public func shutdown() {
         store.flush()
         mcp.stop()
-        pages.closeAll(completion: completion)
+        pages.closeAll()
     }
 
     private func updatePageScripts() {
@@ -335,6 +332,7 @@ public final class Browser {
         autofill.move(from: id)
         history.clear(id)
         store.send(.deleteProfile(id))
+        Task { await pages.deleteProfile(id) }
     }
 
     public func duplicateSpace() {
@@ -401,7 +399,7 @@ public final class Browser {
     }
 
     public enum ImportSource: String, CaseIterable, Sendable {
-        case arc = "Arc", aside = "Aside", chrome = "Chrome", dia = "Dia", brave = "Brave", edge = "Edge", vivaldi = "Vivaldi"
+        case arc = "Arc", aside = "Aside", helium = "Helium", chrome = "Chrome", dia = "Dia", brave = "Brave", edge = "Edge", vivaldi = "Vivaldi"
 
         /// Where the browser keeps what we import: Arc's sidebar, or a Chromium `Bookmarks` file.
         public var file: URL {
@@ -409,6 +407,7 @@ public final class Browser {
             return switch self {
             case .arc: BrowserImporters.arcFile
             case .aside: support.appending(path: "Aside/Default/Bookmarks")
+            case .helium: support.appending(path: "net.imput.helium/Default/Bookmarks")
             case .chrome: support.appending(path: "Google/Chrome/Default/Bookmarks")
             case .dia: support.appending(path: "Dia/User Data/Default/Bookmarks")
             case .brave: support.appending(path: "BraveSoftware/Brave-Browser/Default/Bookmarks")
@@ -622,10 +621,6 @@ extension Browser: PageEventSink {
             return media.handle(message, tab: id)
         case "extensions.storeStatus", "extensions.storeInstall":
             return await extensions.handleStore(message, tabURL: store.state.tabs[id]?.url)
-        case let type? where type.hasPrefix("extensions."):
-            // For extensions' own pages, not the web.
-            guard store.state.tabs[id]?.url.scheme == "chrome-extension" else { throw WebEngineError.script("Unknown message.") }
-            return extensions.handle(message, from: pages.page(for: id))
         default:
             throw WebEngineError.script("Unknown message.")
         }
