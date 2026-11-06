@@ -52,6 +52,8 @@ public final class CommandBarModel {
     public private(set) var mode: Mode = .newTab
     public var query = "" { didSet { if query != oldValue { selection = 0 } } }
     public var selection = 0
+    /// Counts each time the bar is asked for, so one that's already open can show it heard.
+    public private(set) var requests = 0
     @ObservationIgnored public weak var source: CommandSource?
 
     public init() {}
@@ -62,6 +64,7 @@ public final class CommandBarModel {
         self.mode = mode
         self.query = query
         selection = 0
+        requests += 1
         isPresented = true
     }
 

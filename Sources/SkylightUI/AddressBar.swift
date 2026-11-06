@@ -16,7 +16,7 @@ struct AddressField: View {
         let status = browser.selectedStatus
         let editing = bar.isPresented && bar.mode == .editCurrent
         // A new tab hasn't gone anywhere yet; the page behind the bar is empty.
-        let newTab = bar.isPresented && bar.mode == .newTab
+        let newTab = tab == nil || bar.isPresented && bar.mode == .newTab
 
         // At rest, just where you are: the site, then the page's title. Click to type.
         HStack(spacing: 8) {
@@ -47,10 +47,6 @@ struct AddressField: View {
                     .foregroundStyle(.secondary)
                     .fadingTail()
                 LoginKeyButton(url: tab.url)
-            } else {
-                Text("Search or enter website name")
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .font(.system(size: 13))
@@ -329,22 +325,31 @@ struct CommandPalette: View {
     @Environment(Browser.self) private var browser
     @FocusState private var focused: Bool
 
+    private static let fieldHeight: CGFloat = 54
+
     var body: some View {
         @Bindable var bar = browser.commandBar
+        // It stays on an empty page when you're not typing in it.
+        let emptyPage = !bar.isPresented || bar.mode == .newTab
+        let split = bar.isPresented && bar.mode == .split
+        let items = bar.isPresented ? bar.items : []
+        // Just the field, in the middle of the page.
+        let bare = emptyPage && items.isEmpty
         GeometryReader { geo in
+            let top = emptyPage ? geo.size.height * 0.42 - Self.fieldHeight / 2 : max(40, geo.size.height * 0.18)
             ZStack(alignment: .top) {
                 // Clicking outside closes it. Over a new tab's empty page there's nothing to dim.
-                Color.black.opacity(bar.mode == .newTab ? 0 : 0.06)
+                Color.black.opacity(emptyPage ? 0 : 0.06)
                     .contentShape(.rect)
                     .onTapGesture { browser.dismissCommandBar() }
 
                 VStack(spacing: 0) {
                     HStack(spacing: 12) {
-                        Image(systemName: bar.mode == .split ? "rectangle.split.2x1" : "magnifyingglass")
+                        Image(systemName: split ? "rectangle.split.2x1" : "magnifyingglass")
                             .font(.title3)
                             .foregroundStyle(.secondary)
                             .frame(width: 22)
-                        TextField(bar.mode == .split ? "Open beside this tab" : "Search or enter website name", text: $bar.query)
+                        TextField(split ? "Open beside this tab" : "Search or enter website name", text: $bar.query)
                             .textFieldStyle(.plain)
                             .font(.title3)
                             .focused($focused)
@@ -354,13 +359,13 @@ struct CommandPalette: View {
                             .onKeyPress(.escape) { browser.dismissCommandBar(); return .handled }
                     }
                     .padding(.horizontal, 18)
-                    .frame(height: 54)
+                    .frame(height: Self.fieldHeight)
 
-                    if !bar.items.isEmpty {
+                    if !items.isEmpty {
                         Divider()
                         ScrollView {
                             VStack(spacing: 2) {
-                                ForEach(Array(bar.items.enumerated()), id: \.element.id) { index, item in
+                                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                                     PaletteRow(item: item, highlighted: index == bar.selection)
                                         .onTapGesture { bar.submit(item) }
                                         .onHover { if $0 { bar.selection = index } }
@@ -369,20 +374,46 @@ struct CommandPalette: View {
                             .padding(6)
                         }
                         .scrollBounceBehavior(.basedOnSize)
-                        .frame(maxHeight: min(420, geo.size.height * 0.55))
+                        .frame(maxHeight: min(420, geo.size.height - top - Self.fieldHeight - 24))
                         .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .frame(width: min(640, geo.size.width - 48))
-                .glassEffect(.regular, in: .rect(cornerRadius: 20))
+                .glassEffect(bare ? .clear : .regular, in: .rect(cornerRadius: bare ? Self.fieldHeight / 2 : 20))
+                // Asked for while it's already here, it shows it heard.
+                .keyframeAnimator(initialValue: 1.0, trigger: bar.requests) { view, scale in
+                    view.scaleEffect(Motion.reduceMotion ? 1 : scale)
+                } keyframes: { _ in
+                    KeyframeTrack {
+                        SpringKeyframe(1.025, duration: 0.1, spring: .snappy)
+                        SpringKeyframe(1, duration: 0.24, spring: .snappy)
+                    }
+                }
                 .shadow(color: .black.opacity(0.2), radius: 30, y: 14)
-                .padding(.top, max(40, geo.size.height * 0.18))
+                .padding(.top, top)
             }
         }
         .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
-        .onAppear { DispatchQueue.main.async { focused = true } }
+        .onAppear {
+            // You land on an empty page ready to type, however you got there.
+            if !bar.isPresented { browser.presentCommandBar(.newTab) }
+            DispatchQueue.main.async { focused = true }
+        }
         .onChange(of: focused) { _, now in
-            if !now { DispatchQueue.main.async { focused = browser.commandBar.isPresented } }
+            if now {
+                if !browser.commandBar.isPresented { browser.presentCommandBar(.newTab) }
+            } else {
+                DispatchQueue.main.async {
+                    guard browser.commandBar.isPresented else { return }
+                    // Nothing else competes for the keyboard over a page, but on an empty one
+                    // you might be renaming a Space.
+                    if browser.store.state.selectedTab == nil { browser.dismissCommandBar() } else { focused = true }
+                }
+            }
+        }
+        .onChange(of: bar.isPresented) { _, now in
+            focused = now
+            if !now { bar.query = "" }
         }
     }
 }

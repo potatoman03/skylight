@@ -12,6 +12,9 @@ public struct RootView: View {
     @State private var anchor = AddressAnchor()
     @State private var newName = ""
     @State private var leaving: Task<Void, Never>?
+    /// The hidden sidebar has finished sliding away, so the page can have its room.
+    @State private var pageTookRoom = false
+    @State private var takingRoom: Task<Void, Never>?
     @State private var backdropFrame = CGRect.zero
     @Environment(\.colorScheme) private var scheme
 
@@ -29,23 +32,34 @@ public struct RootView: View {
         let fullscreen = browser.pages.fullscreenTabID != nil
         let space = state.activeSpace
         let accent = prefs.skyBackdrop ? prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue).accent : nil
+        let sidebarWidth = max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound)
+        let sidebarOnScreen = browser.showsSidebar && !fullscreen
+        // A peeking sidebar lies over the page, which keeps its width.
+        let sidebarRoom = pageTookRoom || fullscreen ? 0 : sidebarWidth
 
         // Our own sidebar column, flush with the page: the system's floating glass sidebar casts a
         // shadow on the page, and moves its toggle about.
-        HStack(spacing: 0) {
-            if browser.showsSidebar, !fullscreen {
-                Sidebar()
-                    .frame(width: max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound))
-                    .overlay(alignment: .trailing) { SidebarEdge() }
-                    .onHover { if browser.sidebarPeeking { peek($0) } }
-                    .transition(.move(edge: .leading))
-            }
+        ZStack(alignment: .leading) {
             ContentArea()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Up under the hidden toolbar, edge to edge.
                 .ignoresSafeArea(.container, edges: fullscreen ? .top : [])
                 // A split's rounded panes sit on the window's backdrop, like the sidebar.
                 .background(showsSplit ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
+                .padding(.leading, sidebarRoom)
+                // The page takes its new width in one step: each width on the way would lay the
+                // site out again. The sidebar slides on its own.
+                .animation(nil, value: sidebarRoom)
+            // Off to the side when it's hidden, not gone, so it can peek straight back.
+            Sidebar()
+                .frame(width: sidebarWidth)
+                // Without its room, it's over the page rather than the window's backdrop.
+                .background { if sidebarRoom == 0 { SidebarGround() } }
+                .overlay(alignment: .trailing) { SidebarEdge() }
+                .onHover { if browser.sidebarPeeking { peek($0) } }
+                .offset(x: sidebarOnScreen ? 0 : -sidebarWidth - 1)
+                .allowsHitTesting(sidebarOnScreen)
+                .accessibilityHidden(!sidebarOnScreen)
         }
         // With the sidebar hidden, the pointer at the window's left edge brings it out, just as
         // showing it does, until the pointer leaves it. A thin strip leaves the page's edge usable.
@@ -62,7 +76,20 @@ public struct RootView: View {
         // The menu opens from the sidebar, so a peeking sidebar stays until it closes.
         .onChange(of: browser.showsMainMenu) { _, open in if !open, browser.sidebarPeeking { peek(false) } }
         // Showing or hiding it for good ends the peek.
-        .onChange(of: prefs.sidebarCollapsed) { leaving?.cancel() }
+        .onChange(of: prefs.sidebarCollapsed) { _, collapsed in
+            leaving?.cancel()
+            takingRoom?.cancel()
+            // The page narrows first and widens last, so the sidebar never crosses it.
+            if collapsed {
+                takingRoom = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(350))
+                    if !Task.isCancelled { pageTookRoom = true }
+                }
+            } else {
+                pageTookRoom = false
+            }
+        }
+        .onAppear { pageTookRoom = prefs.sidebarCollapsed }
         // One backdrop behind the toolbar and sidebar, translucent or the theme's; only the page is opaque.
         .background {
             WindowBackdrop().ignoresSafeArea()
@@ -183,6 +210,26 @@ private struct BrowserToolbar: ToolbarContent {
             ExtensionsMenuButton()
         }
         .sharedBackgroundVisibility(.hidden)
+    }
+}
+
+/// What the window's backdrop would show, for a sidebar peeking over a page.
+private struct SidebarGround: View {
+    @Environment(Browser.self) private var browser
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let prefs = browser.preferences
+        let space = browser.store.state.activeSpace
+        Group {
+            if prefs.skyBackdrop {
+                let palette = prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue)
+                LinearGradient(colors: [Color(palette.sky), Color(palette.horizon)], startPoint: .top, endPoint: .bottom)
+            } else {
+                WindowBackdrop()
+            }
+        }
+        .ignoresSafeArea()
     }
 }
 

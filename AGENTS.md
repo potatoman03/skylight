@@ -78,7 +78,10 @@ Rules the map implies:
   moves and resizes at once, outside any `withAnimation`. Anything drawn over a page (dividers,
   grips, drop previews) must follow its frame without animating, or it drifts from the page. To
   change how panes arrive, use the coordinator's `CATransition` crossfade, not a SwiftUI
-  transition.
+  transition. The same goes for its width: the sidebar slides on its own, and the page takes its
+  new width in one step, because each width on the way would make the site lay itself out again.
+  A theme's picture is an AppKit view too, so anything holding one doesn't fade: the wash over it
+  would fade and the picture wouldn't, and it flashes.
 - **Tabs are not pages.** A tab is a saved place in `BrowserState`. A page exists only while its
   tab is awake (`PageCoordinator.pages`) and is put to sleep by `HibernationPolicy`. Code that
   needs a page must handle there being none (`page(for:)` returns nil). Use `wake(_:)` only if the
