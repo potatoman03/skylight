@@ -19,6 +19,6 @@
 
 - [ ] Tests for new logic (reducer actions, parsing, matching, MCP)
 - [ ] Docs updated: README for what users see, AGENTS.md for a new boundary or rule
-- [ ] No CEF or Chromium types outside `SkylightCEF` and `CEFBridge`
+- [ ] No WebKit types outside `SkylightWebKit`
 - [ ] Tests don't touch real profiles, the login Keychain or the Chrome Web Store
 - [ ] Commit messages follow CONTRIBUTING.md, and `.signing` isn't committed

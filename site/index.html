@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Skylight: an open-source browser for your Mac</title>
-<meta name="description" content="Skylight is a free, open-source browser for macOS with Spaces and a vertical sidebar, built around Chromium.">
+<meta name="description" content="Skylight is a free, open-source browser for macOS with Spaces and a vertical sidebar, built on WebKit.">
 <meta name="theme-color" content="#fbfcfe" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0f1524" media="(prefers-color-scheme: dark)">
 <meta property="og:title" content="Skylight">
@@ -25,7 +25,10 @@
   <a class="button" href="https://github.com/potatoman03/skylight/releases/latest/download/Skylight.dmg">Download</a>
   <p class="meta"><span id="version"></span>macOS 26, Apple silicon</p>
   <figure>
-    <img src="screenshot.webp" width="1400" height="897" alt="Skylight's window, with tabs in a sidebar on the left and the command bar open over a bright sky.">
+    <div class="demo" id="demo">
+      <noscript><img src="screenshot.webp" width="1400" height="897" alt="Skylight's window, with tabs in a sidebar on the left and the command bar open over a bright sky."></noscript>
+    </div>
+    <figcaption>Go on, try it. Type anything, or click around.</figcaption>
   </figure>
 </main>
 
@@ -34,5 +37,6 @@
 </footer>
 
 <script src="site.js"></script>
+<script src="window.js"></script>
 </body>
 </html>
