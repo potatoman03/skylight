@@ -141,6 +141,7 @@ working. [CONTRIBUTING.md](CONTRIBUTING.md) covers branches, commits and pull re
 |---|---|
 | ⌘T | New tab: the address field opens for a search, a URL, any open tab or a command |
 | ⌘L | Edit the current address |
+| ⌘⇧R | Reload without the cache |
 | ⌘W / ⌘⇧T | Close tab / reopen it |
 | ⌘D / ⌘⇧D | Pin the tab / add it to favorites |
 | ⌘⇧K | Clear Today |
