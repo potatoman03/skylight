@@ -71,7 +71,7 @@ a:focus-visible {
   border-radius: 6px;
 }
 
-.meta, .note, footer {
+.meta, footer {
   color: var(--ink-soft);
   font-size: 13px;
 }
@@ -86,11 +86,6 @@ figure img {
   height: auto;
   border-radius: 12px;
   box-shadow: 0 0 0 1px var(--line);
-}
-
-.note {
-  max-width: 34em;
-  margin: 32px auto 0;
 }
 
 footer { padding: 48px 24px 40px; }

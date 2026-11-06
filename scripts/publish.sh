@@ -1,24 +1,20 @@
 #!/usr/bin/env bash
-# Publishes a release that installed copies of Skylight update to: builds it, zips it, signs the
-# zip with the update key, writes the update feed, and puts both on a GitHub release. Skylight
-# reads the feed from the latest release (SUFeedURL in bundle.sh), so the newest release wins.
-# The release also gets Skylight.dmg for new people: its name never changes, so the website's
-# link to releases/latest/download/Skylight.dmg is always the newest.
+# Publishes a release: signs it with your Developer ID and has Apple notarize it (scripts/release.sh),
+# zips it, signs the zip with the update key, writes the update feed, and puts them on a GitHub
+# release. Skylight reads the feed from the latest release (SUFeedURL in bundle.sh), so the newest
+# release wins. The release also gets Skylight.dmg for new people: its name never changes, so the
+# website's link to releases/latest/download/Skylight.dmg is always the newest.
 #
 #   scripts/publish.sh 0.2.0
 #
 # Needs:
+# - What scripts/release.sh needs: a Developer ID Application certificate and notary credentials.
 # - The update key in your keychain. `generate_keys --account skylight` (in
 #   .build/artifacts/sparkle/Sparkle/bin) made it. Back it up with
 #   `generate_keys --account skylight -x skylight-update-key.txt` and keep that file somewhere
 #   safe and private: installed copies take updates signed with this key only.
-# - A signing identity in .signing (or SKYLIGHT_SIGN_IDENTITY). Ad hoc builds are development
-#   builds, which don't update.
 # - gh signed in to an account that can make releases on the repo, and the commit pushed.
 # - The repo public, for installed copies to download from it.
-#
-# Builds aren't notarized here (that's scripts/release.sh), so a first install still needs
-# System Settings → Privacy & Security → Open Anyway. Updates install without asking that.
 set -euo pipefail
 
 VERSION="${1:?usage: scripts/publish.sh VERSION}"
@@ -37,22 +33,15 @@ fi
 if [[ -z "$(git branch -r --contains HEAD)" ]]; then
   echo "Push $(git rev-parse --short HEAD) first: the release points at it." >&2; exit 1
 fi
-if [[ -z "${SKYLIGHT_SIGN_IDENTITY:-}" && ! -f .signing ]]; then
-  echo "No signing identity (.signing or SKYLIGHT_SIGN_IDENTITY): an ad hoc build won't update." >&2; exit 1
-fi
 
 BUILD="$(git rev-list --count HEAD)"
 swift package resolve
-SKYLIGHT_VERSION="$VERSION" SKYLIGHT_BUILD="$BUILD" scripts/bundle.sh release
+scripts/release.sh "$VERSION"
 
 mkdir -p "$OUT"
 rm -f "$ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
-STAGE="$(mktemp -d)"
-ditto "$APP" "$STAGE/Skylight.app"
-ln -s /Applications "$STAGE/Applications"
-rm -f "$DMG"
-hdiutil create -volname "Skylight $VERSION" -srcfolder "$STAGE" -fs APFS -format ULMO -quiet "$DMG"
+cp "$ROOT/build/Skylight-$VERSION.dmg" "$DMG"
 # Prints: sparkle:edSignature="…" length="…"
 SIGNATURE="$("$SPARKLE_BIN/sign_update" --account skylight "$ZIP")"
 
