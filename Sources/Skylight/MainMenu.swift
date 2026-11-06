@@ -60,6 +60,7 @@ enum MainMenu {
             item("Toggle Sidebar", #selector(AppDelegate.toggleSidebar(_:)), "s", target: target),
             .separator(),
             item("Reload Page", #selector(AppDelegate.reload(_:)), "r", target: target),
+            item("Hard Reload", #selector(AppDelegate.hardReload(_:)), "R", target: target),
             item("Stop", #selector(AppDelegate.stopLoading(_:)), ".", target: target),
             .separator(),
             item("Boost This Site", #selector(AppDelegate.boostSite(_:)), "b", [.command, .shift], target: target),

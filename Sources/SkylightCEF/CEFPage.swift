@@ -24,6 +24,7 @@ final class CEFPage: NSObject, WebPage {
     func goBack() { browser.goBack() }
     func goForward() { browser.goForward() }
     func reload() { browser.reload() }
+    func hardReload() { browser.reloadIgnoringCache() }
     func stop() { browser.stopLoad() }
     func setVisible(_ visible: Bool) { browser.setHidden(!visible) }
     func showDeveloperTools() { browser.showDevTools() }

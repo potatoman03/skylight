@@ -40,7 +40,7 @@ public protocol CommandSource: AnyObject {
 @Observable
 public final class CommandBarModel {
     public enum Mode: Equatable, Sendable {
-        /// ⌘T: Enter opens a new tab.
+        /// An empty page: Enter goes there in this tab, or opens one if there are none.
         case newTab
         /// ⌘L: Enter navigates the selected tab.
         case editCurrent
@@ -54,15 +54,24 @@ public final class CommandBarModel {
     public var selection = 0
     /// Counts each time the bar is asked for, so one that's already open can show it heard.
     public private(set) var requests = 0
+    /// What the address read when you started editing it.
+    private var opening = ""
     @ObservationIgnored public weak var source: CommandSource?
 
     public init() {}
+
+    /// You've changed the address you started editing.
+    public var edited: Bool { mode == .editCurrent && query != opening }
+
+    /// Nothing to suggest for an address you haven't touched.
+    public var suggestions: [CommandItem] { mode == .editCurrent && !edited ? [] : Array(items.prefix(8)) }
 
     public var items: [CommandItem] { source?.commandItems(for: query, mode: mode) ?? [] }
 
     public func present(_ mode: Mode, query: String = "") {
         self.mode = mode
         self.query = query
+        opening = query
         selection = 0
         requests += 1
         isPresented = true
@@ -73,7 +82,7 @@ public final class CommandBarModel {
     }
 
     public func moveSelection(_ delta: Int) {
-        let count = items.count
+        let count = suggestions.count
         guard count > 0 else { return }
         selection = (selection + delta + count) % count
     }

@@ -21,8 +21,7 @@ struct Sidebar: View {
 
     /// No page in front of the theme's picture, which then fills the window.
     private var showingScene: Bool {
-        let bar = browser.commandBar
-        return browser.preferences.sceneOnNewTab && (browser.store.state.selectedTab == nil || bar.isPresented && bar.mode == .newTab)
+        browser.preferences.sceneOnNewTab && browser.showsEmptyPage
     }
 
     var body: some View {
@@ -52,6 +51,8 @@ struct Sidebar: View {
             if order.favoritesLast { favorites }
         }
         .offset(x: swipeShift)
+        // A drag that ended outside the list can leave its slot behind.
+        .onChange(of: drag.active == nil) { _, ended in if ended { animate(Motion.travel) { drop.clear() } } }
         .background {
             // The window's backdrop (RootView) shows through. With a page over the rest of it, the
             // sidebar has the picture to itself and shows its subject, not its calm edge.
@@ -280,7 +281,7 @@ private struct SidebarMore: View {
                     switch item {
                     case .favorites: MoreFavorites()
                     case .newTab:
-                        Button { browser.presentCommandBar(.newTab) } label: {
+                        Button { browser.newTab() } label: {
                             SidebarFootLabel(title: item.name, symbol: "plus")
                         }
                         .buttonStyle(.plain)
@@ -756,7 +757,7 @@ private struct NewTabRow: View {
     @Environment(Browser.self) private var browser
 
     var body: some View {
-        Button { browser.presentCommandBar(.newTab) } label: {
+        Button { browser.newTab() } label: {
             Label("New Tab", systemImage: "plus")
                 .foregroundStyle(.secondary)
                 .sidebarRow()

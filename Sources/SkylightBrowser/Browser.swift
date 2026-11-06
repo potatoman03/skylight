@@ -179,13 +179,29 @@ public final class Browser {
         }
     }
 
-    /// ⌘L edits the address in the toolbar; ⌘T (and a new split pane) opens the command bar in the
-    /// middle of the page.
+    /// No tab, or a new one that hasn't gone anywhere yet.
+    public var showsEmptyPage: Bool { store.state.selectedTab?.isBlank ?? true }
+
+    /// A new tab, with the field on its empty page ready for an address.
+    public func newTab() {
+        if store.state.selectedTab?.isBlank != true { store.send(.openTab(Tab.blankURL)) }
+        presentCommandBar(.newTab)
+    }
+
+    /// ⌘L edits the address in the toolbar; an empty page and a new split pane have the command
+    /// bar in the middle of the page.
     public func presentCommandBar(_ mode: CommandBarModel.Mode) {
-        // With no tab there's no address to edit, only the empty page's field.
-        let mode = mode == .editCurrent && store.state.selectedTab == nil ? .newTab : mode
-        let query = mode == .editCurrent ? (store.state.selectedTab?.url.absoluteString ?? "") : ""
-        commandBar.present(mode, query: query)
+        // On an empty page there's no address to edit, only its field.
+        let mode = mode == .editCurrent && showsEmptyPage ? .newTab : mode
+        let address = mode == .editCurrent ? store.state.selectedTab?.url : nil
+        commandBar.present(mode, query: address.map(omnibox.short) ?? "")
+    }
+
+    public func copyLink() {
+        guard let url = store.state.selectedTab?.url else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        toasts.show("Copied link", symbol: "link")
     }
 
     public func dismissCommandBar() {
@@ -529,7 +545,8 @@ extension Browser: CommandSource {
         // A new tab is just the field until you type.
         if mode == .newTab, query.isEmpty { return [] }
         var rows: [CommandItem] = []
-        let newTab = mode != .editCurrent
+        // A new tab is already here, waiting to go somewhere.
+        let newTab = mode != .editCurrent && !showsEmptyPage
         let split = mode == .split
 
         if let interpretation = omnibox.interpret(query) {
@@ -543,7 +560,7 @@ extension Browser: CommandSource {
                                         subtitle: split ? "Open in split view" : newTab ? "Open in a new tab" : "Go",
                                         symbol: split ? "rectangle.split.2x1" : "arrow.up.right", pageURL: url, perform: go))
             case let .search(text, _):
-                rows.append(CommandItem(id: "search", kind: .search, title: text, subtitle: split ? "Search in split view" : "Search",
+                rows.append(CommandItem(id: "search", kind: .search, title: text, subtitle: split ? "Search in split view" : preferences.searchEngine.searchName,
                                         symbol: "magnifyingglass", perform: go))
             }
         }

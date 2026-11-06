@@ -453,6 +453,20 @@ private let c = URL(string: "https://c.example")!
 @Suite struct OmniboxTests {
     let omnibox = Omnibox()
 
+    @Test func shortAddressesLeadBack() {
+        func short(_ url: String) -> String { omnibox.short(URL(string: url)!) }
+        #expect(short("https://onorca.dev/") == "onorca.dev")
+        #expect(short("https://growth.example.com/dropoffs") == "growth.example.com/dropoffs")
+        #expect(short("https://example.com/a/") == "example.com/a/")
+        #expect(short("https://example.com/?q=1") == "example.com/?q=1")
+        #expect(short("http://127.0.0.1:55037/") == "127.0.0.1:55037")
+        // Typed short, these would go somewhere else.
+        #expect(short("http://example.com/") == "http://example.com/")
+        #expect(short("https://localhost/") == "https://localhost/")
+        #expect(short("https://intranet/") == "https://intranet/")
+        #expect(short("about:blank") == "about:blank")
+    }
+
     @Test(arguments: [
         ("example.com", "https://example.com"),
         ("localhost:3000/x", "http://localhost:3000/x"),

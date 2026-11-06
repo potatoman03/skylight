@@ -86,6 +86,8 @@ public protocol WebPage: AnyObject {
     func goBack()
     func goForward()
     func reload()
+    /// Reloads without using anything cached.
+    func hardReload()
     func stop()
 
     /// Tells the engine the page is (not) on screen, so it can throttle work.

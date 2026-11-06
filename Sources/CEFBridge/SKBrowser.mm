@@ -385,6 +385,22 @@ NSArray<NSString*>* MediaKinds(uint32_t mask) {
 - (void)resizeSubviewsWithOldSize:(NSSize)oldSize {
   for (NSView* v in self.subviews) v.frame = self.bounds;
 }
+// The keyboard belongs to the page inside. Chromium keeps a page's old views around, hidden, for
+// going back, so it's the one showing.
+- (BOOL)becomeFirstResponder {
+  NSView* page = self;
+  for (NSView* next = self; next;) {
+    page = next;
+    next = nil;
+    for (NSView* v in page.subviews.reverseObjectEnumerator) {
+      if (!v.hidden) {
+        next = v;
+        break;
+      }
+    }
+  }
+  return page == self || [self.window makeFirstResponder:page];
+}
 @end
 
 #pragma mark - Client
@@ -489,6 +505,22 @@ class BrowserClient : public CefClient,
     if (!b->GetHost()->IsFullscreen()) return false;
     b->GetHost()->ExitFullscreen(true);
     return true;
+  }
+
+  // ⌘← and ⌘→ on a page, as in Safari, once it has passed on them: a text field in it keeps them.
+  bool OnKeyEvent(CefRefPtr<CefBrowser> b, const CefKeyEvent& event, CefEventHandle os_event) override {
+    if (event.type != KEYEVENT_RAWKEYDOWN) return false;
+    const uint32_t keys = EVENTFLAG_COMMAND_DOWN | EVENTFLAG_SHIFT_DOWN | EVENTFLAG_CONTROL_DOWN | EVENTFLAG_ALT_DOWN;
+    if ((event.modifiers & keys) != EVENTFLAG_COMMAND_DOWN) return false;
+    if (event.windows_key_code == 0x25 /* VK_LEFT */) {
+      if (b->CanGoBack()) b->GoBack();
+      return true;
+    }
+    if (event.windows_key_code == 0x27 /* VK_RIGHT */) {
+      if (b->CanGoForward()) b->GoForward();
+      return true;
+    }
+    return false;
   }
 
   // MARK: Load
@@ -720,6 +752,10 @@ class BrowserClient : public CefClient,
 
 - (void)reload {
   if (_browser) _browser->Reload();
+}
+
+- (void)reloadIgnoringCache {
+  if (_browser) _browser->ReloadIgnoreCache();
 }
 
 - (void)stopLoad {

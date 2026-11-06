@@ -165,6 +165,7 @@ typedef NS_ENUM(NSInteger, SKDialogKind) {
 - (void)goBack;
 - (void)goForward;
 - (void)reload;
+- (void)reloadIgnoringCache;
 - (void)stopLoad;
 - (void)executeJavaScript:(NSString *)script;
 /// Runs `script` as if the user had just clicked: APIs that need a gesture (picture in picture,
