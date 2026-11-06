@@ -761,7 +761,15 @@ private struct NewTabRow: View {
                 .foregroundStyle(.secondary)
                 .sidebarRow()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(Style())
+    }
+
+    private struct Style: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.97 : 1)
+                .animation(Motion.resolved(Motion.feedback), value: configuration.isPressed)
+        }
     }
 }
 

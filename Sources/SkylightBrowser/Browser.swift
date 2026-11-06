@@ -182,6 +182,8 @@ public final class Browser {
     /// ⌘L edits the address in the toolbar; ⌘T (and a new split pane) opens the command bar in the
     /// middle of the page.
     public func presentCommandBar(_ mode: CommandBarModel.Mode) {
+        // With no tab there's no address to edit, only the empty page's field.
+        let mode = mode == .editCurrent && store.state.selectedTab == nil ? .newTab : mode
         let query = mode == .editCurrent ? (store.state.selectedTab?.url.absoluteString ?? "") : ""
         commandBar.present(mode, query: query)
     }
@@ -524,6 +526,8 @@ extension Browser: PageEventSink {
 extension Browser: CommandSource {
     public func commandItems(for raw: String, mode: CommandBarModel.Mode) -> [CommandItem] {
         let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A new tab is just the field until you type.
+        if mode == .newTab, query.isEmpty { return [] }
         var rows: [CommandItem] = []
         let newTab = mode != .editCurrent
         let split = mode == .split

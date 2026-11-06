@@ -15,6 +15,9 @@ struct ContentArea: View {
         let state = browser.store.state
         let tab = state.selectedTab
         let split = tab.flatMap { state.activeSpace.split(containing: $0.id) }
+        let bar = browser.commandBar
+        // An empty page is always ready for an address, whether or not you're typing yet.
+        let palette = tab == nil || bar.isPresented && bar.mode != .editCurrent
 
         GeometryReader { geo in
             let layout = PaneLayout(split: split, focused: tab?.id, size: geo.size, gap: PaneStyle.gap)
@@ -22,20 +25,6 @@ struct ContentArea: View {
                 // A split's panes sit on the window's backdrop, which shows around them.
                 if !layout.isSplit { Color(nsColor: .windowBackgroundColor) }
                 PageHost(view: browser.pages.hostView)
-
-                if tab == nil {
-                    ContentUnavailableView {
-                        Label("No Tab Open", systemImage: "safari")
-                    } description: {
-                        Text("Search or enter a website name in the address field.")
-                    } actions: {
-                        Button("New Tab") { browser.presentCommandBar(.newTab) }
-                            .keyboardShortcut("t")
-                    }
-                    .opacity(browser.commandBar.isPresented ? 0 : 1)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background { PageGround { Rectangle().fill(.background) } }
-                }
 
                 if let split, layout.isSplit, browser.pages.fullscreenTabID == nil {
                     PaneChrome(split: split, layout: layout)
@@ -53,17 +42,19 @@ struct ContentArea: View {
         .background { ViewProbe(found: { anchor.page = $0 }, moved: { anchor.moved() }) }
         .overlay(alignment: .topLeading) { SuggestionsList() }
         .overlay {
-            let bar = browser.commandBar
             ZStack {
-                // A new tab opens on an empty page, not over the one you were reading.
-                if bar.isPresented, bar.mode == .newTab {
-                    PageGround { Color(nsColor: .textBackgroundColor) }.transition(.opacity)
+                // A new tab opens on an empty page, not over the one you were reading. There's one
+                // of these, and it doesn't fade: fading reaches a picture's wash but not the
+                // picture, which is an AppKit view, so the picture would flash without it.
+                if tab == nil || bar.isPresented && bar.mode == .newTab {
+                    PageGround { Color(nsColor: .textBackgroundColor) }.transition(.identity)
                 }
-                if bar.isPresented, bar.mode != .editCurrent { CommandPalette() }
+                if palette { CommandPalette() }
             }
         }
-        .animation(browser.commandBar.isPresented ? Motion.resolved(Motion.arrive) : Motion.resolved(Motion.exit),
-                   value: browser.commandBar.isPresented && browser.commandBar.mode != .editCurrent)
+        .animation(Motion.resolved(palette ? Motion.arrive : Motion.exit), value: palette)
+        // A tab picked from the sidebar, say, is what you came for instead.
+        .onChange(of: tab?.id) { if bar.isPresented, bar.mode == .newTab { browser.dismissCommandBar() } }
         .overlay(alignment: .bottom) { ToastView() }
         .modifier(PromptAlerts())
     }
