@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Skylight: an open-source browser for your Mac</title>
 <meta name="description" content="Skylight is a free, open-source browser for macOS with Spaces and a vertical sidebar, built around Chromium.">
-<meta name="theme-color" content="#cfe9fb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#fbfcfe" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0f1524" media="(prefers-color-scheme: dark)">
 <meta property="og:title" content="Skylight">
 <meta property="og:description" content="A free, open-source browser for macOS with Spaces and a vertical sidebar.">
@@ -18,77 +18,20 @@
 </head>
 <body>
 
-<div class="sky" aria-hidden="true"></div>
-
-<header class="nav">
-  <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">Skylight</a>
-  <nav aria-label="Main">
-    <a href="#features">Features</a>
-    <a href="#install">Install</a>
-    <a href="https://github.com/potatoman03/skylight">GitHub</a>
-  </nav>
-</header>
-
 <main>
-  <section class="hero">
-    <h1>A browser that feels like your&nbsp;Mac.</h1>
-    <p class="lede">Skylight is a free, open-source browser with Spaces and a vertical sidebar, built around Chromium.</p>
-    <div class="actions">
-      <a class="button primary" href="https://github.com/potatoman03/skylight/releases/latest/download/Skylight.dmg">Download for Mac</a>
-      <a class="button" href="https://github.com/potatoman03/skylight">View the source</a>
-    </div>
-    <p class="meta"><span id="version"></span>macOS 26 or later, Apple silicon</p>
-  </section>
-
-  <figure class="shot">
+  <img class="icon" src="icon.png" alt="" width="72" height="72">
+  <h1>Skylight</h1>
+  <p class="lede">A browser that feels like your Mac.</p>
+  <a class="button" href="https://github.com/potatoman03/skylight/releases/latest/download/Skylight.dmg">Download</a>
+  <p class="meta"><span id="version"></span>macOS 26, Apple silicon</p>
+  <figure>
     <img src="screenshot.webp" width="1400" height="897" alt="Skylight's window, with tabs in a sidebar on the left and the command bar open over a bright sky.">
   </figure>
-
-  <section id="features" class="features">
-    <h2>Built for a lot of tabs</h2>
-    <dl>
-      <div>
-        <dt>Spaces, each with its own logins</dt>
-        <dd>Give a Space its own profile and it keeps its own cookies, passwords and extension data. Work and personal stay apart.</dd>
-      </div>
-      <div>
-        <dt>A sidebar that tidies itself</dt>
-        <dd>Favorites and pinned tabs stay put. Today's tabs archive themselves after 12 hours, and pages you've left go to sleep.</dd>
-      </div>
-      <div>
-        <dt>Your Chrome extensions</dt>
-        <dd>Install extensions from the Chrome Web Store. Everything runs on Chromium, so sites work the way you expect.</dd>
-      </div>
-      <div>
-        <dt>Themes worth keeping</dt>
-        <dd>Quiet colors, live patterns or whole scenes. Drop in a picture and Skylight builds a theme around it.</dd>
-      </div>
-      <div>
-        <dt>Bring everything with you</dt>
-        <dd>Import tabs, bookmarks, passwords and sign-ins from Aside, Arc, Chrome, Dia, Brave, Edge and other Chromium browsers.</dd>
-      </div>
-      <div>
-        <dt>Open to your AI agents</dt>
-        <dd>A built-in MCP server lets agents use the browser, and asks you first before they change anything.</dd>
-      </div>
-    </dl>
-  </section>
-
-  <section id="install" class="install">
-    <h2>Installing Skylight</h2>
-    <ol>
-      <li>Open <code>Skylight.dmg</code> and drag Skylight into Applications.</li>
-      <li>Open Skylight. macOS will say it can't check the app, because it isn't notarized by Apple yet.</li>
-      <li>Go to System Settings, then Privacy &amp; Security, and choose Open Anyway. You only do this once.</li>
-    </ol>
-    <p>After that, Skylight updates itself. It's all <a href="https://github.com/potatoman03/skylight">on GitHub</a> if you'd rather read the code or build it yourself.</p>
-  </section>
+  <p class="note">First time opening it? Go to System Settings, then Privacy &amp; Security, and choose Open Anyway.</p>
 </main>
 
-<footer class="foot">
-  <span>MIT licensed</span>
-  <a href="https://github.com/potatoman03/skylight/releases">Releases</a>
-  <a href="https://github.com/potatoman03/skylight/issues">Report a problem</a>
+<footer>
+  <a href="https://github.com/potatoman03/skylight">GitHub</a>
 </footer>
 
 <script src="site.js"></script>
