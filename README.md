@@ -54,7 +54,7 @@ SKYLIGHT_DEV=1 SKYLIGHT_DATA_DIR="$(mktemp -d)" build/Skylight.app/Contents/MacO
 swift test
 ```
 
-243 tests in Swift Testing, over SkylightCore, SkylightKit and SkylightMCP. They use temporary
+262 tests in Swift Testing, over SkylightCore, SkylightKit and SkylightMCP. They use temporary
 folders and in-memory stores only. `swift test -c release --filter Performance` prints the timings
 quoted under Performance below.
 
@@ -194,7 +194,10 @@ Copying and exporting ask for Touch ID or your password.
 **Import** (File → Import From, or Settings → Import) brings a browser's saved passwords and
 sign-ins into the Space on screen, after macOS asks to let Skylight read that browser's key. It also
 brings over Arc's Spaces, pinned tabs and favorites, or a Chromium browser's bookmarks: the bookmarks
-bar becomes favorites and each folder a Space, which is how Aside's sidebar folders come across.
+bar becomes favorites and each folder a Space. Saved tab groups, which are Aside's sidebar sections,
+become Spaces too, read from the browser's `Sync Data/LevelDB` while it keeps running.
+Aside Vault turns off Aside's own password, card and address saving and keeps its items encrypted, so
+export it as JSON and choose the file in Settings → Import; that brings logins, cards and addresses.
 Arc's other profiles become profiles here, and their Spaces keep their own logins and favorites.
 Passwords saved to a Google Account come too, as long as the browser keeps a copy on this Mac; if
 not, export them from passwords.google.com and import the CSV. So do your history (the latest 20,000

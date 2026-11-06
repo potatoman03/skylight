@@ -154,13 +154,20 @@ final class WebKitProfile: WebProfile {
     }
 
     func addCookies(_ cookies: [WebCookie]) async -> Int {
+        // The same value set twice isn't an import: a second run should say nothing's new.
+        var have = Set(await allCookies().map(Self.identity(of:)))
         var added = 0
         for cookie in cookies {
-            guard let native = Self.native(cookie) else { continue }
+            guard let native = Self.native(cookie), have.insert(Self.identity(of: native)).inserted else { continue }
             await set(native)
             added += 1
         }
         return added
+    }
+
+    private static func identity(of cookie: HTTPCookie) -> String {
+        let domain = cookie.domain.hasPrefix(".") ? String(cookie.domain.dropFirst()) : cookie.domain
+        return [domain, cookie.path, cookie.name, cookie.value].joined(separator: "\n")
     }
 
     /// A domain matches itself and its subdomains, whichever way the cookie spells it.
@@ -185,10 +192,12 @@ final class WebKitProfile: WebProfile {
     }
 
     private func cookies(within domains: [String]) async -> [HTTPCookie] {
+        await allCookies().filter { Self.isWithin($0.domain, domains) }
+    }
+
+    private func allCookies() async -> [HTTPCookie] {
         await withCheckedContinuation { done in
-            store.httpCookieStore.getAllCookies { all in
-                done.resume(returning: all.filter { Self.isWithin($0.domain, domains) })
-            }
+            store.httpCookieStore.getAllCookies { done.resume(returning: $0) }
         }
     }
 

@@ -30,12 +30,19 @@ public enum BrowserImporters {
         else { throw ImportError.unreadable("Arc") }
 
         // Arc stores maps as flat [key, value, key, value] lists.
-        let items = Dictionary((main["items"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }
-            .compactMap { item in (item["id"] as? String).map { ($0, item) } }, uniquingKeysWith: { a, _ in a })
+        let listed = (main["items"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }
+        let items = Dictionary(listed.compactMap { item in (item["id"] as? String).map { ($0, item) } },
+                               uniquingKeysWith: { a, _ in a })
+
+        /// In order when the parent lists them; otherwise each child still names its parent.
+        func children(of id: String) -> [String] {
+            if let ids = items[id]?["childrenIds"] as? [String], !ids.isEmpty { return ids }
+            return listed.filter { $0["parentID"] as? String == id }.compactMap { $0["id"] as? String }
+        }
 
         func links(under containerID: String, depth: Int = 0) -> [BrowserImport.Link] {
-            guard depth < 8, let item = items[containerID] else { return [] }
-            return (item["childrenIds"] as? [String] ?? []).flatMap { childID -> [BrowserImport.Link] in
+            guard depth < 8, items[containerID] != nil else { return [] }
+            return children(of: containerID).flatMap { childID -> [BrowserImport.Link] in
                 guard let child = items[childID], let data = child["data"] as? [String: Any] else { return [] }
                 if let tab = data["tab"] as? [String: Any] {
                     guard let raw = tab["savedURL"] as? String, let url = URL(string: raw), url.scheme?.hasPrefix("http") == true
@@ -49,13 +56,12 @@ public enum BrowserImporters {
 
         var spaces: [BrowserImport.ImportedSpace] = []
         for (n, space) in (main["spaces"] as? [Any] ?? []).compactMap({ $0 as? [String: Any] }).enumerated() {
-            let ids = space["containerIDs"] as? [Any] ?? []
-            guard let i = ids.firstIndex(where: { ($0 as? String) == "pinned" }), i + 1 < ids.count,
-                  let pinnedID = ids[i + 1] as? String else { continue }
+            let pinned = arcPinnedContainers(space)
+            guard !pinned.isEmpty else { continue }
             let info = space["customInfo"] as? [String: Any]
             spaces.append(.init(name: (space["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Space \(n + 1)",
                                 icon: arcIcon(info?["iconType"] as? [String: Any]),
-                                hue: arcHue(info), pinned: links(under: pinnedID), sourceProfile: arcProfile(space["profile"])))
+                                hue: arcHue(info), pinned: pinned.flatMap { links(under: $0) }, sourceProfile: arcProfile(space["profile"])))
         }
 
         // Each profile has its own favorites: a flat [profile, container, profile, container] list.
@@ -77,6 +83,21 @@ public enum BrowserImporters {
         let result = BrowserImport(source: "Arc", spaces: spaces, favorites: favorites)
         if result.isEmpty { throw ImportError.notFound("Arc") }
         return result
+    }
+
+    /// The containers holding a Space's pinned tabs. Arc moved from `containerIDs`, as in
+    /// `["pinned", id, "unpinned", id]`, to `newContainerIDs`, whose markers are objects like
+    /// `{"pinned":{}}`. A file can have either or both, depending on when it was last migrated.
+    static func arcPinnedContainers(_ space: [String: Any]) -> [String] {
+        for key in ["newContainerIDs", "containerIDs", "legacyContainerIDs"] {
+            guard let list = space[key] as? [Any] else { continue }
+            let found = list.indices.dropLast().compactMap { i -> String? in
+                let marked = list[i] as? String == "pinned" || (list[i] as? [String: Any])?["pinned"] != nil
+                return marked ? list[i + 1] as? String : nil
+            }
+            if !found.isEmpty { return found }
+        }
+        return []
     }
 
     /// The folder in Arc's `{"custom":{"_0":{"directoryBasename":"Profile 2"}}}`. Its default

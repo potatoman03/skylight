@@ -364,11 +364,11 @@ private struct ImportSettings: View {
             Section {
                 LabeledContent {
                     Button("Choose…") {
-                        csvResult = browser.passwords.importCSV(into: state.passwordProfile(for: state.activeSpace.profileID)) ?? csvResult
+                        csvResult = browser.passwords.importFile(into: state.passwordProfile(for: state.activeSpace.profileID)) ?? csvResult
                     }
                 } label: {
-                    Text("Safari and Apple Passwords")
-                    Text(csvResult ?? "macOS keeps these from other apps. In the Passwords app, choose File → Export All Passwords, then pick the file here.")
+                    Text("Password files")
+                    Text(csvResult ?? "macOS keeps Apple Passwords from other apps: in the Passwords app, choose File → Export All Passwords. Aside Vault's JSON export brings its cards too. Delete the file once it's in.")
                 }
             } footer: {
                 Text("Sites stay signed in where the browser allows it. Passkeys and two-factor codes can't leave the app that made them.")

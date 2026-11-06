@@ -8,11 +8,27 @@ import Foundation
 /// content scripts. The folder it was installed in stays as it was.
 public enum ExtensionRuntime {
     static let compatibilityFile = "skylight-compatibility.js"
+    static let pageCompatibilityFile = "skylight-page-compatibility.js"
     static let workerFile = "skylight-worker.js"
+
+    /// Safari's engine keeps `requestIdleCallback` behind a flag, and scripts written for Chrome
+    /// assume it. Without it Proton Pass never finds a page's login forms, and nothing says why.
+    static let idleCallback = """
+    if (typeof document !== 'undefined' && !globalThis.requestIdleCallback) {
+      globalThis.requestIdleCallback = (callback) => setTimeout(() => {
+        const start = performance.now();
+        callback({ didTimeout: false, timeRemaining: () => Math.max(0, 50 - (performance.now() - start)) });
+      }, 1);
+      globalThis.cancelIdleCallback = (handle) => clearTimeout(handle);
+    }
+    """
 
     /// Stands in for what's missing: events that never fire, and answers saying there's nothing
     /// there. Offscreen documents can't be made, so asking for one fails as it would for any other
-    /// reason. Extensions already have to handle that.
+    /// reason. Extensions already have to handle that. The same goes for the rest of Chrome's APIs
+    /// that WebKit leaves out: extensions rely on them whether or not they matter here, and a worker
+    /// that reads `chrome.notifications.onClicked` when there's no such thing never runs. Something
+    /// an extension can only want done, like a download, fails instead of pretending it worked.
     static let compatibility = """
     (() => {
       const api = globalThis.chrome;
@@ -50,6 +66,119 @@ public enum ExtensionRuntime {
         createDocument: async () => { throw new Error('Offscreen documents are not available.'); },
         closeDocument: async () => {},
       });
+      \(idleCallback)
+      // Content scripts never had the rest.
+      if (!api.tabs) return;
+      for (const name of ['action', 'cookies', 'extension', 'i18n', 'permissions', 'storage', 'tabs', 'webNavigation', 'webRequest', 'windows']) {
+        if (api[name]) Object.defineProperty(api, Symbol(`skylight.${name}`), { value: api[name] });
+      }
+      const answer = (value) => (...args) => {
+        const last = args[args.length - 1];
+        if (typeof last === 'function') last(value);
+        return Promise.resolve(value);
+      };
+      const refuse = (what) => async () => { throw new Error(`${what} isn't available in Skylight.`); };
+      const stub = (events, methods = {}) => {
+        const object = {};
+        for (const name of events) object[name] = event();
+        for (const [name, value] of Object.entries(methods)) object[name] = typeof value === 'function' ? value : answer(value);
+        return object;
+      };
+      const setting = (value) => stub(['onChange'], {
+        get: { value, levelOfControl: 'not_controllable' }, set: undefined, clear: undefined,
+      });
+      const settings = (value, names) => Object.fromEntries(names.map((name) => [name, setting(value)]));
+      const manifest = api.runtime.getManifest?.() ?? {};
+      for (const name of ['move', 'discard', 'highlight', 'ungroup']) add(api.tabs, name, answer());
+      add(api.tabs, 'group', answer(-1));
+      if (api.action) {
+        add(api.action, 'setBadgeTextColor', answer());
+        add(api.action, 'getBadgeTextColor', answer([0, 0, 0, 0]));
+        add(api.action, 'getUserSettings', answer({ isOnToolbar: true }));
+      }
+      if (api.storage) add(api.storage, 'managed', stub(['onChanged'], { get: {}, getBytesInUse: 0 }));
+      if (api.webNavigation) {
+        for (const name of ['onCreatedNavigationTarget', 'onHistoryStateUpdated', 'onReferenceFragmentUpdated', 'onTabReplaced']) {
+          add(api.webNavigation, name, event());
+        }
+      }
+      if (api.webRequest) add(api.webRequest, 'handlerBehaviorChanged', answer());
+      if (api.windows) add(api.windows, 'onBoundsChanged', event());
+      if (api.i18n) add(api.i18n, 'detectLanguage', answer({ isReliable: false, languages: [] }));
+      if (api.permissions) {
+        add(api.permissions, 'addHostAccessRequest', answer());
+        add(api.permissions, 'removeHostAccessRequest', answer());
+      }
+      if (api.cookies) add(api.cookies, 'getPartitionKey', answer({ partitionKey: {} }));
+      if (api.extension) add(api.extension, 'getURL', (path) => api.runtime.getURL(path));
+      const missing = {
+        bookmarks: stub(['onCreated', 'onRemoved', 'onChanged', 'onMoved', 'onChildrenReordered', 'onImportBegan', 'onImportEnded'], {
+          get: [], getTree: [], getChildren: [], getRecent: [], getSubTree: [], search: [],
+          create: refuse('Bookmarks'), move: refuse('Bookmarks'), remove: refuse('Bookmarks'), removeTree: refuse('Bookmarks'), update: refuse('Bookmarks'),
+        }),
+        browsingData: stub([], { remove: refuse('Clearing browsing data'), settings: { options: {}, dataToRemove: {}, dataRemovalPermitted: {} } }),
+        commands: stub(['onCommand', 'onChanged'], { getAll: [] }),
+        contentSettings: Object.fromEntries(['automaticDownloads', 'camera', 'cookies', 'fullscreen', 'images', 'javascript', 'location', 'microphone', 'mouselock', 'notifications', 'plugins', 'popups'].map((name) => [name, stub([], {
+          get: { setting: 'ask' }, set: undefined, clear: undefined, getResourceIdentifiers: [],
+        })])),
+        debugger: stub(['onEvent', 'onDetach'], { attach: refuse('Debugging'), detach: undefined, sendCommand: refuse('Debugging'), getTargets: [] }),
+        declarativeContent: {
+          onPageChanged: { ...event(), addRules: answer(), removeRules: answer(), getRules: answer([]) },
+          PageStateMatcher: class {}, ShowAction: class {}, ShowPageAction: class {}, SetIcon: class {}, RequestContentScript: class {},
+        },
+        downloads: stub(['onCreated', 'onChanged', 'onErased', 'onDeterminingFilename'], {
+          download: refuse('Downloading'), search: [], pause: undefined, resume: undefined, cancel: undefined, erase: [], open: undefined, show: undefined,
+          showDefaultFolder: undefined, getFileIcon: undefined, removeFile: undefined, acceptDanger: undefined, setUiOptions: undefined,
+        }),
+        fontSettings: stub(['onFontChanged', 'onDefaultFontSizeChanged'], { getFontList: [], getFont: { fontId: '', levelOfControl: 'not_controllable' } }),
+        gcm: stub(['onMessage', 'onMessagesDeleted', 'onSendError'], { register: refuse('Push messaging'), send: refuse('Push messaging'), unregister: undefined }),
+        history: stub(['onVisited', 'onVisitRemoved'], { search: [], getVisits: [], addUrl: undefined, deleteUrl: undefined, deleteRange: undefined, deleteAll: undefined }),
+        identity: stub(['onSignInChanged'], {
+          getAuthToken: refuse('Google sign-in'), launchWebAuthFlow: refuse('Web sign-in'), getAccounts: [], removeCachedAuthToken: undefined, clearAllCachedAuthTokens: undefined,
+          getProfileUserInfo: { email: '', id: '' }, getRedirectURL: (path = '') => `https://${api.runtime.id}.chromiumapp.org/${path}`,
+        }),
+        idle: stub(['onStateChanged'], { queryState: 'active', setDetectionInterval: undefined, getAutoLockDelay: 0 }),
+        instanceID: stub(['onTokenRefresh'], { getID: refuse('Push messaging'), getToken: refuse('Push messaging'), getCreationTime: 0, deleteID: undefined, deleteToken: undefined }),
+        management: stub(['onInstalled', 'onUninstalled', 'onEnabled', 'onDisabled'], {
+          getSelf: { id: api.runtime.id, name: manifest.name, version: manifest.version, enabled: true, installType: 'normal', type: 'extension', mayDisable: true },
+          getAll: [], get: refuse('Other extensions'), getPermissionWarningsById: [], getPermissionWarningsByManifest: [], setEnabled: refuse('Other extensions'),
+          uninstall: refuse('Other extensions'), uninstallSelf: refuse('Removing an extension from itself'), launchApp: undefined,
+        }),
+        notifications: stub(['onClicked', 'onButtonClicked', 'onClosed', 'onPermissionLevelChanged', 'onShowSettings'], {
+          create: (...args) => answer(typeof args[0] === 'string' ? args[0] : crypto.randomUUID())(...args),
+          update: false, clear: false, getAll: {}, getPermissionLevel: 'denied',
+        }),
+        pageCapture: stub([], { saveAsMHTML: refuse('Saving a page') }),
+        power: stub([], { requestKeepAwake: undefined, releaseKeepAwake: undefined }),
+        printing: stub(['onJobStatusChanged'], { submitJob: refuse('Printing'), cancelJob: undefined, getPrinters: [] }),
+        privacy: {
+          network: { ...settings(true, ['networkPredictionEnabled']), ...settings('default', ['webRTCIPHandlingPolicy']) },
+          services: settings(false, ['alternateErrorPagesEnabled', 'autofillAddressEnabled', 'autofillCreditCardEnabled', 'autofillEnabled', 'passwordSavingEnabled',
+            'safeBrowsingEnabled', 'safeBrowsingExtendedReportingEnabled', 'searchSuggestEnabled', 'spellingServiceEnabled', 'translationServiceEnabled']),
+          websites: settings(false, ['adMeasurementEnabled', 'doNotTrackEnabled', 'fledgeEnabled', 'hyperlinkAuditingEnabled', 'protectedContentEnabled', 'referrersEnabled',
+            'relatedWebsiteSetsEnabled', 'thirdPartyCookiesAllowed', 'topicsEnabled']),
+        },
+        proxy: { settings: setting({ mode: 'system' }), onProxyError: event() },
+        search: stub([], { query: refuse('Searching') }),
+        sessions: { ...stub(['onChanged'], { getRecentlyClosed: [], getDevices: [], restore: refuse('Restoring a session') }), MAX_SESSION_RESULTS: 25 },
+        sidePanel: stub(['onOpened'], {
+          open: refuse('The side panel'), getOptions: { enabled: false }, setOptions: undefined, getPanelBehavior: { openPanelOnActionClick: false }, setPanelBehavior: undefined,
+        }),
+        system: {
+          cpu: stub([], { getInfo: { numOfProcessors: 0, archName: '', modelName: '', features: [], processors: [] } }),
+          display: stub(['onDisplayChanged'], { getInfo: [] }),
+          memory: stub([], { getInfo: { capacity: 0, availableCapacity: 0 } }),
+          storage: stub(['onAttached', 'onDetached'], { getInfo: [], ejectDevice: 'failure', getAvailableCapacity: { id: '', availableCapacity: 0 } }),
+        },
+        tabCapture: stub(['onStatusChanged'], { capture: refuse('Capturing a tab'), getCapturedTabs: [], getMediaStreamId: refuse('Capturing a tab') }),
+        tabGroups: { ...stub(['onCreated', 'onMoved', 'onRemoved', 'onUpdated'], { get: refuse('Tab groups'), move: refuse('Tab groups'), query: [], update: refuse('Tab groups') }), TAB_GROUP_ID_NONE: -1 },
+        topSites: stub([], { get: [] }),
+        tts: stub(['onVoicesChanged'], { speak: refuse('Text to speech'), stop: undefined, pause: undefined, resume: undefined, isSpeaking: false, getVoices: [] }),
+        webAuthenticationProxy: stub(['onCreateRequest', 'onGetRequest', 'onIsUvpaaRequest', 'onRemoteSessionStateChange', 'onRequestCanceled'], {
+          attach: refuse('The passkey proxy'), detach: undefined,
+        }),
+      };
+      for (const [name, value] of Object.entries(missing)) add(api, name, value);
     })();
     """
 
@@ -82,6 +211,7 @@ public enum ExtensionRuntime {
             ? "import \"/\(compatibilityFile)\";\nimport \"\(path)\";\n"
             : "importScripts(\"/\(compatibilityFile)\", \"\(path)\");\n"
         try Data(compatibility.utf8).write(to: copy.appending(path: compatibilityFile))
+        try Data(idleCallback.utf8).write(to: copy.appending(path: pageCompatibilityFile))
         try Data(wrapper.utf8).write(to: copy.appending(path: workerFile))
 
         background["service_worker"] = workerFile
@@ -104,11 +234,11 @@ public enum ExtensionRuntime {
         return Prepared(folder: copy, workerChanged: changed)
     }
 
-    /// A page's own world never runs extension APIs, so main world scripts are left alone.
+    /// A page's own world never runs extension APIs, so main world scripts only get what the page lacks.
     private static func loadingCompatibility(_ entry: [String: Any]) -> [String: Any] {
-        guard let scripts = entry["js"] as? [String], !scripts.isEmpty, entry["world"] as? String != "MAIN" else { return entry }
+        guard let scripts = entry["js"] as? [String], !scripts.isEmpty else { return entry }
         var entry = entry
-        entry["js"] = [compatibilityFile] + scripts
+        entry["js"] = [entry["world"] as? String == "MAIN" ? pageCompatibilityFile : compatibilityFile] + scripts
         return entry
     }
 

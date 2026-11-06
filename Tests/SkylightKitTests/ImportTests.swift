@@ -5,6 +5,56 @@ import SkylightCore
 import SQLite3
 import Testing
 
+struct AsideVaultTests {
+    static let export = #"""
+    {"version":"1.0","exported_at":"2026-11-06T00:00:00.000Z","items":[
+      {"category":"001","title":"Example","state":"active","urls":[{"url":"https://example.com/login"},{"url":"https://example.com/other"},{"url":"https://two.example"}],
+       "loginFields":[{"designation":"username","value":"me"},{"designation":"password","value":"long-enough-to-have-been-at-risk-of-a-cut"}],"sections":[]},
+      {"category":"001","title":"Passkey only","state":"active","urls":[{"url":"https://passkey.example"}],"loginFields":[],"sections":[],"passkeys":[{}]},
+      {"category":"001","title":"Binned","state":"trashed","urls":[{"url":"https://old.example"}],
+       "loginFields":[{"designation":"password","value":"old"}],"sections":[]},
+      {"category":"002","title":"Card","state":"active","loginFields":[],"sections":[{"id":"card-details","fields":[
+        {"id":"cardholder","value":{"type":"string","string":"Sam Example"}},
+        {"id":"ccnum","value":{"type":"creditCardNumber","creditCardNumber":"4242 4242 4242 4242"}},
+        {"id":"expiry","value":{"type":"monthYear","monthYear":203307}}]}]},
+      {"category":"004","title":"Me","state":"archived","loginFields":[],"sections":[
+        {"id":"name","fields":[{"id":"firstname","value":{"type":"string","string":"Sam"}},{"id":"lastname","value":{"type":"string","string":"Example"}},
+                               {"id":"company","value":{"type":"string","string":"Made Up"}}]},
+        {"id":"address","fields":[{"id":"address","value":{"type":"address","address":{"street":"1 Way","city":"Town","state":"CA","zip":"94000","country":"us"}}},
+                                  {"id":"defphone","value":{"type":"phone","phone":"+14155550100"}}]},
+        {"id":"internet","fields":[{"id":"email","value":{"type":"email","email":{"email_address":"sam@example.com"}}}]}]},
+      {"category":"003","title":"Note","state":"active","loginFields":[],"sections":[]}]}
+    """#
+
+    @Test func loginsCardsAndAddressesComeOut() throws {
+        let vault = try AsideVaultExport.read(Data(Self.export.utf8))
+        #expect(vault.credentials.map(\.origin) == ["https://example.com", "https://two.example"])
+        #expect(vault.credentials.allSatisfy { $0.username == "me" && $0.password.hasPrefix("long-enough") })
+        let card = try #require(vault.autofill.cards.first)
+        #expect((card.name, card.number, card.month, card.year) == ("Sam Example", "4242424242424242", 7, 2033))
+        let address = try #require(vault.autofill.addresses.first)
+        #expect((address.name, address.company, address.line1, address.city) == ("Sam Example", "Made Up", "1 Way", "Town"))
+        #expect((address.zip, address.phone, address.email) == ("94000", "+14155550100", "sam@example.com"))
+    }
+
+    @Test func somethingElseIsRefused() {
+        #expect(throws: AsideVaultExport.ReadError.unreadable) { try AsideVaultExport.read(Data("{}".utf8)) }
+        #expect(throws: AsideVaultExport.ReadError.unreadable) { try AsideVaultExport.read(Data("nope".utf8)) }
+    }
+
+    // The Vault's three CSVs, with the columns its code writes, in that order.
+    @Test func itsCSVsAllRead() throws {
+        let files = ["category,title,notes,favorite,username,password,url,urls,totp\n001,Site,,0,me,pw,https://a.example,https://a.example,\n002,Card,,0,,,,,",
+                     "title,notes,username,password,website,totp\nSite,,me,pw,https://a.example,",
+                     "name,url,username,password\nSite,https://a.example,me,pw"]
+        for file in files {
+            let found = try PasswordCSV.parse(file, source: "CSV")
+            #expect(found.map(\.id) == ["https://a.example|me"])
+            #expect(found.map(\.password) == ["pw"])
+        }
+    }
+}
+
 struct ChromiumExtensionsTests {
     @Test func onlyWhatYouInstalledAndKeptOn() throws {
         func id(_ letter: Character) -> String { String(repeating: letter, count: 32) }
@@ -20,6 +70,18 @@ struct ChromiumExtensionsTests {
         ]]]
         let data = try JSONSerialization.data(withJSONObject: json)
         #expect(ChromiumExtensions.storeIDs(in: [data, data]) == [id("a"), id("g")])
+    }
+
+    // As Chromium writes them: no `state`, a list of reasons, and `from_webstore` on every entry.
+    @Test func readsTheShapeBrowsersWriteNow() throws {
+        func id(_ letter: Character) -> String { String(repeating: letter, count: 32) }
+        let json: [String: Any] = ["extensions": ["settings": [
+            id("a"): ["location": 1, "from_webstore": true, "creation_flags": 9, "disable_reasons": [],
+                      "was_installed_by_default": false, "was_installed_by_oem": false],
+            id("b"): ["location": 5, "from_webstore": false, "creation_flags": 1, "disable_reasons": []],
+            id("c"): ["location": 1, "from_webstore": false, "creation_flags": 1, "disable_reasons": []],
+        ]]]
+        #expect(ChromiumExtensions.storeIDs(in: [try JSONSerialization.data(withJSONObject: json)]) == [id("a")])
     }
 
     @Test func aBrokenFileIsNothing() {

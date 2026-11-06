@@ -7,7 +7,9 @@ import WebKit
 /// so its extensions keep their storage apart, and every profile runs every extension.
 @MainActor
 final class WebKitExtensionHost: NSObject, ExtensionHost {
-    var openTab: (@MainActor (URL) -> Void)?
+    var openTab: (@MainActor (URL, Bool) -> SkylightEngine.WebPage?)?
+    var selectTab: (@MainActor (SkylightEngine.WebPage) -> Void)?
+    var closeTab: (@MainActor (SkylightEngine.WebPage) -> Void)?
     var showPopup: (@MainActor (ExtensionPopup) -> Void)?
     var resizePopup: (@MainActor (CGSize) -> Void)?
 
@@ -85,7 +87,7 @@ final class WebKitExtensionHost: NSObject, ExtensionHost {
         let controller = WKWebExtensionController(configuration: configuration)
         controller.delegate = self
         controllers[ObjectIdentifier(profile)] = controller
-        let window = ExtensionWindow()
+        let window = ExtensionWindow(host: self)
         windows[ObjectIdentifier(controller)] = window
         controller.didOpenWindow(window)
         controller.didFocusWindow(window)
@@ -210,13 +212,20 @@ extension WebKitExtensionHost: WKWebExtensionControllerDelegate {
 
     func webExtensionController(_ controller: WKWebExtensionController, openNewTabUsing configuration: WKWebExtension.TabConfiguration,
                                 for context: WKWebExtensionContext, completionHandler: @escaping ((any WKWebExtensionTab)?, (any Error)?) -> Void) {
-        if let url = configuration.url { openTab?(url) }
-        completionHandler(nil, nil)
+        let page = configuration.url.flatMap { openTab?($0, configuration.shouldBeActive) }
+        completionHandler(page as? WebKitPage, nil)
+    }
+
+    /// Extensions pop out into a window of their own, and here that's a tab: they all share one.
+    func webExtensionController(_ controller: WKWebExtensionController, openNewWindowUsing configuration: WKWebExtension.WindowConfiguration,
+                                for context: WKWebExtensionContext, completionHandler: @escaping ((any WKWebExtensionWindow)?, (any Error)?) -> Void) {
+        for url in configuration.tabURLs { _ = openTab?(url, configuration.shouldBeFocused) }
+        completionHandler(windows[ObjectIdentifier(controller)], nil)
     }
 
     func webExtensionController(_ controller: WKWebExtensionController, openOptionsPageFor context: WKWebExtensionContext,
                                 completionHandler: @escaping ((any Error)?) -> Void) {
-        if let url = context.optionsPageURL { openTab?(url) }
+        if let url = context.optionsPageURL { _ = openTab?(url, true) }
         completionHandler(nil)
     }
 
@@ -262,6 +271,16 @@ extension WebKitExtensionHost: WKWebExtensionControllerDelegate {
 final class ExtensionWindow: NSObject, WKWebExtensionWindow {
     var pages: [WebKitPage] = []
     var active: WebKitPage?
+    fileprivate weak var host: WebKitExtensionHost?
+
+    init(host: WebKitExtensionHost) {
+        self.host = host
+    }
+
+    func focus(for context: WKWebExtensionContext, completionHandler: @escaping ((any Error)?) -> Void) {
+        NSApp.activate()
+        completionHandler(nil)
+    }
 
     func tabs(for context: WKWebExtensionContext) -> [any WKWebExtensionTab] { pages }
     func activeTab(for context: WKWebExtensionContext) -> (any WKWebExtensionTab)? { active ?? pages.first }
@@ -272,5 +291,14 @@ extension WebKitPage: WKWebExtensionTab {
     func webView(for context: WKWebExtensionContext) -> WKWebView? { webView }
     func indexInWindow(for context: WKWebExtensionContext) -> Int {
         extensionWindow?.pages.firstIndex(of: self) ?? NSNotFound
+    }
+    func isSelected(for context: WKWebExtensionContext) -> Bool { extensionWindow?.active === self }
+    func activate(for context: WKWebExtensionContext, completionHandler: @escaping ((any Error)?) -> Void) {
+        extensionWindow?.host?.selectTab?(self)
+        completionHandler(nil)
+    }
+    func close(for context: WKWebExtensionContext, completionHandler: @escaping ((any Error)?) -> Void) {
+        extensionWindow?.host?.closeTab?(self)
+        completionHandler(nil)
     }
 }

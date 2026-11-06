@@ -297,7 +297,7 @@ public final class PageCoordinator: BrowserEffectHandler {
 // MARK: - WebPageDelegate
 
 extension PageCoordinator: WebPageDelegate {
-    private func tab(of page: WebPage) -> TabID? { tabForPage[ObjectIdentifier(page)] }
+    func tab(of page: WebPage) -> TabID? { tabForPage[ObjectIdentifier(page)] }
 
     public func page(_ page: WebPage, didChange event: PageEvent) {
         guard let id = tab(of: page), let store else { return }

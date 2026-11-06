@@ -126,13 +126,24 @@ import Testing
         #expect(year == 2022)
     }
 
-    @Test func readsVersion24WithHostHash() throws {
-        let hash = [UInt8](repeating: 0xAB, count: 32)
-        let file = try makeLoginData(version: 24, rows: [
-            ("https://new.example/", "me", encrypt(hash + Array("pässword".utf8)), 0),
+    // Only cookies carry a hash of their domain. Taking one off a login loses short passwords
+    // and cuts long ones, in every version of this file since 24, and Chromium is on 43.
+    @Test func aPasswordComesBackWhole() throws {
+        let long = String(repeating: "correct horse ", count: 4)
+        let file = try makeLoginData(version: 43, rows: [
+            ("https://short.example/", "me", encrypt(Array("pässword".utf8)), 0),
+            ("https://long.example/", "me", encrypt(Array(long.utf8)), 0),
         ])
         let credentials = try ChromiumPasswordImporter.read(loginData: file, safeStorageKey: Self.key)
-        #expect(credentials.map(\.password) == ["pässword"])
+        #expect(credentials.map(\.password) == ["pässword", long])
+    }
+
+    @Test func aPasswordCutByAnOldImportIsRecognized() {
+        let whole = String(repeating: "x", count: 32) + "tail"
+        #expect(ChromiumPasswordImporter.wasCut("tail", from: whole))
+        #expect(!ChromiumPasswordImporter.wasCut("changed since", from: whole))
+        #expect(!ChromiumPasswordImporter.wasCut(whole, from: whole))
+        #expect(!ChromiumPasswordImporter.wasCut("", from: String(repeating: "x", count: 32)))
     }
 
     @Test func wrongKeySkipsRows() throws {

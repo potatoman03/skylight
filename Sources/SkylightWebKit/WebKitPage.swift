@@ -136,10 +136,19 @@ final class WebKitPage: NSObject, SkylightEngine.WebPage {
     }
 
     private func observe() {
-        watch(\.url) { page in page.emit { $0.url = page.webView.url } }
-        watch(\.title) { page in page.emit { $0.title = page.webView.title } }
+        watch(\.url) { page in
+            page.emit { $0.url = page.webView.url }
+            page.extensionController?.didChangeTabProperties(.URL, for: page)
+        }
+        watch(\.title) { page in
+            page.emit { $0.title = page.webView.title }
+            page.extensionController?.didChangeTabProperties(.title, for: page)
+        }
         watch(\.estimatedProgress) { page in page.emit { $0.progress = page.webView.estimatedProgress } }
-        watch(\.isLoading) { $0.emitNavigationState() }
+        watch(\.isLoading) { page in
+            page.emitNavigationState()
+            page.extensionController?.didChangeTabProperties(.loading, for: page)
+        }
         watch(\.canGoBack) { $0.emitNavigationState() }
         watch(\.canGoForward) { $0.emitNavigationState() }
     }

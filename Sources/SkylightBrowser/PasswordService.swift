@@ -37,6 +37,9 @@ public final class PasswordService {
     /// The profiles to list logins for.
     @ObservationIgnored var profiles: () -> [ProfileID] = { [.standard] }
 
+    /// Adds addresses and cards found in a file. They belong to `AutofillService`.
+    var mergeAutofill: ((AutofillData, ProfileID) -> (addresses: Int, cards: Int))?
+
     public init(store: CredentialStore, toasts: ToastCenter, neverFile: URL?) {
         self.store = store
         self.toasts = toasts
@@ -266,18 +269,43 @@ public final class PasswordService {
         return try await Task.detached { try ChromiumPasswordImporter.readSignIns(profiles) }.value
     }
 
-    /// Imports a CSV export from Chrome, Safari, 1Password, Bitwarden and the like.
-    public func importCSV(into profile: ProfileID) -> String? {
+    /// Imports a CSV export from Chrome, Safari, 1Password, Bitwarden and the like, or a JSON export
+    /// from Aside Vault.
+    public func importFile(into profile: ProfileID) -> String? {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.commaSeparatedText]
-        panel.message = "Choose a passwords CSV exported from another browser or password manager."
+        panel.allowedContentTypes = [.commaSeparatedText, .json]
+        panel.message = "Choose a passwords file exported from another browser or password manager."
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return importFile(at: url, into: profile)
+    }
+
+    @discardableResult
+    public func importFile(at url: URL, into profile: ProfileID) -> String {
         do {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            return add(try PasswordCSV.parse(text, source: "CSV"), from: url.lastPathComponent, into: profile)
+            let data = try Data(contentsOf: url)
+            guard url.pathExtension.lowercased() == "json" else {
+                let text = String(decoding: data, as: UTF8.self)
+                return add(try PasswordCSV.parse(text, source: "CSV"), from: url.lastPathComponent, into: profile)
+            }
+            return addVault(try AsideVaultExport.read(data), into: profile)
         } catch {
             return report(error, from: url.lastPathComponent)
         }
+    }
+
+    private func addVault(_ vault: AsideVaultExport.Contents, into profile: ProfileID) -> String {
+        let logins = save(vault.credentials, into: profile)
+        let other = mergeAutofill?(vault.autofill, profile) ?? (addresses: 0, cards: 0)
+        func count(_ number: Int, _ name: String, _ plural: String) -> String? {
+            number > 0 ? "\(number) \(number == 1 ? name : plural)" : nil
+        }
+        let parts = [count(logins.added, "password", "passwords"), count(other.addresses, "address", "addresses"),
+                     count(other.cards, "card", "cards")].compactMap(\.self)
+        var message = parts.isEmpty ? "Everything from Aside Vault is already here"
+            : "Imported " + ListFormatter.localizedString(byJoining: parts) + " from Aside Vault"
+        if logins.failed > 0 { message += " (\(logins.failed) failed)" }
+        toasts.show(message, symbol: "key.fill")
+        return message
     }
 
     /// Writes a profile's passwords to a CSV file you choose, after you authenticate.
@@ -321,7 +349,7 @@ public final class PasswordService {
         let have = Set(saved.map(\.id))
         var added = 0
         var failed = 0
-        for credential in credentials where !have.contains(credential.id) {
+        for credential in credentials where !have.contains(credential.id) || wasCut(credential) {
             do {
                 try store.save(credential)
                 added += 1
@@ -331,6 +359,12 @@ public final class PasswordService {
         }
         reload()
         return (added, failed)
+    }
+
+    /// Only a password longer than the cut can have lost anything, so the rest stay unread.
+    private func wasCut(_ imported: Credential) -> Bool {
+        guard imported.password.utf8.count > 32, let saved = try? store.password(for: imported) else { return false }
+        return ChromiumPasswordImporter.wasCut(saved, from: imported.password)
     }
 
     private func report(_ error: Error, from source: String) -> String {

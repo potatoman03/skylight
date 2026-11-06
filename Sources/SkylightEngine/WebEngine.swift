@@ -60,8 +60,8 @@ public struct ExtensionPopup {
 /// Runs Chrome extensions. Every profile runs them all, each with its own storage.
 ///
 /// The engine has no tab strip of its own, so extensions get a current tab and a window from
-/// Skylight: `setTabs` says which pages exist and which one is in front, and `openTab` receives
-/// the tabs extensions ask for.
+/// Skylight: `setTabs` says which pages exist and which one is in front, and `openTab`, `selectTab`
+/// and `closeTab` receive what extensions ask of them.
 @MainActor
 public protocol ExtensionHost: AnyObject {
     /// Loads an unpacked extension folder as `id`.
@@ -75,8 +75,12 @@ public protocol ExtensionHost: AnyObject {
     func triggerAction(_ id: String, page: WebPage?) async throws
     /// The address of one of the extension's own pages.
     func pageURL(_ id: String, path: String) -> URL?
-    /// An extension asked to open a tab.
-    var openTab: (@MainActor (URL) -> Void)? { get set }
+    /// An extension asked to open a tab, in front or behind the one on screen. Answers with its page.
+    var openTab: (@MainActor (URL, Bool) -> WebPage?)? { get set }
+    /// An extension asked to bring a tab to the front.
+    var selectTab: (@MainActor (WebPage) -> Void)? { get set }
+    /// An extension asked to close a tab.
+    var closeTab: (@MainActor (WebPage) -> Void)? { get set }
     /// A popup is ready to show.
     var showPopup: (@MainActor (ExtensionPopup) -> Void)? { get set }
     /// The open popup's content wants this size.

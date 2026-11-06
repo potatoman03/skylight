@@ -1,4 +1,5 @@
 import Foundation
+import JavaScriptCore
 import Security
 import Testing
 @testable import SkylightKit
@@ -247,6 +248,58 @@ import Testing
         #expect(ExtensionRuntime.compatibility.contains("configurable: false"))
     }
 
+    /// Runs the compatibility script over a bare `chrome`, and then `expression`.
+    private func afterCompatibility(_ chrome: String, _ expression: String) -> JSValue? {
+        let context = JSContext()
+        context?.evaluateScript("globalThis.chrome = \(chrome);")
+        context?.evaluateScript(ExtensionRuntime.compatibility)
+        #expect(context?.exception == nil)
+        return context?.evaluateScript(expression)
+    }
+
+    private static let worker = "{ runtime: { id: 'made-up', getManifest: () => ({ name: 'Made Up', version: '1' }) }, tabs: {}, storage: {} }"
+
+    /// A worker that touches one of these as it starts dies if it isn't there.
+    @Test func whatWebKitLeavesOutIsThereForWorkers() {
+        let read = """
+        [chrome.notifications.onClicked, chrome.idle.onStateChanged, chrome.management.onInstalled, chrome.downloads.onChanged,
+         chrome.identity.onSignInChanged, chrome.privacy.services.passwordSavingEnabled.onChange, chrome.tabGroups.onUpdated,
+         chrome.storage.managed.onChanged, chrome.declarativeContent.onPageChanged, chrome.webNavigation?.onHistoryStateUpdated]
+          .filter(Boolean).every((event) => typeof event.addListener === 'function')
+        """
+        #expect(afterCompatibility(Self.worker, read)?.toBool() == true)
+    }
+
+    @Test func whatsThereIsLeftAlone() {
+        let chrome = "{ runtime: { id: 'made-up' }, tabs: {}, notifications: { mine: true } }"
+        #expect(afterCompatibility(chrome, "chrome.notifications.mine && !chrome.notifications.create")?.toBool() == true)
+    }
+
+    @Test func standInsCallBackAndAnswer() {
+        let run = "let called; chrome.idle.queryState(60, (state) => { called = state; }); called"
+        #expect(afterCompatibility(Self.worker, run)?.toString() == "active")
+    }
+
+    @Test func aStandInSaysWhoItIs() {
+        #expect(afterCompatibility(Self.worker, "chrome.identity.getRedirectURL('done')")?.toString()
+            == "https://made-up.chromiumapp.org/done")
+    }
+
+    /// A content script gets no more of Chrome than it would there.
+    @Test func contentScriptsDontGetTheRest() {
+        #expect(afterCompatibility("{ runtime: { id: 'made-up' } }", "'notifications' in chrome")?.toBool() == false)
+    }
+
+    /// WebKit keeps it behind a flag, and Proton Pass finds no forms without it.
+    @Test func pagesGetRequestIdleCallback() {
+        let context = JSContext()
+        context?.evaluateScript("globalThis.document = {}; globalThis.setTimeout = (run) => { run(); return 7; }; globalThis.performance = { now: () => 0 };")
+        context?.evaluateScript(ExtensionRuntime.idleCallback)
+        #expect(context?.exception == nil)
+        let run = "let left; requestIdleCallback((deadline) => { left = deadline.timeRemaining(); }); left"
+        #expect(context?.evaluateScript(run)?.toInt32() == 50)
+    }
+
     @Test func aWorkerRunsBehindTheCompatibilityScript() throws {
         let (root, source) = try folder(manifest: #"{"name": "Made Up", "background": {"service_worker": "background.js"}}"#)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -277,7 +330,7 @@ import Testing
         let manifest = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let scripts = try #require(manifest["content_scripts"] as? [[String: Any]])
         #expect(scripts[0]["js"] as? [String] == [ExtensionRuntime.compatibilityFile, "content.js"])
-        #expect(scripts[1]["js"] as? [String] == ["main.js"])
+        #expect(scripts[1]["js"] as? [String] == [ExtensionRuntime.pageCompatibilityFile, "main.js"])
         #expect(scripts[2]["js"] == nil)
 
         let tag = "<script src=\"/\(ExtensionRuntime.compatibilityFile)\"></script>"
