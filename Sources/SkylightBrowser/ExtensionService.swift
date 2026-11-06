@@ -105,7 +105,7 @@ public final class ExtensionService {
 
     /// Downloads an extension from the Chrome Web Store (a link or an id) and turns it on. With
     /// `confirm`, you're shown what it can do and asked first: for installs a web page asked for.
-    public func install(fromStore input: String, confirm: Bool = false) async {
+    public func install(fromStore input: String, confirm: Bool = false, quietly: Bool = false) async {
         guard let id = WebStore.extensionID(from: input) else {
             return fail("That isn't a Chrome Web Store link.")
         }
@@ -126,10 +126,24 @@ public final class ExtensionService {
                 }
             }
             try replace(folder, with: staging)
-            try await add(Installed(id: id, folder: folder, source: .store, enabled: true, pinned: true))
+            try await add(Installed(id: id, folder: folder, source: .store, enabled: true, pinned: true), quietly: quietly)
         } catch {
-            fail("Couldn't install the extension: \(error.localizedDescription)")
+            if quietly { lastError = error.localizedDescription } else { fail("Couldn't install the extension: \(error.localizedDescription)") }
         }
+    }
+
+    /// Adds what you already use in another browser, fresh from the store: you chose these there,
+    /// so there's no asking one by one. Their own settings and sign-ins stay with that browser.
+    /// Returns how many were added.
+    public func adopt(_ ids: [String]) async -> Int {
+        guard isAvailable else { return 0 }
+        var added = 0
+        for id in ids where !installed.contains(where: { $0.id == id }) {
+            let before = installed.count
+            await install(fromStore: id, quietly: true)
+            if installed.count > before { added += 1 }
+        }
+        return added
     }
 
     /// The extension's name and what it can do, with Add and Cancel. For an update, only what
@@ -166,7 +180,7 @@ public final class ExtensionService {
         }
     }
 
-    private func add(_ ext: Installed) async throws {
+    private func add(_ ext: Installed, quietly: Bool = false) async throws {
         var ext = ext
         manifests[ext.id] = try ExtensionManifest.load(from: ext.folder)
         if let host {
@@ -183,6 +197,7 @@ public final class ExtensionService {
         save()
         addedSinceLaunch.insert(ext.id)
         let name = manifests[ext.id]?.name ?? "the extension"
+        if quietly { return }
         toasts.show(hasOtherProfiles() ? "Added \(name). Relaunch to use it in every Space." : "Added \(name)", symbol: "puzzlepiece.extension")
     }
 

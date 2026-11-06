@@ -183,6 +183,7 @@ final class SidebarDropState {
     private(set) var gapHeight: CGFloat = 0
     /// Where the pointer is over the list, so the dragged tab can follow it.
     private(set) var pointer: CGPoint?
+    @ObservationIgnored private var end: Timer?
     /// Every line's frame as laid out, before any gap: what drags are hit-tested against.
     @ObservationIgnored var frames: [String: CGRect] = [:]
 
@@ -190,10 +191,26 @@ final class SidebarDropState {
         self.hover = hover
         self.hidden = hidden
         hiddenHeight = hidden == nil ? 0 : height
+        if hover != nil { watchForEnd() }
         gapHeight = height
     }
 
+    /// The system's last word on a drag can arrive after the drag has ended, or never, and would
+    /// leave an empty slot in the list for good. The mouse button is the truth. The timer only runs
+    /// in the default run loop mode, so it waits out the drag itself.
+    private func watchForEnd() {
+        guard end == nil else { return }
+        end = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, NSEvent.pressedMouseButtons & 1 == 0 else { return }
+                animate(Motion.travel) { self.clear() }
+            }
+        }
+    }
+
     func clear() {
+        end?.invalidate()
+        end = nil
         settle(nil)
         hover = nil
         hidden = nil

@@ -37,7 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
         // Development runs (SKYLIGHT_DEV) keep passwords in memory, away from your Keychain.
         let credentials: CredentialStore = demo ? MemoryCredentialStore.demo() : KeychainCredentialStore()
-        let browser = Browser(engine: CEFEngine(), paths: paths, version: version, credentials: credentials)
+        let autofill: AutofillStore = demo ? MemoryAutofillStore.demo() : KeychainAutofillStore()
+        let browser = Browser(engine: CEFEngine(), paths: paths, version: version, credentials: credentials, autofillStore: autofill)
         self.browser = browser
         updater = Updater(development: development, browser: browser)
         NSApp.mainMenu = MainMenu.build(target: self)
@@ -88,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !pendingURLs.isEmpty {
             browser.openExternal(pendingURLs)
             pendingURLs = []
-        } else if browser.store.state.selectedTab == nil {
+        } else if !browser.welcomeIfNew(), browser.store.state.selectedTab == nil {
             browser.presentCommandBar(.newTab)
         }
     }
@@ -96,6 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Links from other apps when Skylight is the default browser, and web pages opened with it.
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let browser else { return pendingURLs.append(contentsOf: urls) }
+        // The page would open behind the sheet.
+        if browser.showsWelcome { browser.finishWelcome() }
         browser.openExternal(urls)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate()
@@ -217,6 +220,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func showSettings(_ sender: Any?) { browser?.openSettings() }
     @objc func showShortcuts(_ sender: Any?) { browser?.showShortcuts.toggle() }
+    @objc func showWelcome(_ sender: Any?) { browser?.showsWelcome = true }
+    @objc func showHistory(_ sender: Any?) { browser?.showHistory.toggle() }
 
     @objc func toggleSidebar(_ sender: Any?) {
         withAnimation { browser?.toggleSidebar() }

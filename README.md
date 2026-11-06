@@ -162,7 +162,7 @@ working. [CONTRIBUTING.md](CONTRIBUTING.md) covers branches, commits and pull re
 | ⌃⌘R | Rotate a split (side by side ↔ stacked) |
 | ⌥⌘P | Picture in Picture |
 | ⌘⇧B | Boost this site |
-| ⌥⌘I | Developer tools |
+| ⌥⌘I | Developer tools, beside the page |
 
 The sidebar works like Arc's. Each Space has its own **favorites** at the top, its **pinned** tabs,
 then **Today** (with **Clear**). Drag tabs between sections; the list shows an
@@ -202,8 +202,7 @@ Default. Settings → Themes picks one for all your Spaces, or a different one f
 **Sidebar.** Each Space can have its own icon or emoji, color, sidebar tint and theme, from its ···
 menu or Tabs → Customize Space….
 
-**Appearance.** Skylight follows the system's light or dark mode (Settings → Themes can fix it to
-one). Glass is the plain look; a theme puts a sky, pattern or picture behind the source list. Sky,
+**Appearance.** Skylight follows the system's light or dark mode, and web pages follow with it. Glass is the plain look; a theme puts a sky, pattern or picture behind the source list. Sky,
 Pastel and Vivid follow each Space's color; Paper, Graphite, Dusk, Forest, Ocean, Rosé and Aurora
 keep their own.
 
@@ -221,7 +220,23 @@ sign-ins into the Space on screen, after macOS asks to let Skylight read that br
 brings over Arc's Spaces, pinned tabs and favorites, or a Chromium browser's bookmarks: the bookmarks
 bar becomes favorites and each folder a Space, which is how Aside's sidebar folders come across.
 Arc's other profiles become profiles here, and their Spaces keep their own logins and favorites.
-Safari and Apple Passwords keep logins from other apps, so those come from a CSV export.
+Passwords saved to a Google Account come too, as long as the browser keeps a copy on this Mac; if
+not, export them from passwords.google.com and import the CSV. So do your history (the latest 20,000
+pages), saved addresses and cards, and the extensions you have on, fresh from the Chrome Web Store,
+so sign in to them again. Passkeys and cards kept in Google Pay can't leave. Safari and Apple
+Passwords keep logins from other apps, so those come from a CSV export.
+
+**Addresses and cards** live in your login Keychain, separately for each profile, and show under
+Settings → Passwords. The person icon in the address field fills a form when you pick one, on the
+page itself; payment boxes embedded from another site can't be reached yet. A card asks for Touch ID
+or your password first and only goes to a secure page. Security codes are never saved.
+
+**History** (⌘Y) is kept per profile, on this Mac, and the address field suggests from it. Clear it
+from the history sheet.
+
+A new install opens with a short **welcome**: import from another browser, pick a look, make
+Skylight the default browser, and a few things worth knowing. Help → Welcome to Skylight brings it
+back.
 
 The sky is a small Metal shader: light falls through it, slowly, in the theme's colors. It runs at
 30 fps only while it's showing and the window is in front, and stops with Reduce Motion or when
@@ -231,7 +246,8 @@ The sky is a small Metal shader: light falls through it, slowly, in the theme's 
 go), or pick Open in Split View from a tab's menu, or press ⌃⌘N. Up to four panes go side by side or
 stacked, with a hairline between them. Drag a divider to resize (double-click it to make the panes
 equal), drag a pane's grip to move it or pull it out of the split, and click a pane to focus it. The
-sidebar shows a split as one row; selecting any of its tabs shows them all.
+sidebar shows a split as one row; selecting any of its tabs shows them all. Hover a tab in that row
+for – to take it out of the split, or × to close it.
 
 **Picture in Picture.** ⌥⌘P (or a tab's menu, or the address field) puts the page's main video in a
 floating window. Leave a tab with a video playing and it follows you in Picture in Picture; come
@@ -371,8 +387,10 @@ is now `Engine/Default` and others `Engine/Profile-<id>`. Earlier builds used `E
 which Chromium rejected ("Cannot create profile"), so pages there most likely never kept cookies;
 you may need to sign in to sites again once.
 
-Known limits: Google account sync is unavailable to third-party Chromium builds; Widevine (Netflix
-and similar) needs Google's signing; iCloud passkeys need an Apple entitlement for browsers.
+Known limits: stock CEF has no H.264, AAC or HEVC, so video on X and other H.264 sites won't play
+until the self-built CEF above; Google account sync is unavailable to third-party Chromium builds;
+Widevine (Netflix and similar) needs Google's signing; iCloud passkeys need an Apple entitlement for
+browsers.
 
 ## License
 

@@ -28,6 +28,32 @@ import Testing
         #expect(result.effects == [.showTab(ids[2])])
     }
 
+    /// What a pane's × in the sidebar does.
+    func closePane(_ id: TabID, _ state: inout BrowserState) {
+        BrowserReducer.reduce(&state, .leaveSplit(id), env: env)
+        BrowserReducer.reduce(&state, .closeTab(id), env: env)
+    }
+
+    @Test func closingAPaneClosesItsTabAndEndsATwoPaneSplit() {
+        var (state, ids) = state(tabs: 2)
+        BrowserReducer.reduce(&state, .splitTab(ids[1], beside: ids[0], edge: .trailing), env: env)
+        closePane(ids[1], &state)
+        #expect(state.tabs[ids[1]] == nil)
+        #expect(state.tabs[ids[0]] != nil)
+        #expect(state.activeSpace.splits.isEmpty)
+    }
+
+    @Test func closingAPinnedPaneLeavesNoSleepingPane() {
+        var (state, ids) = state(tabs: 3)
+        BrowserReducer.reduce(&state, .togglePin(ids[0]), env: env)
+        BrowserReducer.reduce(&state, .splitTab(ids[1], beside: ids[0], edge: .trailing), env: env)
+        BrowserReducer.reduce(&state, .splitTab(ids[2], beside: ids[1], edge: .trailing), env: env)
+        closePane(ids[0], &state)
+        #expect(state.tabs[ids[0]] != nil)
+        #expect(state.activeSpace.split(containing: ids[0]) == nil)
+        #expect(state.activeSpace.split(containing: ids[1])?.tabs == [ids[1], ids[2]])
+    }
+
     @Test func addingAPaneTakesHalfOfItsNeighbor() {
         var (state, ids) = state(tabs: 3)
         BrowserReducer.reduce(&state, .splitTab(ids[1], beside: ids[0], edge: .trailing), env: env)
