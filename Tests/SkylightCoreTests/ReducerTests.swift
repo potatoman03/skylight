@@ -478,6 +478,17 @@ private let c = URL(string: "https://c.example")!
         #expect(omnibox.interpret(input) == .address(URL(string: expected)!))
     }
 
+    @Test(arguments: ["file:///etc/passwd", "FILE:///etc/passwd", "chrome://settings", "about:blank", "data:text/html,x",
+                      "view-source:https://a.b", "skylight://x"])
+    func addressesAgentsCantOpen(input: String) {
+        #expect(omnibox.interpret(input)?.isWeb != true)
+    }
+
+    @Test(arguments: ["example.com", "HTTPS://a.b", "how do skylights work"])
+    func addressesAgentsCanOpen(input: String) {
+        #expect(omnibox.interpret(input)?.isWeb == true)
+    }
+
     @Test func searches() {
         guard case let .search(text, url) = omnibox.interpret("how do skylights work") else {
             Issue.record("expected a search")

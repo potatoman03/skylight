@@ -434,12 +434,19 @@ private struct PromptAlerts: ViewModifier {
     func body(content: Content) -> some View {
         let prompt = browser.prompts.prompt(for: browser.pages.visibleTabID)
         let offer = browser.passwords.offer.flatMap { $0.tabID == browser.pages.visibleTabID ? $0 : nil }
+        let permission: PermissionRequest? = if case let .permission(_, request)? = prompt { request } else { nil }
         content
-            .alert(Self.title(prompt), isPresented: shown(prompt != nil), presenting: prompt) { prompt in
+            .alert(Self.title(prompt), isPresented: shown(permission != nil), presenting: permission) { request in
+                Button("Allow") { browser.prompts.answer(permission: request, allow: true, remember: remember) }
+                Button("Don't Allow", role: .cancel) { browser.prompts.answer(permission: request, allow: false, remember: remember) }
+            } message: { _ in
+                Text("You can change this later in Settings.")
+            }
+            // Only site permissions are remembered, so only they offer to.
+            .dialogSuppressionToggle("Remember for this website", isSuppressed: $remember)
+            .alert(Self.title(prompt), isPresented: shown(prompt != nil && permission == nil), presenting: prompt) { prompt in
                 switch prompt {
-                case let .permission(_, request):
-                    Button("Allow") { browser.prompts.answer(permission: request, allow: true, remember: remember) }
-                    Button("Don't Allow", role: .cancel) { browser.prompts.answer(permission: request, allow: false, remember: remember) }
+                case .permission: EmptyView()
                 case let .dialog(_, request):
                     if request.kind == .prompt {
                         TextField("", text: $text)
@@ -458,12 +465,11 @@ private struct PromptAlerts: ViewModifier {
                 }
             } message: { prompt in
                 switch prompt {
-                case .permission: Text("You can change this later in Settings.")
+                case .permission: EmptyView()
                 case let .dialog(_, request): Text(request.message)
                 case let .approval(approval): Text(approval.summary)
                 }
             }
-            .dialogSuppressionToggle("Remember for this website", isSuppressed: $remember)
             .alert(offer.map { $0.isUpdate ? "Update the password for \($0.credential.displayHost)?" : "Save the password for \($0.credential.displayHost)?" } ?? "",
                    isPresented: shown(prompt == nil && offer != nil), presenting: offer) { offer in
                 Button(offer.isUpdate ? "Update Password" : "Save Password") { browser.passwords.acceptOffer() }

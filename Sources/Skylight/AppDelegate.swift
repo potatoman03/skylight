@@ -9,6 +9,8 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let paths: AppPaths
+    private let demo: Bool
+    private let development: Bool
     private var browser: Browser?
     private var window: NSWindow?
     private var settings: SettingsWindowController?
@@ -20,8 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Links that arrived before the engine was ready, as when a click in another app launches Skylight.
     private var pendingURLs: [URL] = []
 
-    init(paths: AppPaths) {
+    init(paths: AppPaths, demo: Bool, development: Bool) {
         self.paths = paths
+        self.demo = demo
+        self.development = development
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -32,13 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func engineDidStart() {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
         // Development runs (SKYLIGHT_DEV) keep passwords in memory, away from your Keychain.
-        let credentials: CredentialStore = ProcessInfo.processInfo.environment["SKYLIGHT_DEV"] != nil
-            ? MemoryCredentialStore.demo() : KeychainCredentialStore()
+        let credentials: CredentialStore = demo ? MemoryCredentialStore.demo() : KeychainCredentialStore()
         let browser = Browser(engine: CEFEngine(), paths: paths, version: version, credentials: credentials)
         self.browser = browser
-        let info = Bundle.main.infoDictionary ?? [:]
-        updater = Updater(development: ProcessInfo.processInfo.environment["SKYLIGHT_DEV"] != nil
-                          || info["SkylightDevBuild"] as? Bool ?? false, browser: browser)
+        updater = Updater(development: development, browser: browser)
         NSApp.mainMenu = MainMenu.build(target: self)
         ShortcutMap.apply(browser.preferences.shortcuts)
         CEFRuntime.onTerminate { [weak self] in self?.quit() }

@@ -64,6 +64,7 @@ public final class Browser {
             info: .init(name: "skylight", version: version, instructions: Self.agentInstructions),
             connectionFile: paths.mcpConnectionFile)
 
+        prompts.siteOfCall = { [weak self] in self?.agents.site(of: $0) }
         pages.archiveAfter = { preferences.archiveAfterHours * 60 * 60 }
         store.effectHandler = pages
         pages.sink = self

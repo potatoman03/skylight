@@ -265,7 +265,7 @@ public final class ExtensionService {
                 updatesToApprove[id] = nil
                 return
             }
-            let added = new.warnings.filter { !old.warnings.contains($0) }
+            let added = new.addedWarnings(since: old)
             if !added.isEmpty {
                 guard approved else {
                     try? FileManager.default.removeItem(at: staging)

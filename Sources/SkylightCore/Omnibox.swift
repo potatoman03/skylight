@@ -18,6 +18,9 @@ public struct Omnibox: Sendable {
             case let .address(u), let .search(_, u): u
             }
         }
+
+        /// A page on the web, not a local file or one of the browser's own.
+        public var isWeb: Bool { ["http", "https"].contains(url.scheme?.lowercased()) }
     }
 
     private static let schemes: Set<String> = ["http", "https", "file", "about", "chrome", "data", "view-source", "skylight"]

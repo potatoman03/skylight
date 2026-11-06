@@ -150,7 +150,7 @@ public final class HTTPServer: @unchecked Sendable {
             headers[line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()] =
                 line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
-        let length = Int(headers["content-length"] ?? "0") ?? 0
+        guard let length = Int(headers["content-length"] ?? "0"), length >= 0 else { return .invalid(400) }
         guard length <= maxBody else { return .invalid(413) }
         let bodyStart = headerEnd.upperBound
         guard buffer.count - (bodyStart - buffer.startIndex) >= length else { return .incomplete }

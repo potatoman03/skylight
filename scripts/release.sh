@@ -41,7 +41,7 @@ notarize() { # file: submit, wait, and stop with Apple's log if it's refused
   fi
 }
 
-SKYLIGHT_SIGN_IDENTITY="$IDENTITY" SKYLIGHT_VERSION="$VERSION" SKYLIGHT_BUILD="$(git -C "$ROOT" rev-list --count HEAD)" \
+SKYLIGHT_PUBLISHED=1 SKYLIGHT_SIGN_IDENTITY="$IDENTITY" SKYLIGHT_VERSION="$VERSION" SKYLIGHT_BUILD="$(git -C "$ROOT" rev-list --count HEAD)" \
   "$ROOT/scripts/bundle.sh" release
 
 echo "Notarizing the app…"

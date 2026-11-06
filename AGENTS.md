@@ -103,6 +103,15 @@ Rules the map implies:
   password store for `MemoryCredentialStore.demo()`. Don't make a development run read or write
   the login Keychain, and don't turn the mock keychain off for ad hoc builds: their signature
   changes every build, so macOS would ask for the Keychain at every launch.
+- **Published builds ignore the `SKYLIGHT_` environment switches.** `release.sh` marks them
+  (`SkylightPublished`), so nothing that launches one can swap its data, drop the Keychain or open
+  a debugging port. Other signed builds still honor the switches, which is how you test them.
+- **A page never vouches for itself.** WebMCP tools are always writes, whatever a page says, and
+  approval prompts describe a call in Skylight's words (`ToolDefinition.request`), naming the site.
+- **Agents stay on the web.** `open_tab` and `navigate` take http and https only. The omnibox's
+  other schemes are for people to type.
+- **An extension update can't gain access quietly.** `addedWarnings(since:)` compares the sites
+  themselves, including content scripts, and asks if any are new.
 - **Tests never touch real profiles, the real Keychain, or real store extensions.** Use temporary
   folders, `InMemoryStateStore` and `MemoryCredentialStore`. Pass folders in (as
   `NativeMessagingHosts.adopt(from:into:)` takes them) rather than reading
