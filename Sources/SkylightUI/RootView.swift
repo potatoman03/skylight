@@ -35,7 +35,7 @@ public struct RootView: View {
         // A fullscreen video gets the whole window, which goes full screen with it.
         let fullscreen = browser.pages.fullscreenTabID != nil
         let space = state.activeSpace
-        let accent = prefs.skyBackdrop ? prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue).accent : nil
+        let accent = prefs.showsTheme(in: space) ? prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue).accent : nil
         let sidebarWidth = max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound)
         let sidebarOnScreen = browser.showsSidebar && !fullscreen
         // A peeking sidebar lies over the page, which stays where it is.
@@ -55,8 +55,13 @@ public struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Up under the hidden toolbar, edge to edge.
                 .ignoresSafeArea(.container, edges: fullscreen ? .top : [])
-                // A split's rounded panes sit on the window's backdrop, like the sidebar.
-                .background(showsSplit || emptyPage && scene ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
+                // A split's rounded panes sit on the window's backdrop, like the sidebar. This never
+                // fades: going to a Space with no tab, it would flash white over the theme's picture.
+                .background {
+                    if !showsSplit, !(emptyPage && scene) {
+                        Rectangle().fill(.background).ignoresSafeArea().transition(.identity)
+                    }
+                }
                 .padding(.leading, sidebarRoom)
                 .offset(x: rigid ? beside : 0)
             // Off to the side when it's hidden, not gone, so it can peek straight back.
@@ -113,9 +118,10 @@ public struct RootView: View {
         // One backdrop behind the toolbar and sidebar, translucent or the theme's; only the page is opaque.
         .background {
             WindowBackdrop().ignoresSafeArea()
-            if prefs.skyBackdrop {
+            if prefs.showsTheme(in: space) {
                 ThemeBackdrop()
                     .ignoresSafeArea()
+                    .transition(.identity)
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { backdropFrame = $0 }
             }
         }
@@ -240,7 +246,7 @@ private struct SidebarGround: View {
         let prefs = browser.preferences
         let space = browser.store.state.activeSpace
         Group {
-            if prefs.skyBackdrop {
+            if prefs.showsTheme(in: space) {
                 let palette = prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue)
                 LinearGradient(colors: [Color(palette.sky), Color(palette.horizon)], startPoint: .top, endPoint: .bottom)
             } else {
@@ -265,7 +271,7 @@ struct SidebarEdge: View {
             .frame(width: 1)
             .overlay {
                 Color.clear
-                    .frame(width: 9)
+                    .frame(width: 16)
                     .contentShape(.rect)
                     .pointerStyle(.frameResize(position: .trailing))
                     .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)

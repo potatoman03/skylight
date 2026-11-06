@@ -69,7 +69,7 @@ extension ThemePalette {
 extension Preferences {
     /// An empty page in this Space opens onto the theme's picture or characters.
     func showsScene(in space: Space, dark: Bool) -> Bool {
-        skyBackdrop && sceneOnNewTab && theme(for: space).palette(dark: dark, spaceHue: space.hue).fillsNewTab
+        showsTheme(in: space) && sceneOnNewTab && theme(for: space).palette(dark: dark, spaceHue: space.hue).fillsNewTab
     }
 }
 

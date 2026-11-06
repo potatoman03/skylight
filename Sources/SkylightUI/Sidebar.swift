@@ -29,7 +29,7 @@ struct Sidebar: View {
         let space = state.activeSpace
         let prefs = browser.preferences
         let order = prefs.sidebarOrder
-        let palette = prefs.skyBackdrop ? prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue) : nil
+        let palette = prefs.showsTheme(in: space) ? prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue) : nil
         let lines = SidebarLines(space: space, showsNewTab: prefs.shows(.newTab), todayFirst: order.todayFirst,
                                  showsHints: prefs.showsDropHints || drag.active != nil)
 
@@ -1231,16 +1231,14 @@ struct SpaceMenu: View {
                                                 set: { if $0 { browser.store.send(.setSpaceTint(space.id, tint)) } }))
             }
         }
-        Menu("Sky") {
-            Toggle("Same as the App", isOn: Binding(get: { space.themeID == nil },
-                                                    set: { if $0 { browser.store.send(.setSpaceTheme(space.id, nil)) } }))
+        Menu("Theme") {
+            Toggle("Same as All Spaces", isOn: Binding(get: { space.themeID == nil },
+                                                       set: { if $0 { browser.store.send(.setSpaceTheme(space.id, nil)) } }))
             Divider()
             ForEach(prefs.themes) { theme in
                 Toggle(theme.name, isOn: Binding(get: { space.themeID == theme.id },
                                                  set: { if $0 { browser.store.send(.setSpaceTheme(space.id, theme.id)) } }))
             }
-            Divider()
-            Toggle("Show Theme Behind the Sidebar", isOn: $prefs.skyBackdrop)
         }
         Menu("Profile") {
             ForEach(state.profiles) { profile in

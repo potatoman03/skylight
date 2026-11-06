@@ -303,6 +303,9 @@ public struct SkyTheme: Codable, Identifiable, Hashable, Sendable {
                            sunlight: RGB(h: 0.70, s: 0.35, v: 1), rays: 0.30),
         followsSpace: true)
 
+    /// What a new install opens with, and what's left when the chosen theme is deleted.
+    public static let startingID = "skylight-default"
+
     public static let presets: [SkyTheme] = skies + asciiThemes + quietThemes + pictureThemes
 
     /// Painted skies.
@@ -437,6 +440,9 @@ public struct SkyTheme: Codable, Identifiable, Hashable, Sendable {
 
     /// Whole scenes, shipped with the app in Resources/Themes, with colors picked to suit each.
     public static let pictureThemes: [SkyTheme] = [
+        picture("skylight-default", "Skylight Default",
+                light: ("skylight-default-light.jpg", ("#C4D6F7", "#F2F6FF", "#FFE3D6", "#2F5BD0", "#F7FAFF", 0, 1), ("#141A2B", "#454E68", "#5B82E6", "#F5F8FF", 0.55)),
+                dark: ("skylight-default-dark.jpg", ("#141A4D", "#05061A", "#3A1F6B", "#7FA6FF", "#D6E1FF", 0, 1), ("#EEF1FF", "#A6AECB", "#5F7BEF", "#06071A", 0.55))),
         picture("nebula", "Nebula",
                 light: ("nebula-light.jpg", ("#CCBFF5", "#F4F0FF", "#F4D1FF", "#432A8C", "#F7F5FF", 0, 1), ("#1D1829", "#47405C", "#7052CC", "#F9F7FF", 0.55)),
                 dark: ("nebula-dark.jpg", ("#321F38", "#140D17", "#30264D", "#DF80FF", "#F2CCFF", 0, 1), ("#F6EBFA", "#B99FC2", "#C667E6", "#120C14", 0.55))),

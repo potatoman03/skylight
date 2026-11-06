@@ -196,23 +196,16 @@ Spaces and saved passwords to Default.
 **Themes.** Pattern themes draw a live field of characters over the sky, with nothing to download.
 Playful ones include Deep Space, Pink Princess, Terminal, Synthwave and Golden Hour; quiet ones,
 such as Linen, Sage, Fog, Clay and Sumi, keep to soft colors and faint patterns. Picture themes are
-whole scenes, from Nebula and Northern Lights to Greenwood and Hanami. Drop a picture or GIF
-on Settings → Appearance to make a theme from it: Skylight picks colors to suit and keeps text
-readable. Edit any theme's colors, in hex or with the picker, change its pattern, and export it to a
-`.skylighttheme` file, with its pictures, to share.
+whole scenes, from Nebula and Northern Lights to Greenwood and Hanami. Skylight starts in Skylight
+Default. Settings → Themes picks one for all your Spaces, or a different one for any Space.
 
-**Sidebar.** Each Space can have its own icon or emoji, color, sidebar tint and sky, from its ···
-menu or Tabs → Customize Space…. Settings → Appearance sets how favorites look (glass, tinted or
-icons only, their size, and how many fit in a row), the Space header (icon and name, large title or
-hidden), the Space switcher (icons, dots or hidden), whether empty sections show hints, and the
-sidebar's order: Today above or below pinned tabs, favorites at the top or bottom.
+**Sidebar.** Each Space can have its own icon or emoji, color, sidebar tint and theme, from its ···
+menu or Tabs → Customize Space….
 
-**Appearance.** Skylight follows the system's light or dark mode (Settings → Appearance can fix
-it to one). The same page sets tab row size and which parts of the sidebar show. For something less
-plain, **Sky behind the sidebar** puts a painted sky behind the source list: Sky, Pastel and Vivid
-follow each Space's color; Paper, Graphite, Dusk, Forest, Ocean, Rosé and Aurora keep their own;
-and you can make your own (sky, horizon and accent for light and dark, plus glow, sunlight, light
-strength and glass under More colors). A Space can have its own sky in Settings → Spaces.
+**Appearance.** Skylight follows the system's light or dark mode (Settings → Themes can fix it to
+one). Glass is the plain look; a theme puts a sky, pattern or picture behind the source list. Sky,
+Pastel and Vivid follow each Space's color; Paper, Graphite, Dusk, Forest, Ocean, Rosé and Aurora
+keep their own.
 
 **Passwords** live in your login Keychain, separately for each profile. After you sign in somewhere
 new, Skylight offers to save the login; a key in the address field fills a saved one when you pick
@@ -238,13 +231,11 @@ The sky is a small Metal shader: light falls through it, slowly, in the theme's 
 go), or pick Open in Split View from a tab's menu, or press ⌃⌘N. Up to four panes go side by side or
 stacked, with a hairline between them. Drag a divider to resize (double-click it to make the panes
 equal), drag a pane's grip to move it or pull it out of the split, and click a pane to focus it. The
-sidebar shows a split as one row; selecting any of its tabs shows them all. The outline on the
-focused pane can be turned off in Settings → Appearance.
+sidebar shows a split as one row; selecting any of its tabs shows them all.
 
 **Picture in Picture.** ⌥⌘P (or a tab's menu, or the address field) puts the page's main video in a
 floating window. Leave a tab with a video playing and it follows you in Picture in Picture; come
-back and it returns to the page (Settings → Appearance → Media turns this off). Tabs playing sound
-show a speaker you can click to mute.
+back and it returns to the page. Tabs playing sound show a speaker you can click to mute.
 
 **Chrome extensions.** Settings → Extensions installs from a Chrome Web Store link (or the Web
 Store button) or from an unpacked folder. Pinned extensions get a button in the toolbar; the rest

@@ -11,7 +11,7 @@ public final class SettingsWindowController: NSWindowController {
 
     public init(browser: Browser) {
         tabs.tabStyle = .toolbar
-        for section in SettingsSection.allCases {
+        for section in SettingsSection.shown {
             let host = NSHostingController(rootView: section.view.environment(browser).frame(width: 680, height: 560))
             host.sizingOptions = [.preferredContentSize]
             let item = NSTabViewItem(viewController: host)
@@ -45,12 +45,15 @@ public final class SettingsWindowController: NSWindowController {
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general, appearance, spaces, profiles, passwords, extensions, importing = "import", agents, packages
 
+    /// Agents and Packages keep working; their screens are left out to keep Settings short.
+    static let shown = allCases.filter { $0 != .agents && $0 != .packages }
+
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .general: "General"
-        case .appearance: "Appearance"
+        case .appearance: "Themes"
         case .passwords: "Passwords"
         case .spaces: "Spaces"
         case .profiles: "Profiles"
@@ -193,7 +196,6 @@ private struct SpaceSettingsRow: View {
     let deletable: Bool
     @Environment(Browser.self) private var browser
     @State private var name = ""
-    @State private var hue = 0.0
 
     var body: some View {
         Section {
@@ -215,28 +217,11 @@ private struct SpaceSettingsRow: View {
                         .help("Delete Space and its tabs")
                 }
             }
-            HStack {
-                Text("Color")
-                Slider(value: $hue, in: 0...1) { editing in
-                    if !editing { browser.store.send(.setSpaceHue(space.id, hue)) }
-                }
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(LinearGradient(colors: [Theme.skyTop(hue, .light), Theme.skyBottom(hue, .light)], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 28, height: 18)
-            }
             Picker("Profile", selection: Binding(get: { space.profileID }, set: { browser.store.send(.assignProfile(space.id, $0)) })) {
                 ForEach(profiles) { Text($0.name).tag($0.id) }
             }
-            Picker("Theme", selection: Binding(get: { space.themeID }, set: { browser.store.send(.setSpaceTheme(space.id, $0)) })) {
-                Text("Same as the app").tag(String?.none)
-                Divider()
-                ForEach(browser.preferences.themes) { Text($0.name).tag(Optional($0.id)) }
-            }
-            Picker("Sidebar tint", selection: Binding(get: { space.tint }, set: { browser.store.send(.setSpaceTint(space.id, $0)) })) {
-                ForEach(SpaceTint.allCases) { Text($0.name).tag($0) }
-            }
         }
-        .onAppear { name = space.name; hue = space.hue }
+        .onAppear { name = space.name }
         .onChange(of: space.name) { _, new in name = new }
     }
 }

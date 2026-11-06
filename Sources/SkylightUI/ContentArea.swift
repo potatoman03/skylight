@@ -27,7 +27,7 @@ struct ContentArea: View {
             let layout = PaneLayout(split: split, focused: tab?.id, size: geo.size, gap: PaneStyle.gap)
             ZStack(alignment: .topLeading) {
                 // A split's panes sit on the window's backdrop, which shows around them.
-                if !layout.isSplit, !scene { Color(nsColor: .windowBackgroundColor) }
+                if !layout.isSplit, !scene { Color(nsColor: .windowBackgroundColor).transition(.identity) }
                 PageHost(view: browser.pages.hostView)
 
                 if let split, layout.isSplit, browser.pages.fullscreenTabID == nil {

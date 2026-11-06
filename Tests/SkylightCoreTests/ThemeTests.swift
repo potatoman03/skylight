@@ -110,7 +110,8 @@ struct ThemeTests {
 
     @Test func everyPictureThemeHasItsPicturesInBothLooks() {
         let folder = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../Resources/Themes")
-        #expect(SkyTheme.pictureThemes.count == 8)
+        #expect(SkyTheme.pictureThemes.count == 9)
+        #expect(SkyTheme.pictureThemes.contains { $0.id == SkyTheme.startingID })
         for theme in SkyTheme.pictureThemes {
             for look in [theme.light, theme.dark] {
                 #expect(look.image?.builtIn == true && look.rays == 0 && look.text != nil && look.scrim != nil)
