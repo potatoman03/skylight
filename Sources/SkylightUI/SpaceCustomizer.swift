@@ -24,7 +24,7 @@ struct SpaceCustomizer: View {
 
     var body: some View {
         let store = browser.store
-        @Bindable var prefs = browser.preferences
+        let prefs = browser.preferences
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 8) {
                 Picker("Icon", selection: $page) {
@@ -62,13 +62,11 @@ struct SpaceCustomizer: View {
             }
             section("Theme") {
                 Picker("Theme", selection: Binding(get: { space.themeID }, set: { store.send(.setSpaceTheme(space.id, $0)) })) {
-                    Text("Same as the app").tag(String?.none)
+                    Text("Same as All Spaces").tag(String?.none)
                     Divider()
                     ForEach(prefs.themes) { Text($0.name).tag(Optional($0.id)) }
                 }
                 .labelsHidden()
-                Toggle("Show the theme behind the sidebar", isOn: $prefs.skyBackdrop)
-                    .controlSize(.small)
             }
         }
         .padding(14)

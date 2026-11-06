@@ -254,7 +254,7 @@ public final class Preferences {
     public var customSearchTemplate = "" { didSet { save() } }
     public var appearance: Appearance = .system { didSet { save(); applyAppearance() } }
     /// The theme's sky behind the sidebar, instead of the system's sidebar material.
-    public var skyBackdrop = false { didSet { save() } }
+    public var skyBackdrop = true { didSet { save() } }
     /// The animated light in the sky. Off, the sky is a still gradient.
     public var godRays = true { didSet { save() } }
     /// Today tabs untouched this long are archived.
@@ -263,7 +263,7 @@ public final class Preferences {
     /// The sidebar's width, as you last dragged it.
     public var sidebarWidth: Double = 240 { didSet { save() } }
     /// The app's theme; Spaces can pick their own.
-    public var themeID = SkyTheme.standard.id { didSet { save() } }
+    public var themeID = SkyTheme.startingID { didSet { save() } }
     public var customThemes: [SkyTheme] = [] { didSet { save() } }
     /// Parts of the sidebar hidden by older versions, until `sidebarVisibility` says otherwise.
     public var hiddenSidebarItems: Set<SidebarItem> = [] { didSet { save() } }
@@ -310,6 +310,9 @@ public final class Preferences {
         theme(space.themeID) ?? theme(themeID) ?? .standard
     }
 
+    /// Whether a Space shows a theme at all: a Space's own shows even when the app has none.
+    public func showsTheme(in space: Space) -> Bool { skyBackdrop || space.themeID != nil }
+
     public func visibility(_ item: SidebarItem) -> SidebarVisibility {
         sidebarVisibility[item.rawValue] ?? (hiddenSidebarItems.contains(item) ? .hidden : item.standardVisibility)
     }
@@ -339,7 +342,7 @@ public final class Preferences {
 
     public func deleteTheme(_ id: String) {
         customThemes.removeAll { $0.id == id }
-        if themeID == id { themeID = SkyTheme.standard.id }
+        if themeID == id { themeID = SkyTheme.startingID }
         pruneBackgrounds()
     }
 
