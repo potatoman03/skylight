@@ -16,9 +16,7 @@ Skylight (app) ─┬─> SkylightUI ──> SkylightBrowser ─┬─> Skylight
                 │                                   ├─> SkylightKit ─────> SkylightCore
                 │                                   ├─> SkylightAgent ───> SkylightCore
                 │                                   └─> SkylightMCP ─────> SkylightAgent, SkylightCore
-                └─> SkylightCEF ──> SkylightEngine, SkylightCore
-                         └─> CEFBridge (Objective-C++) ──> libcef_dll_wrapper (Vendor/cef)
-SkylightHelper ──> CEFBridge
+                └─> SkylightWebKit ──> SkylightEngine, SkylightCore
 ```
 
 | Module | Owns | May import |
@@ -30,15 +28,14 @@ SkylightHelper ──> CEFBridge
 | `SkylightMCP` | The MCP server: HTTP on `127.0.0.1`, JSON-RPC handling, `mcp.json` | Core, Agent, Network |
 | `SkylightBrowser` | `Browser` (composition root), `PageCoordinator` (effects → engine), services: agents, packages, passwords, extensions, media, prompts, toasts, preferences, Tidy, command bar | Core, Engine, Kit, Agent, MCP, AppKit |
 | `SkylightUI` | Every SwiftUI view, the Settings window, menus' shortcut map, the sky shader, drag and drop | Browser, Core, Engine (value types only), Agent, Kit, SwiftUI, AppKit |
-| `SkylightCEF` | `CEFEngine`, `CEFPage`, `CEFRuntime`, the extension host and its `chrome.tabs`/`chrome.windows` shim | Core, Engine, CEFBridge |
-| `CEFBridge` | Objective-C++ over CEF's C++ API (`SKEngine`, `SKBrowser`, `SKHelper`) | CEF |
-| `Skylight` | `main.swift` (starts CEF), `AppDelegate` (builds `Browser`, the window and the menu bar) | everything above |
-| `SkylightHelper` | Chromium's sub-process executable (renderer, GPU, utility) | CEFBridge |
+| `SkylightWebKit` | `WebKitEngine`, `WebKitPage`, `WebKitProfile`, `WebKitExtensionHost` | Core, Engine, WebKit, AppKit |
+| `Skylight` | `main.swift`, `AppDelegate` (builds `Browser`, the window and the menu bar) | everything above |
 
 Rules the map implies:
 
-- **Only `SkylightCEF` and `CEFBridge` know about Chromium.** No other module imports them, and
-  no CEF type or name appears outside them. Everything else talks to `WebEngine` and `WebPage`.
+- **Only `SkylightWebKit` knows about WebKit.** No other module imports it, and no WebKit type
+  appears outside it. Everything else talks to `WebEngine` and `WebPage`. WebKit has a `WebPage` of
+  its own, so write `SkylightEngine.WebPage` in that module.
 - **`SkylightCore` is pure.** No AppKit, no SwiftUI, no engine. It reads and writes files only
   through `StateStore`; importers take `Data`, and the caller reads the file. It's where most
   tests live.
@@ -56,11 +53,11 @@ Rules the map implies:
 |---|---|
 | Something the user can do to tabs, Spaces, folders, splits, favorites | A `BrowserAction` case, handled in `BrowserReducer` (pure), plus a test in `Tests/SkylightCoreTests`. If it needs the engine, return a `BrowserEffect`; `PageCoordinator` performs it. |
 | Something saved across launches | `BrowserState` (in `state.json`) or `Preferences` (in `preferences.json`). Keep old files decoding: new fields need defaults. |
-| Talking to web pages: load, script, events | `WebEngine`/`WebPage` in SkylightEngine first, then `CEFPage`/`CEFEngine`, then `CEFBridge` if CEF's C++ API is needed. |
-| A new Chromium switch or CEF setting | `CEFBridge/SKEngine.mm`. Append to switches like `disable-features`; never overwrite CEF's own values. |
+| Talking to web pages: load, script, events | `WebEngine`/`WebPage` in SkylightEngine first, then `WebKitPage`/`WebKitEngine`. |
+| A WebKit setting | `WebKitEngine.configuration(for:url:)`. |
 | A page script every page gets | `WebEngine.setPageScripts`, assembled by `Browser`. Page scripts reach Skylight only through `window.__skylight.post`. |
 | Packages and boosts | `SkylightKit` (manifest, matching, scripts), `PackageService` in SkylightBrowser. |
-| Chrome extensions | Manifest parsing in `SkylightKit/Extensions`. Install, update and the store in `ExtensionService`. The tabs/windows shim in `SkylightCEF/CEFExtensions.swift`. UI in `SkylightUI/Extensions.swift`. |
+| Chrome extensions | Manifest parsing and the compatibility copy in `SkylightKit/Extensions`. Install, update and the store in `ExtensionService`. Running them in `SkylightWebKit/WebKitExtensions.swift`. UI in `SkylightUI/Extensions.swift`. |
 | Passwords | Storage and importers in `SkylightKit/Passwords`, flows (fill, save offer, Touch ID) in `PasswordService`, UI in `SkylightUI/Passwords.swift`. |
 | Addresses and cards | Storage, the Chromium importer and the fill script in `SkylightKit/Autofill`, flows in `AutofillService`, UI in `SkylightUI/Autofill.swift`. |
 | History | `HistoryStore` and the Chromium importer in `SkylightKit/History`, recorded by `Browser`, UI in `SkylightUI/Autofill.swift`. Never give agents a way to read it. |
@@ -70,7 +67,7 @@ Rules the map implies:
 | A view, Settings page, sidebar row, toolbar item | `SkylightUI`. Motion tokens are in `Motion.swift`, colors in `Theme.swift`. |
 | A menu item or keyboard shortcut | `Sources/Skylight/MainMenu.swift` (the action is an `@objc` method on `AppDelegate`). The shortcuts sheet reads the menu bar, so it picks the item up. |
 | A row in Skylight's menu (the Space button at the left of the Space bar) | `MenuContent` in `Sources/SkylightUI/SkylightMenu.swift`. Give it a menu bar command where one exists, so its action and shortcut can't drift. |
-| Build, bundle, signing | `scripts/bundle.sh`. Releases that installed copies update to: `scripts/publish.sh`. Notarized DMGs: `scripts/release.sh`. CEF version: `scripts/fetch-cef.sh`. |
+| Build, bundle, signing | `scripts/bundle.sh`. Releases that installed copies update to: `scripts/publish.sh`. Notarized DMGs: `scripts/release.sh`. |
 | The website | `site/`, plain HTML and CSS with no build step. `.github/workflows/pages.yml` deploys it to GitHub Pages when it changes on `main`. |
 | Updates | `Sources/Skylight/Updater.swift` (Sparkle, app target only). The feed URL and public key are in `bundle.sh`. |
 
@@ -93,21 +90,21 @@ Rules the map implies:
 - **One source of truth.** Every change goes through `BrowserStore.send(_:)`. The reducer never
   touches the engine, the clock or the disk directly: `ReducerEnvironment` supplies time and ids,
   so tests are deterministic.
-- **Hardened-runtime signing goes inside out** (`bundle.sh`, the signed branch): first each
-  `.dylib` in `Chromium Embedded Framework.framework/Libraries`, then the framework, then the five
-  helpers (Renderer and GPU with `allow-jit`, the rest with none), then the app with its
-  entitlements. Signing the framework doesn't re-sign its libraries, and the hardened runtime
-  refuses code signed by another team, so skipping or reordering a step gives an app that won't
-  start its helpers. Helper names (`Skylight Helper (Renderer).app` and the others) are what
-  Chromium looks for. Don't rename them.
-- **Dev mode keeps the mock keychain.** An ad hoc build (`SkylightDevBuild` true) or
-  `SKYLIGHT_DEV=1` passes `use-mock-keychain` to Chromium. Only `SKYLIGHT_DEV=1` also swaps the
-  password store for `MemoryCredentialStore.demo()`. Don't make a development run read or write
-  the login Keychain, and don't turn the mock keychain off for ad hoc builds: their signature
-  changes every build, so macOS would ask for the Keychain at every launch.
+- **An Objective-C exception must never pass through a Swift task.** AppKit would catch it at the
+  top of the run loop and carry on, but the task's executor record is left dangling, and the app
+  dies much later in an unrelated `MainActor.assumeIsolated`. WebKit throws for misuse, such as a
+  configuration whose data store differs from its related web view's, so `main.swift` turns on
+  `NSApplicationCrashOnExceptions`: the crash lands where the exception was thrown. Don't turn it
+  off.
+- **Avoid the async `evaluateJavaScript`.** Its Swift form is known to crash when a script returns
+  null. Use the completion form, or `callAsyncJavaScript`.
+- **Leave delegate completion handlers unannotated.** Don't mark a delegate's completion handler
+  `@MainActor`. The method stops matching the protocol, the compiler only warns ("nearly matches"),
+  and WebKit never calls it.
+- **Only some schemes leave the browser.** `mailto`, `tel`, `facetime` and `sms` open another app
+  only from a link the user clicked.
 - **Published builds ignore the `SKYLIGHT_` environment switches.** `release.sh` marks them
-  (`SkylightPublished`), so nothing that launches one can swap its data, drop the Keychain or open
-  a debugging port. Other signed builds still honor the switches, which is how you test them.
+  (`SkylightPublished`), so nothing that launches one can swap its data or drop the Keychain. Other signed builds still honor the switches, which is how you test them.
 - **A page never vouches for itself.** WebMCP tools are always writes, whatever a page says, and
   approval prompts describe a call in Skylight's words (`ToolDefinition.request`), naming the site.
 - **Agents stay on the web.** `open_tab` and `navigate` take http and https only. The omnibox's
@@ -131,49 +128,68 @@ Rules the map implies:
 - **Never read or print secrets.** Password fields and card fields stay out of agent reads. When
   debugging the password code, use demo mode, never your own Keychain items. Never commit
   `.signing`.
-- **Chromium profile folders sit directly inside `Engine/`** (`Default`, `Profile-<id>`).
-  Chromium rejects nested ones.
-- **Docked DevTools are an ordinary browser in a pane of the tab.** `dockDevToolsAt:` loads
-  Chromium's DevTools app with `ws=skylight`, and a script swaps its WebSocket for `cefQuery`, so
-  messages reach the page through `SendDevToolsMessage` and no port opens. `ShowDevTools` with a
-  parent view stops the app, and its view takes no input outside its own window, so only popups
-  use it. Skylight's own protocol calls take `NextOwnMessage()`, or DevTools get their replies.
-- **Every profile runs every extension, but only what Chromium got at launch.**
-  `--load-extension` reaches all profiles and can't be undone while running; the DevTools pipe's
-  `Extensions.loadUnpacked` reaches `Default` only, and `Extensions.uninstall` refuses anything
-  Chromium started with. So an extension added while running needs a relaunch to reach other
-  profiles, and turning one off or removing it finishes at the next launch.
+- **A profile is a WebKit data store.** WebKit decides where a store lives (`~/Library/WebKit`),
+  so a profile's folder in `Engine/` only keeps the store's identifier, in `webkit-store`. Deleting
+  a profile has to remove the store as well. The folders are still named `Default` and
+  `Profile-<id>`, so sign-ins left by Chromium builds can be found.
+- **Web Inspector docks through a private call.** `isInspectable` and `developerExtrasEnabled` give
+  Inspect Element; showing and closing it from the menu use `_inspector`, guarded with
+  `responds(to:)`, so a future macOS can only take the menu command away.
+- **An extension's service worker runs behind a compatibility script.** WebKit leaves out some
+  Chrome APIs, and a worker that touches one while it starts never runs (WebKit records
+  `WKWebExtensionContextErrorDomain` code 6), which takes the extension with it. Nothing can be
+  injected ahead of a worker, so `ExtensionRuntime` copies the extension to `ExtensionRuntime/<id>`
+  and points its manifest at a wrapper. Add missing APIs there. The installed folder is never
+  changed, so `ExtensionManifest` keeps reading that one. WebKit holds the script wrappers of its
+  API objects weakly, so anything added to one must also be kept alive: the script pins
+  `chrome.runtime`, and a small test worker won't show it when that's forgotten, because the
+  wrapper only goes when a collection runs during startup. It also locks the `chrome` and `browser`
+  globals: WebKit delivers events through them, and Proton Pass replaces them, so the copy loads the
+  script in the extension's pages and isolated content scripts as well as its worker. WebKit reuses a worker's stored scripts
+  whatever's on disk, and changing the worker's address makes it update one in place, which crashes
+  its web process on every try. So the address stays put, and `ExtensionService` forgets stored
+  workers when `ExtensionRuntime` reports a change.
+- WebKit silently drops what a content script sends from a tab it doesn't know, so `makePage` opens
+  the tab with `WebKitExtensionHost.open` before the page starts loading.
+- **A popup's viewport follows its frame.** WebKit's popup web view lays out at its content's size
+  and ignores the frame, so a popup that copies its viewport into its own size (Proton Pass does)
+  gets stuck at whatever it saw first. `presentActionPopup` turns that mode off with a guarded
+  private call, and `measure` ignores custom properties set on the root, because that's where
+  those popups write the size back.
+- **Every profile runs every extension.** A profile has one `WKWebExtensionController`, and an
+  extension gets a context in each. Each context has a set `baseURL`, so its address and storage
+  stay the same between launches. An extension's own pages use the context's configuration
+  unchanged: they're related to its background page, and WKWebView throws if the data store
+  differs.
+- **Sessions move once.** Cookies from older Chromium builds of Skylight are read by
+  `ChromiumCookieImporter` and moved by `Browser.moveChromiumSessions`, guarded by
+  `preferences.movedChromiumSessions`.
 - **Keychain items for a profile differ in two attributes on purpose.** The description is how
   Skylight finds them, and the default profile's never changes, so older passwords stay with it.
   Other profiles also set a security domain, because the description isn't part of what makes a
   Keychain item unique and the same login may be saved in two profiles.
-- **Fill a new profile before anything opens it.** Extension data is copied as files, so it has to
-  land before `PageCoordinator.profile(for:)` makes the profile; cookies go through Chromium's
-  cookie manager, because the files are encrypted and httpOnly cookies are out of a page's reach.
-  Read cookie names to see who's signed in, never their values; only an import handles a value,
-  passing it straight to the profile, and never logs it. A profile with `passwordsFrom` stores no
-  passwords of its own, so anything reading or saving them goes through
-  `BrowserState.passwordProfile(for:)`.
-- **Run against a throwaway data folder.** `SKYLIGHT_DATA_DIR` resolves symlinks because Chromium
-  compares cache paths literally (`/var` vs `/private/var`). If Skylight is installed and running,
-  `open build/Skylight.app` activates that copy instead (same bundle id). Start the executable
-  directly, and quit only the process you started.
-- **CEF has to shut down with no pages open.** Quit goes through `Browser.shutdown`, which closes
-  every page before `CEFRuntime.quit()`. Don't call `exit` or `NSApp.terminate` around it.
+- **Fill a new profile before anything opens it.** Cookies go through the data store's cookie store,
+  because httpOnly cookies are out of a page's reach. WebKit keeps extension storage to itself, so a
+  new Space's extensions start fresh. Read cookie names to see who's signed in, never their values;
+  only an import handles a value, passing it straight to the profile, and never logs it. A profile
+  with `passwordsFrom` stores no passwords of its own, so anything reading or saving them goes
+  through `BrowserState.passwordProfile(for:)`.
+- **Run against a throwaway data folder.** If Skylight is installed and running, `open
+  build/Skylight.app` activates that copy instead (same bundle id). Start the executable directly,
+  and quit only the process you started. WebKit's network process ignores `CFFIXED_USER_HOME`, so
+  a test run's stores always land in the real `~/Library/WebKit`. Keep test data made up.
 - **Main actor everywhere UI-side.** The store, `Browser`, services and the engine adapters are
-  `@MainActor`. CEF callbacks arrive on the main thread and hop in with
-  `MainActor.assumeIsolated`.
+  `@MainActor`. Timers and notification observers hop in with `MainActor.assumeIsolated`.
 
 ## Verifying a change
 
 1. `swift build`. It must finish without errors.
-2. `swift test`: every test passes (131 at the time of writing). Without CEF, run
-   `swift build --product SkylightPackageTests` and then `swift test --skip-build`.
+2. `swift test`: every test passes (239 at the time of writing).
 3. For anything that runs in the app: `scripts/bundle.sh`, then
    `SKYLIGHT_DEV=1 SKYLIGHT_DATA_DIR="$(mktemp -d)" build/Skylight.app/Contents/MacOS/Skylight`,
    and try it. Check light and dark mode, and Reduce Motion if it animates.
 4. For signing or bundling changes: `codesign --verify --deep --strict build/Skylight.app`.
 5. For CI changes: `actionlint .github/workflows/ci.yml`.
 
-Say in the pull request which of these you ran. If you couldn't run one (no CEF, no display),
-say that too.
+Say in the pull request which of these you ran. If you couldn't run one (no display), say that
+too.

@@ -1,8 +1,7 @@
 import AppKit
 import SkylightCore
 
-/// The browser engine, as the rest of Skylight sees it. Implemented by SkylightCEF today;
-/// a self-built Chromium or WebKit could conform without the app changing.
+/// The browser engine, as the rest of Skylight sees it. Implemented by SkylightWebKit.
 ///
 /// ## Page script contract
 /// Every engine must give page scripts, before any page script runs:
@@ -19,14 +18,16 @@ public protocol WebEngine: AnyObject {
     /// Scripts injected into every page from now on (packages, agent helpers, WebMCP).
     func setPageScripts(_ scripts: [String])
 
-    /// Closes every page, then calls `completion` once the engine can shut down.
-    func closeAll(completion: @escaping @MainActor () -> Void)
+    /// Closes every page.
+    func closeAll()
 
     /// Chrome extensions, when the engine can run them.
     var extensions: ExtensionHost? { get }
     /// Copies what these extensions keep in `profile` into the profile folder `directory`. Do this
     /// before that folder's profile is made, while nothing has it open.
     func copyExtensionData(_ ids: [String], from profile: WebProfile, to directory: URL) async throws
+    /// Closes the profile's pages and deletes its cookies and storage.
+    func deleteProfile(_ profile: WebProfile) async
 }
 
 /// One profile's pages, as its extensions see them.
@@ -43,27 +44,43 @@ public struct ExtensionTabs {
     }
 }
 
-/// Runs Chrome extensions.
+/// An extension's popup, for Skylight to show under its button.
+public struct ExtensionPopup {
+    public let id: String
+    public let view: NSView
+    public let close: @MainActor () -> Void
+
+    public init(id: String, view: NSView, close: @escaping @MainActor () -> Void) {
+        self.id = id
+        self.view = view
+        self.close = close
+    }
+}
+
+/// Runs Chrome extensions. Every profile runs them all, each with its own storage.
 ///
-/// Every profile runs the extensions the engine was started with, each with its own storage.
-/// `load` and `unload` change only the default profile; the others catch up at the next launch.
-///
-/// Engines without Chrome's tab strip must still give extensions a current tab and a window:
-/// `setTabs` says which pages exist and which one is in front, and `openTab` receives the tabs
-/// extensions ask for.
+/// The engine has no tab strip of its own, so extensions get a current tab and a window from
+/// Skylight: `setTabs` says which pages exist and which one is in front, and `openTab` receives
+/// the tabs extensions ask for.
 @MainActor
 public protocol ExtensionHost: AnyObject {
-    /// Gets ready for the extensions the engine started with.
-    func start() async
-    /// Loads an unpacked extension folder. Returns the extension's id.
-    func load(_ directory: URL) async throws -> String
+    /// Loads an unpacked extension folder as `id`.
+    func load(_ directory: URL, id: String) async throws
     func unload(_ id: String) async throws
+    /// Drops every extension's stored service worker, so the next run loads each one from disk.
+    func forgetWorkers() async
     /// The pages each profile's extensions can see.
     func setTabs(_ groups: [ExtensionTabs])
-    /// Clicks the extension's toolbar button for an extension without a popup.
+    /// Clicks the extension's toolbar button: its popup opens, or `action.onClicked` fires.
     func triggerAction(_ id: String, page: WebPage?) async throws
+    /// The address of one of the extension's own pages.
+    func pageURL(_ id: String, path: String) -> URL?
     /// An extension asked to open a tab.
     var openTab: (@MainActor (URL) -> Void)? { get set }
+    /// A popup is ready to show.
+    var showPopup: (@MainActor (ExtensionPopup) -> Void)? { get set }
+    /// The open popup's content wants this size.
+    var resizePopup: (@MainActor (CGSize) -> Void)? { get set }
 }
 
 @MainActor
@@ -98,9 +115,6 @@ public protocol WebPage: AnyObject {
 
     func showDeveloperTools()
     func close()
-
-    /// The id extensions know this page by (`chrome.tabs`). 0 before the page exists.
-    var extensionTabID: Int { get }
 
     /// Runs `script` as if the user had just clicked, for APIs that need a gesture
     /// (picture in picture, fullscreen). Fire and forget.
@@ -176,8 +190,6 @@ public struct PageEvent: Sendable, Equatable {
     public var canGoBack: Bool?
     public var canGoForward: Bool?
     public var progress: Double?
-    /// The page learned the id extensions know it by.
-    public var extensionTabID: Int?
     /// The page went into fullscreen (a video's fullscreen button) or came out of it.
     public var isFullscreen: Bool?
 

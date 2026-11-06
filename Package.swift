@@ -1,8 +1,7 @@
 // swift-tools-version: 6.2
-import Foundation
 import PackageDescription
 
-// Skylight: a native macOS browser shell around Chromium (CEF).
+// Skylight: a native macOS browser, in Swift, on the system's WebKit.
 //
 // Module graph (arrows point at dependencies):
 //
@@ -11,24 +10,16 @@ import PackageDescription
 //                   │                                   ├─> SkylightKit ─────> SkylightCore
 //                   │                                   ├─> SkylightAgent ───> SkylightCore
 //                   │                                   └─> SkylightMCP ─────> SkylightAgent
-//                   └─> SkylightCEF ──> CEFBridge (Objective-C++) ──> libcef_dll_wrapper
+//                   └─> SkylightWebKit ──> SkylightEngine, SkylightCore
 //
-//   SkylightHelper: the Chromium sub-process executable (renderer, GPU, utility).
-//
-// Only SkylightCEF and CEFBridge know about Chromium. Everything else talks to the
-// `WebEngine` protocol in SkylightEngine, so the engine can be swapped (for example
-// for a self-built, debloated CEF) without touching the app.
-
-let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
-let cefRoot = "\(root)/Vendor/cef"
-let cefWrapperLib = "\(cefRoot)/build/libcef_dll_wrapper"
+// Only SkylightWebKit knows about WebKit. Everything else talks to the `WebEngine`
+// protocol in SkylightEngine.
 
 let package = Package(
     name: "Skylight",
     platforms: [.macOS(.v26)],
     products: [
         .executable(name: "Skylight", targets: ["Skylight"]),
-        .executable(name: "SkylightHelper", targets: ["SkylightHelper"]),
     ],
     dependencies: [
         // Updates: checks the GitHub releases feed and installs new versions.
@@ -62,38 +53,20 @@ let package = Package(
         // SwiftUI chrome.
         .target(name: "SkylightUI", dependencies: ["SkylightBrowser", "SkylightCore", "SkylightEngine", "SkylightAgent", "SkylightKit"]),
 
-        // Objective-C++ bridge over the CEF C++ API.
-        .target(
-            name: "CEFBridge",
-            cxxSettings: [
-                // Match libcef_dll_wrapper's build flags.
-                .unsafeFlags(["-I", cefRoot, "-fobjc-arc", "-fno-rtti", "-fno-exceptions", "-Wno-deprecated-declarations"]),
-                .define("NDEBUG"),
-            ],
-            linkerSettings: [
-                .unsafeFlags(["-L", cefWrapperLib]),
-                .linkedLibrary("cef_dll_wrapper"),
-                .linkedLibrary("c++"),
-                .linkedFramework("AppKit"),
-            ]
-        ),
-
-        // Swift adapter that makes CEF conform to SkylightEngine.
-        .target(name: "SkylightCEF", dependencies: ["SkylightCore", "SkylightEngine", "CEFBridge"]),
+        // Swift adapter that makes the system's WebKit conform to SkylightEngine.
+        .target(name: "SkylightWebKit", dependencies: ["SkylightCore", "SkylightEngine"]),
 
         // The app: builds the engine and the browser and hands the browser to the UI.
         // Only the app knows about Sparkle; bundle.sh puts its framework in Contents/Frameworks.
         .executableTarget(
             name: "Skylight",
-            dependencies: ["SkylightUI", "SkylightCEF", "SkylightBrowser", "SkylightCore", "SkylightKit",
+            dependencies: ["SkylightUI", "SkylightWebKit", "SkylightBrowser", "SkylightCore", "SkylightEngine", "SkylightKit",
                            .product(name: "Sparkle", package: "Sparkle")],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
-        .executableTarget(name: "SkylightHelper", dependencies: ["CEFBridge"]),
 
         .testTarget(name: "SkylightCoreTests", dependencies: ["SkylightCore"]),
         .testTarget(name: "SkylightKitTests", dependencies: ["SkylightKit", "SkylightCore"]),
         .testTarget(name: "SkylightMCPTests", dependencies: ["SkylightMCP", "SkylightAgent"]),
-    ],
-    cxxLanguageStandard: .cxx20
+    ]
 )

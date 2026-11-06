@@ -200,7 +200,7 @@ struct ExtensionPopupView: View {
 
     var body: some View {
         if let popup = browser.extensions.popup {
-            HostedPageView(view: popup.page.view)
+            HostedPageView(view: popup.view)
                 .frame(width: popup.size.width, height: popup.size.height)
                 .animation(Motion.travel, value: popup.size)
         }

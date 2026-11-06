@@ -27,7 +27,8 @@ public final class ExtensionService {
     /// An open popup: the extension's page in a popover under its button.
     public struct Popup: Identifiable {
         public let id: String
-        public let page: WebPage
+        public let view: NSView
+        let close: @MainActor () -> Void
         public var size: CGSize
     }
 
@@ -42,18 +43,15 @@ public final class ExtensionService {
     @ObservationIgnored private let host: ExtensionHost?
     @ObservationIgnored private let registryFile: URL
     @ObservationIgnored private let storeFolder: URL
+    /// The copies extensions run from. See `ExtensionRuntime`.
+    @ObservationIgnored private let runtimeFolder: URL
     @ObservationIgnored private let toasts: ToastCenter
-    @ObservationIgnored var makePage: ((URL, WebPageDelegate) -> WebPage?)?
     @ObservationIgnored var openTab: ((URL) -> Void)?
     @ObservationIgnored var currentTabs: () -> (pages: [WebPage], active: WebPage?) = { ([], nil) }
     @ObservationIgnored var tabGroups: () -> [ExtensionTabs] = { [] }
     /// Whether the Space on screen uses the default profile, and whether any profile doesn't.
-    @ObservationIgnored var showingDefaultProfile: () -> Bool = { true }
-    @ObservationIgnored var hasOtherProfiles: () -> Bool = { false }
     /// Folders Chromium loaded at launch, in every profile.
-    @ObservationIgnored private var launched: Set<String> = []
     /// Added since launch, so only the default profile has them so far.
-    @ObservationIgnored private var addedSinceLaunch: Set<String> = []
 
     static let chromeVersion = "156.0.8078.80"
     static let popupMin = CGSize(width: 25, height: 25)
@@ -63,28 +61,29 @@ public final class ExtensionService {
         self.host = host
         self.registryFile = root.appending(path: "extensions.json")
         self.storeFolder = root.appending(path: "Extensions", directoryHint: .isDirectory)
+        self.runtimeFolder = root.appending(path: "ExtensionRuntime", directoryHint: .isDirectory)
         self.toasts = toasts
         if let data = try? Data(contentsOf: registryFile), let list = try? JSONDecoder().decode([Installed].self, from: data) {
             installed = list
         }
         for ext in installed { manifests[ext.id] = try? ExtensionManifest.load(from: ext.folder) }
-        launched = Set(ExtensionFolders.launchable(enabled.map(\.folder)).map(\.path))
-        host?.openTab = { [weak self] url in self?.openTab?(url) }
+        host?.openTab = { [weak self] url in
+            self?.closePopup()
+            self?.openTab?(url)
+        }
+        host?.showPopup = { [weak self] popup in
+            self?.popup = Popup(id: popup.id, view: popup.view, close: popup.close, size: CGSize(width: 320, height: 120))
+        }
+        host?.resizePopup = { [weak self] size in
+            self?.popup?.size = CGSize(width: min(max(size.width, Self.popupMin.width), Self.popupMax.width),
+                                       height: min(max(size.height, Self.popupMin.height), Self.popupMax.height))
+        }
     }
 
-    /// What Chromium should load at launch, read before there's a service to ask.
-    public nonisolated static func launchFolders(root: URL) -> [URL] {
-        guard let data = try? Data(contentsOf: root.appending(path: "extensions.json")),
-              let list = try? JSONDecoder().decode([Installed].self, from: data) else { return [] }
-        return ExtensionFolders.launchable(list.filter(\.enabled).map(\.folder))
-    }
-
-    /// Picks up the extensions Chromium started with, and loads any it couldn't.
+    /// Loads every extension that's turned on.
     func start() async {
-        guard let host else { return }
-        await host.start()
         await withTaskGroup(of: Void.self) { group in
-            for ext in installed where ext.enabled && !launched.contains(ext.folder.path) { group.addTask { await self.load(ext) } }
+            for ext in enabled { group.addTask { await self.load(ext) } }
         }
     }
 
@@ -186,19 +185,14 @@ public final class ExtensionService {
         if let host {
             busy.insert(ext.id)
             defer { busy.remove(ext.id) }
-            let runtimeID = try await host.load(ext.folder)
-            if runtimeID != ext.id {
-                manifests[runtimeID] = manifests.removeValue(forKey: ext.id)
-                ext.id = runtimeID
-            }
+            try await run(ext, on: host)
         }
         installed.removeAll { $0.id == ext.id }
         installed.append(ext)
         save()
-        addedSinceLaunch.insert(ext.id)
         let name = manifests[ext.id]?.name ?? "the extension"
         if quietly { return }
-        toasts.show(hasOtherProfiles() ? "Added \(name). Relaunch to use it in every Space." : "Added \(name)", symbol: "puzzlepiece.extension")
+        toasts.show("Added \(name)", symbol: "puzzlepiece.extension")
     }
 
     /// Unzips a package beside `folder`, to look at before `replace(_:with:)` moves it in.
@@ -297,7 +291,7 @@ public final class ExtensionService {
             if ext.enabled { try? await host?.unload(id) }
             try replace(ext.folder, with: staging)
             manifests[id] = new
-            if ext.enabled { _ = try await host?.load(ext.folder) }
+            if ext.enabled, let host { try await run(ext, on: host) }
         } catch {
             fail("Couldn't update \(old.name): \(error.localizedDescription)")
         }
@@ -311,13 +305,6 @@ public final class ExtensionService {
         save()
         let ext = installed[i]
         if popup?.id == id { closePopup() }
-        // Chromium can't unload what it started with: that stays running until the next launch.
-        let running = launched.contains(ext.folder.path)
-        if on, !running { addedSinceLaunch.insert(id) }
-        if running ? !on : hasOtherProfiles() {
-            toasts.show("Relaunch to \(on ? "turn it on" : "turn it off") in every Space", symbol: "puzzlepiece.extension")
-        }
-        guard !running else { return }
         Task {
             if on { await load(ext) } else { try? await host?.unload(id) }
         }
@@ -343,17 +330,18 @@ public final class ExtensionService {
         if popup?.id == id { closePopup() }
         installed.removeAll { $0.id == id }
         manifests[id] = nil
-        addedSinceLaunch.remove(id)
         save()
-        let running = launched.contains(ext.folder.path)
-        if running || hasOtherProfiles() { toasts.show("Relaunch to remove it from every Space", symbol: "puzzlepiece.extension") }
-        if !running { Task { try? await host?.unload(id) } }
+        let runtimeFolder = runtimeFolder
+        Task {
+            try? await host?.unload(id)
+            ExtensionRuntime.discard(id: id, in: runtimeFolder)
+        }
         if ext.source == .store { try? FileManager.default.removeItem(at: ext.folder) }
     }
 
     /// Opens the extension's options page in a tab.
     public func openOptions(_ id: String) {
-        guard let page = manifests[id]?.optionsPage, let url = URL(string: "chrome-extension://\(id)/\(page)") else { return }
+        guard let page = manifests[id]?.optionsPage, let url = host?.pageURL(id, path: page) else { return }
         openTab?(url)
     }
 
@@ -367,15 +355,17 @@ public final class ExtensionService {
         busy.insert(ext.id)
         defer { busy.remove(ext.id) }
         do {
-            let id = try await host.load(ext.folder)
-            if id != ext.id, let i = installed.firstIndex(where: { $0.id == ext.id }) {
-                installed[i].id = id
-                manifests[id] = manifests.removeValue(forKey: ext.id)
-                save()
-            }
+            try await run(ext, on: host)
         } catch {
             fail("\(manifests[ext.id]?.name ?? "An extension") didn't load: \(error.localizedDescription)")
         }
+    }
+
+    private func run(_ ext: Installed, on host: ExtensionHost) async throws {
+        let (folder, id, root) = (ext.folder, ext.id, runtimeFolder)
+        let prepared = try await Task.detached { try ExtensionRuntime.prepare(folder, id: id, in: root) }.value
+        if prepared.workerChanged { await host.forgetWorkers() }
+        try await host.load(prepared.folder, id: id)
     }
 
     private func save() {
@@ -396,24 +386,16 @@ public final class ExtensionService {
     public func click(_ id: String) {
         if popup?.id == id { return closePopup() }
         closePopup()
-        guard showingDefaultProfile() || !addedSinceLaunch.contains(id) else {
-            return toasts.show("Relaunch Skylight to use \(manifests[id]?.name ?? "it") in this Space", symbol: "puzzlepiece.extension")
-        }
         syncTabs()
-        if let path = manifests[id]?.action?.popup, let url = URL(string: "chrome-extension://\(id)/\(path)"),
-           let page = makePage?(url, self) {
-            popup = Popup(id: id, page: page, size: CGSize(width: 320, height: 120))
-        } else {
-            Task {
-                do { try await host?.triggerAction(id, page: currentTabs().active) } catch { fail(error.localizedDescription) }
-            }
+        Task {
+            do { try await host?.triggerAction(id, page: currentTabs().active) } catch { fail(error.localizedDescription) }
         }
     }
 
     public func closePopup() {
         guard let popup else { return }
         self.popup = nil
-        popup.page.close()
+        popup.close()
     }
 
     /// Tells the extensions which pages exist and which is in front.
@@ -421,8 +403,7 @@ public final class ExtensionService {
         host?.setTabs(tabGroups())
     }
 
-    /// Messages from extension pages (popups, options tabs) and their shim.
-    /// The Chrome Web Store page's own button, which `storePageScript` takes over: whether its
+        /// The Chrome Web Store page's own button, which `storePageScript` takes over: whether its
     /// extension is in, and adding it.
     ///
     /// Any page can post this, so the extension is the one the tab is really showing, by the
@@ -516,55 +497,4 @@ public final class ExtensionService {
       schedule();
     })();
     """
-
-    func handle(_ message: JSONValue, from page: WebPage?) -> JSONValue {
-        switch message["type"]?.stringValue {
-        case "extensions.tabs":
-            let tabs = currentTabs()
-            let active = tabs.active.map(\.extensionTabID).flatMap { $0 == 0 ? nil : $0 }
-            return ["active": active.map { .number(Double($0)) } ?? .null,
-                    "all": .array(tabs.pages.map(\.extensionTabID).filter { $0 != 0 }.map { .number(Double($0)) })]
-        case "extensions.openTab":
-            // Only addresses a web page could open itself, or the extension's own pages.
-            if let url = message["url"]?.stringValue.flatMap(URL.init(string:)),
-               ["http", "https", "chrome-extension"].contains(url.scheme?.lowercased() ?? "") {
-                openTab?(url)
-                if page === popup?.page { closePopup() }
-            }
-            return .null
-        case "extensions.size":
-            guard let page, page === popup?.page, let w = message["width"]?.doubleValue, let h = message["height"]?.doubleValue else { return .null }
-            popup?.size = CGSize(width: min(max(w, Self.popupMin.width), Self.popupMax.width),
-                                 height: min(max(h, Self.popupMin.height), Self.popupMax.height))
-            return .null
-        default:
-            return .null
-        }
-    }
-}
-
-// MARK: - Popup pages
-
-extension ExtensionService: WebPageDelegate {
-    public func page(_ page: WebPage, didChange event: PageEvent) {}
-
-    public func page(_ page: WebPage, wantsNewTab url: URL, inBackground: Bool) {
-        openTab?(url)
-        if !inBackground { closePopup() }
-    }
-
-    public func page(_ page: WebPage, didReceive message: JSONValue) async throws -> JSONValue {
-        handle(message, from: page)
-    }
-
-    public func page(_ page: WebPage, requestsPermission request: PermissionRequest) { request.respond(false) }
-    public func page(_ page: WebPage, requestsDialog request: DialogRequest) { request.respond(false, "") }
-    public func page(_ page: WebPage, didFinishDownload fileURL: URL) {
-        toasts.show("Downloaded \(fileURL.lastPathComponent)", symbol: "arrow.down.circle")
-    }
-
-    /// `window.close()` in a popup closes the popover.
-    public func pageDidClose(_ page: WebPage) {
-        if page === popup?.page { popup = nil }
-    }
 }

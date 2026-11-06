@@ -173,6 +173,9 @@ import Testing
         let aside = ChromiumBrowser.all.first { $0.id == "aside" }
         #expect(aside?.loginData.path.hasSuffix("Aside/Default/Login Data") == true)
         #expect(aside?.safeStorageServices.first == "Aside Safe Storage")
+        let helium = ChromiumBrowser.all.first { $0.id == "helium" }
+        #expect(helium?.loginData.path.hasSuffix("net.imput.helium/Default/Login Data") == true)
+        #expect(helium?.safeStorageServices == ["Helium Storage Key"])
     }
 }
 

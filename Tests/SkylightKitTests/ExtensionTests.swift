@@ -211,14 +211,132 @@ import Testing
     }
 }
 
-@Suite struct ExtensionFoldersTests {
-    @Test func onlyFoldersChromiumCanLoadAtLaunch() throws {
+@Suite struct ExtensionRuntimeTests {
+    private func folder(manifest: String) throws -> (root: URL, source: URL) {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let source = root.appending(path: "source")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data(manifest.utf8).write(to: source.appending(path: "manifest.json"))
+        try Data("// the extension's own".utf8).write(to: source.appending(path: "background.js"))
+        return (root, source)
+    }
+
+    private func text(_ file: String, in folder: URL) throws -> String {
+        try String(contentsOf: folder.appending(path: file), encoding: .utf8)
+    }
+
+    private func worker(in folder: URL) throws -> String {
+        let data = try Data(contentsOf: folder.appending(path: "manifest.json"))
+        let manifest = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return try #require((manifest["background"] as? [String: Any])?["service_worker"] as? String)
+    }
+
+    /// What it adds to `chrome.runtime` lives on a wrapper WebKit holds weakly. Losing it only
+    /// shows in a worker big enough to trigger a collection while it starts.
+    @Test func theCompatibilityScriptKeepsTheRuntimeObjectAlive() {
+        let pin = ExtensionRuntime.compatibility.range(of: "value: api.runtime")
+        let first = ExtensionRuntime.compatibility.range(of: "add(api.runtime")
+        #expect(pin != nil)
+        #expect(first != nil)
+        if let pin, let first { #expect(pin.lowerBound < first.lowerBound) }
+    }
+
+    /// WebKit stops delivering a worker's events if its API globals are replaced.
+    @Test func theCompatibilityScriptKeepsTheGlobals() {
+        #expect(ExtensionRuntime.compatibility.contains("['chrome', 'browser']"))
+        #expect(ExtensionRuntime.compatibility.contains("configurable: false"))
+    }
+
+    @Test func aWorkerRunsBehindTheCompatibilityScript() throws {
+        let (root, source) = try folder(manifest: #"{"name": "Made Up", "background": {"service_worker": "background.js"}}"#)
         defer { try? FileManager.default.removeItem(at: root) }
-        let good = root.appending(path: "good"), comma = root.appending(path: "a,b"), empty = root.appending(path: "empty")
-        for folder in [good, comma, empty] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
-        try Data("{}".utf8).write(to: good.appending(path: "manifest.json"))
-        try Data("{}".utf8).write(to: comma.appending(path: "manifest.json"))
-        #expect(ExtensionFolders.launchable([good, comma, empty, root.appending(path: "gone")]) == [good])
+        let prepared = try ExtensionRuntime.prepare(source, id: "made-up", in: root.appending(path: "runtime")).folder
+
+        #expect(prepared != source)
+        #expect(try worker(in: prepared) == ExtensionRuntime.workerFile)
+        #expect(try text(ExtensionRuntime.workerFile, in: prepared)
+            == "importScripts(\"/\(ExtensionRuntime.compatibilityFile)\", \"/background.js\");\n")
+        #expect(try text(ExtensionRuntime.compatibilityFile, in: prepared).contains("onUpdateAvailable"))
+        #expect(try text("background.js", in: prepared) == "// the extension's own")
+    }
+
+    @Test func pagesAndContentScriptsLoadItToo() throws {
+        let (root, source) = try folder(manifest: #"""
+        {"background": {"service_worker": "background.js"}, "content_scripts": [
+            {"matches": ["<all_urls>"], "js": ["content.js"]},
+            {"matches": ["<all_urls>"], "js": ["main.js"], "world": "MAIN"},
+            {"matches": ["<all_urls>"], "css": ["look.css"]}]}
+        """#)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"<html><head><style>a{}</style></head><body><script src="popup.js"></script><script src="b.js"></script></body></html>"#.utf8)
+            .write(to: source.appending(path: "popup.html"))
+        try Data("<html><body>No scripts</body></html>".utf8).write(to: source.appending(path: "plain.html"))
+        let prepared = try ExtensionRuntime.prepare(source, id: "made-up", in: root.appending(path: "runtime")).folder
+
+        let data = try Data(contentsOf: prepared.appending(path: "manifest.json"))
+        let manifest = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let scripts = try #require(manifest["content_scripts"] as? [[String: Any]])
+        #expect(scripts[0]["js"] as? [String] == [ExtensionRuntime.compatibilityFile, "content.js"])
+        #expect(scripts[1]["js"] as? [String] == ["main.js"])
+        #expect(scripts[2]["js"] == nil)
+
+        let tag = "<script src=\"/\(ExtensionRuntime.compatibilityFile)\"></script>"
+        #expect(try text("popup.html", in: prepared).contains(tag + #"<script src="popup.js">"#))
+        #expect(try text("popup.html", in: prepared).components(separatedBy: tag).count == 2)
+        #expect(try text("plain.html", in: prepared) == "<html><body>No scripts</body></html>")
+    }
+
+    @Test func aModuleWorkerImports() throws {
+        let (root, source) = try folder(manifest: #"{"background": {"service_worker": "js/background.js", "type": "module"}}"#)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try ExtensionRuntime.prepare(source, id: "made-up", in: root.appending(path: "runtime")).folder
+        #expect(try text(ExtensionRuntime.workerFile, in: prepared)
+            == "import \"/\(ExtensionRuntime.compatibilityFile)\";\nimport \"/js/background.js\";\n")
+    }
+
+    @Test func theInstalledFolderStaysAsItWas() throws {
+        let manifest = #"{"background": {"service_worker": "background.js"}}"#
+        let (root, source) = try folder(manifest: manifest)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try ExtensionRuntime.prepare(source, id: "made-up", in: root.appending(path: "runtime"))
+        #expect(try text("manifest.json", in: source) == manifest)
+        #expect(!FileManager.default.fileExists(atPath: source.appending(path: ExtensionRuntime.workerFile).path))
+    }
+
+    /// WebKit reuses a worker's stored scripts until they're forgotten.
+    @Test func aChangedWorkerIsReported() throws {
+        let (root, source) = try folder(manifest: #"{"version": "1", "background": {"service_worker": "background.js"}}"#)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = root.appending(path: "runtime")
+        func changed() throws -> Bool { try ExtensionRuntime.prepare(source, id: "made-up", in: runtime).workerChanged }
+        #expect(try changed())
+        #expect(try !changed())
+
+        try Data("// updated".utf8).write(to: source.appending(path: "background.js"))
+        #expect(try changed())
+        #expect(try !changed())
+
+        let manifest = #"{"version": "2", "background": {"service_worker": "background.js"}}"#
+        try Data(manifest.utf8).write(to: source.appending(path: "manifest.json"))
+        #expect(try changed())
+
+        ExtensionRuntime.discard(id: "made-up", in: runtime)
+        #expect(try changed())
+    }
+
+    @Test func nothingToWrapRunsFromWhereItIs() throws {
+        let (root, source) = try folder(manifest: #"{"name": "No Worker"}"#)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(try ExtensionRuntime.prepare(source, id: "made-up", in: root.appending(path: "runtime")).folder == source)
+    }
+
+    @Test func preparingAgainReplacesTheCopy() throws {
+        let (root, source) = try folder(manifest: #"{"background": {"service_worker": "background.js"}}"#)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = root.appending(path: "runtime")
+        _ = try ExtensionRuntime.prepare(source, id: "made-up", in: runtime)
+        try Data("// updated".utf8).write(to: source.appending(path: "background.js"))
+        let prepared = try ExtensionRuntime.prepare(source, id: "made-up", in: runtime).folder
+        #expect(try text("background.js", in: prepared) == "// updated")
     }
 }

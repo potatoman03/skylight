@@ -16,8 +16,8 @@ as much as for coding agents.
   as two pull requests.
 - Rebase on `main` before asking for review, and again if `main` moves under you. Fix conflicts on
   your branch, not in the merge.
-- CI (`.github/workflows/ci.yml`) has to pass. It runs the tests without CEF, then builds the whole
-  package and an ad hoc signed app bundle with CEF.
+- CI (`.github/workflows/ci.yml`) has to pass. It runs the tests, then builds an ad hoc signed
+  app bundle.
 
 ## Commit messages
 
@@ -52,13 +52,6 @@ Stage files by name (`git add Sources/SkylightCore/Tidy.swift`), not `git add -A
 
 ```bash
 swift test
-```
-
-That needs CEF in `Vendor/cef` (`scripts/fetch-cef.sh` fetches it once). Without CEF:
-
-```bash
-swift build --product SkylightPackageTests
-swift test --skip-build
 ```
 
 `swift test --filter ReducerTests` runs one suite. Tests use Swift Testing (`@Suite`, `@Test`,
@@ -96,7 +89,7 @@ There's no formatter. Match the code around you.
   ```swift
   /// Hosts the coordinator's page container. SwiftUI never re-creates it, so pages keep running.
 
-  // A build signed differently from the last re-keys Chromium's cookies, so keep to one identity.
+  // A new set of scripts reaches each page at its next load.
   ```
 
   Write for a user or a new contributor, not in jargon. One or two lines is usual. No comment is
@@ -110,7 +103,7 @@ There's no formatter. Match the code around you.
 - **Four-space indents.** Code and comments wrap at about 100 columns, longer only when breaking
   would hurt.
 - **No new package dependencies** without asking in an issue first. Skylight has none today
-  besides CEF.
+  besides Sparkle.
 - **User-facing text** is sentence case, short and friendly ("Couldn't install the extension"),
   in American spelling.
 

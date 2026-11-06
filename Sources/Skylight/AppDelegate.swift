@@ -1,6 +1,6 @@
 import AppKit
 import SkylightBrowser
-import SkylightCEF
+import SkylightWebKit
 import SkylightCore
 import SkylightKit
 import SkylightUI
@@ -15,7 +15,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private var settings: SettingsWindowController?
     private var updater: Updater?
-    private var quitting = false
     /// The window went full screen for a fullscreen video, so it leaves full screen with it.
     private var fullScreenForPage = false
     private var sidebarToggle: NSTitlebarAccessoryViewController?
@@ -30,20 +29,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-    }
-
-    /// Chromium is ready: build the browser and show the window.
-    func engineDidStart() {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
         // Development runs (SKYLIGHT_DEV) keep passwords in memory, away from your Keychain.
         let credentials: CredentialStore = demo ? MemoryCredentialStore.demo() : KeychainCredentialStore()
         let autofill: AutofillStore = demo ? MemoryAutofillStore.demo() : KeychainAutofillStore()
-        let browser = Browser(engine: CEFEngine(), paths: paths, version: version, credentials: credentials, autofillStore: autofill)
+        let browser = Browser(engine: WebKitEngine(), paths: paths, version: version, credentials: credentials, autofillStore: autofill)
         self.browser = browser
         updater = Updater(development: development, browser: browser)
         NSApp.mainMenu = MainMenu.build(target: self)
         ShortcutMap.apply(browser.preferences.shortcuts)
-        CEFRuntime.onTerminate { [weak self] in self?.quit() }
 
         let window = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
@@ -104,22 +98,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate()
     }
 
-    /// Close every page, then stop the message loop. Chromium must not shut down with pages open.
     func quit() {
-        guard !quitting else { return }
-        quitting = true
-        window?.orderOut(nil)
-        guard let browser else { return CEFRuntime.quit() }
-        browser.shutdown { CEFRuntime.quit() }
+        NSApp.terminate(nil)
     }
 
-    func browserWillExit() {
-        browser?.store.flush()
-    }
-
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        quit()
-        return .terminateCancel
+    func applicationWillTerminate(_ notification: Notification) {
+        browser?.shutdown()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
