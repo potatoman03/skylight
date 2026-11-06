@@ -121,7 +121,7 @@ script uses the commit count) from the environment. Still to build:
 
 4. **Sparkle** for updates: done. `Updater` in the app target owns it (no other module knows
    about Sparkle), `bundle.sh` adds `SUFeedURL` and `SUPublicEDKey` and signs Sparkle's framework
-   inside out, and `scripts/publish.sh` signs the zip and writes the appcast on a GitHub release.
-   Releases should move to notarized DMGs once there's a Developer ID certificate.
+   inside out, and `scripts/publish.sh` runs `release.sh`, signs the zip and writes the appcast on
+   a GitHub release, with the notarized DMG beside it.
 5. A tag-triggered CI job holding the certificate and notary credentials as secrets, and
    `SKYLIGHT_VERSION` read from the tag.

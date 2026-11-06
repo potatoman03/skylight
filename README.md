@@ -11,8 +11,7 @@ usable by AI agents as a first-class citizen.
 
 [Download Skylight for Mac](https://github.com/potatoman03/skylight/releases/latest/download/Skylight.dmg)
 (macOS 26 or later, Apple silicon), or see [the website](https://potatoman03.github.io/skylight/).
-Skylight isn't notarized yet, so the first time you open it, go to System Settings → Privacy &
-Security and choose Open Anyway. It updates itself after that.
+It updates itself after that.
 
 ## Build and run
 
@@ -90,14 +89,15 @@ To sign with your own certificate, put it in `.signing` at the top of the repo. 
 file, so never commit it, and never put anything other than these variables in it:
 
 ```bash
-SKYLIGHT_SIGN_IDENTITY="Apple Development: You (TEAMID)"
+SKYLIGHT_SIGN_IDENTITY="Developer ID Application: You (TEAMID)"
 # Optional: a profile with Apple's web-browser.public-key-credential entitlement, for passkeys.
 SKYLIGHT_PROVISIONING_PROFILE=path/to/Skylight.provisionprofile
 ```
 
 `bundle.sh` reads it on every build (variables already set in your shell win). A signed build uses
-the hardened runtime and your real Keychain. Keep to one identity: a build signed differently from
-the last re-keys Chromium's cookies, and you are signed out of sites once.
+the hardened runtime and your real Keychain. Keep to one identity, the one your releases use: a
+build signed differently from the last re-keys Chromium's cookies, and you are signed out of sites
+once.
 
 The app icon is drawn in code: edit `scripts/make-icon.swift` and run it to regenerate
 `Resources/AppIcon.icns`.
@@ -111,15 +111,15 @@ Skylight → Check for Updates… checks right away. Only builds signed with the
 are installed. Development builds
 (ad hoc, or `SKYLIGHT_DEV=1`) never update.
 
-- `scripts/publish.sh 0.2.0` builds the app, signs the zip with the update key, writes
-  `appcast.xml`, and puts both on a GitHub release. Installed copies pick it up from there. The
+- `scripts/publish.sh 0.2.0` makes a release: it runs `scripts/release.sh`, signs the zip with the
+  update key, writes `appcast.xml`, and puts them with `Skylight.dmg` on a GitHub release. Installed
+  copies pick it up from there, and the website's download link always gets the newest DMG. The
   top of the script lists what it needs. The repo has to be public for installed copies to
   download from it.
 - `scripts/release.sh 0.2.0` builds `build/Skylight-0.2.0.dmg`: signed with a Developer ID,
   notarized and stapled, so a first install opens without warnings. It needs a Developer ID
   Application certificate and notary credentials saved with `xcrun notarytool
-  store-credentials`. Until then, a first install from a published zip needs System Settings →
-  Privacy & Security → Open Anyway.
+  store-credentials`.
 
 ## Modules
 
