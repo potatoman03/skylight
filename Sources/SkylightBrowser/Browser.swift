@@ -83,6 +83,7 @@ public final class Browser {
         pages.onVisit = { [weak self] id, url, title in self?.noteVisit(id, url: url, title: title) }
         autofill.profiles = { store.state.profiles.filter { $0.passwordsFrom == nil }.map(\.id) }
         autofill.reload()
+        passwords.mergeAutofill = { [autofill] found, profile in autofill.merge(found, into: profile) }
         pages.onPageGone = { [weak self] id, tabClosed in
             self?.lastVisit[id] = nil
             self?.agents.forgetTab(id)
@@ -91,7 +92,16 @@ public final class Browser {
             if tabClosed { self?.prompts.dismissAll(for: id) }
         }
         commandBar.source = self
-        extensions.openTab = { [weak self] url in self?.store.send(.openTab(url)) }
+        extensions.openTab = { [weak self] url, select in
+            guard let self, let id = self.store.send(.openTab(url, select: select)).openedTabID else { return nil }
+            return self.pages.wake(id)
+        }
+        extensions.selectTab = { [weak self] page in
+            if let id = self?.pages.tab(of: page) { self?.store.send(.selectTab(id)) }
+        }
+        extensions.closeTab = { [weak self] page in
+            if let id = self?.pages.tab(of: page) { self?.store.send(.closeTab(id)) }
+        }
         extensions.currentTabs = { [weak self] in
             guard let self else { return ([], nil) }
             let profile = self.store.state.activeSpace.profileID
@@ -439,15 +449,23 @@ public final class Browser {
         /// What can't leave, whichever the browser.
         public static let staysBehind = "Passkeys and cards kept in Google Pay stay behind"
 
+        /// What this browser keeps out of an import's reach, beyond what's true of them all.
+        public var leftBehind: String? {
+            self == .aside ? "Anything in Aside Vault stays there: export it from the Vault as JSON, then choose the file in Settings → Import" : nil
+        }
+
         /// What comes over, for the import screen.
         public var summary: String {
             switch self {
             case .arc: "Spaces, pinned tabs, favorites, \(Self.everything)"
-            case .aside: "Sidebar folders as Spaces, bookmarks, \(Self.everything)"
-            default: "Bookmarks, \(Self.everything)"
+            case .aside: "Sidebar sections as Spaces, bookmarks, \(Self.everything)"
+            default: "Bookmarks, tab groups, \(Self.everything)"
             }
         }
     }
+
+    /// What an import is doing now, while one runs. Extensions can take a while to download.
+    public private(set) var importStep: String?
 
     /// How an import went, in a sentence.
     public struct ImportResult: Sendable {
@@ -456,21 +474,37 @@ public final class Browser {
         public var failed: Bool
     }
 
+    /// The Spaces and tabs a browser has: its sidebar or bookmarks, and its tab groups, either of
+    /// which can be missing. Signed-out Aside writes no bookmarks at all.
+    private func layout(of source: ImportSource) async throws -> BrowserImport? {
+        let browser = source.chromium
+        let groups = await Task.detached { browser?.tabGroups ?? [] }.value
+        var found: BrowserImport?
+        if FileManager.default.fileExists(atPath: source.file.path) {
+            do {
+                let data = try Data(contentsOf: source.file)
+                found = source == .arc ? try BrowserImporters.arc(data) : try BrowserImporters.chromium(data, browser: source.rawValue)
+            } catch BrowserImporters.ImportError.notFound where !groups.isEmpty {}
+        }
+        guard !groups.isEmpty else { return found }
+        var imported = found ?? BrowserImport(source: source.rawValue, spaces: [], favorites: [])
+        imported.spaces = groups + imported.spaces
+        return imported
+    }
+
     /// Brings Spaces, tabs, passwords and sign-ins over from another browser, into the Space on
     /// screen. Arc's other profiles become profiles here, keeping their own. macOS asks before
     /// Skylight can read that browser's key. `announcing` shows the result as a toast too.
     @discardableResult
     public func importBrowser(_ source: ImportSource, announcing: Bool = true) async -> ImportResult {
+        defer { importStep = nil }
         var problem: String?
         var tabs = 0
         let profilesBefore = store.state.profiles.count
         // Each of the browser's profiles, and the profile here that gets its logins.
         var targets = source.chromium.map { [(browser: $0, profile: store.state.activeSpace.profileID)] } ?? []
         do {
-            if FileManager.default.fileExists(atPath: source.file.path) {
-                let data = try Data(contentsOf: source.file)
-                var imported = source == .arc ? try BrowserImporters.arc(data)
-                    : try BrowserImporters.chromium(data, browser: source.rawValue)
+            if var imported = try await layout(of: source) {
                 if let file = source.chromium?.localState, let names = try? Data(contentsOf: file) {
                     imported.profileNames = BrowserImporters.chromiumProfileNames(names)
                 }
@@ -493,6 +527,7 @@ public final class Browser {
         var addresses = 0
         var cards = 0
         var pagesFound = 0
+        importStep = "Importing passwords…"
         do {
             let found = try await passwords.signIns(from: targets.map(\.browser))
             for (target, signIns) in zip(targets, found) {
@@ -510,6 +545,7 @@ public final class Browser {
         }
 
         // These two need no key, so they come over even if that was refused.
+        importStep = "Importing history…"
         for target in targets {
             let file = target.browser.history
             let entries = (try? await Task.detached { try ChromiumHistoryImporter.read(history: file) }.value) ?? []
@@ -518,7 +554,9 @@ public final class Browser {
         let wanted = targets.flatMap { target in
             ChromiumExtensions.storeIDs(in: target.browser.preferenceFiles.compactMap { try? Data(contentsOf: $0) })
         }
-        let adopted = await extensions.adopt(wanted)
+        let adopted = await extensions.adopt(wanted) { [weak self] number, total in
+            self?.importStep = "Adding extension \(number) of \(total)…"
+        }
 
         var parts: [String] = []
         let profiles = store.state.profiles.count - profilesBefore
@@ -531,9 +569,11 @@ public final class Browser {
         if cards > 0 { parts.append("\(cards) card\(cards == 1 ? "" : "s")") }
         if pagesFound > 0 { parts.append("\(pagesFound.formatted()) page\(pagesFound == 1 ? "" : "s") of history") }
         let summary = parts.isEmpty ? nil : "Imported " + ListFormatter.localizedString(byJoining: parts) + " from \(source.rawValue)"
-        let message = [summary, problem].compactMap(\.self).joined(separator: ". ")
-        guard !message.isEmpty else {
-            let same = "Everything from \(source.rawValue) is already here"
+        let found = [summary, problem].compactMap(\.self).joined(separator: ". ")
+        let message = [found.isEmpty ? nil : found, source.leftBehind].compactMap(\.self).joined(separator: ". ")
+        guard !found.isEmpty else {
+            let same = ["Everything from \(source.rawValue) is already here", source.leftBehind]
+                .compactMap(\.self).joined(separator: ". ")
             if announcing { toasts.show(same, symbol: "square.and.arrow.down") }
             return ImportResult(message: same, failed: false)
         }

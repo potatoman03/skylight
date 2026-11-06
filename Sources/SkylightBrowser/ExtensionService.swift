@@ -46,7 +46,9 @@ public final class ExtensionService {
     /// The copies extensions run from. See `ExtensionRuntime`.
     @ObservationIgnored private let runtimeFolder: URL
     @ObservationIgnored private let toasts: ToastCenter
-    @ObservationIgnored var openTab: ((URL) -> Void)?
+    @ObservationIgnored var openTab: ((URL, Bool) -> WebPage?)?
+    @ObservationIgnored var selectTab: ((WebPage) -> Void)?
+    @ObservationIgnored var closeTab: ((WebPage) -> Void)?
     @ObservationIgnored var currentTabs: () -> (pages: [WebPage], active: WebPage?) = { ([], nil) }
     @ObservationIgnored var tabGroups: () -> [ExtensionTabs] = { [] }
     /// Whether the Space on screen uses the default profile, and whether any profile doesn't.
@@ -67,10 +69,12 @@ public final class ExtensionService {
             installed = list
         }
         for ext in installed { manifests[ext.id] = try? ExtensionManifest.load(from: ext.folder) }
-        host?.openTab = { [weak self] url in
+        host?.openTab = { [weak self] url, select in
             self?.closePopup()
-            self?.openTab?(url)
+            return self?.openTab?(url, select)
         }
+        host?.selectTab = { [weak self] page in self?.selectTab?(page) }
+        host?.closeTab = { [weak self] page in self?.closeTab?(page) }
         host?.showPopup = { [weak self] popup in
             self?.popup = Popup(id: popup.id, view: popup.view, close: popup.close, size: CGSize(width: 320, height: 120))
         }
@@ -133,11 +137,13 @@ public final class ExtensionService {
 
     /// Adds what you already use in another browser, fresh from the store: you chose these there,
     /// so there's no asking one by one. Their own settings and sign-ins stay with that browser.
-    /// Returns how many were added.
-    public func adopt(_ ids: [String]) async -> Int {
+    /// Returns how many were added. `progress` hears which one of how many is starting.
+    public func adopt(_ ids: [String], progress: (Int, Int) -> Void = { _, _ in }) async -> Int {
         guard isAvailable else { return 0 }
+        let missing = ids.filter { id in !installed.contains { $0.id == id } }
         var added = 0
-        for id in ids where !installed.contains(where: { $0.id == id }) {
+        for (index, id) in missing.enumerated() {
+            progress(index + 1, missing.count)
             let before = installed.count
             await install(fromStore: id, quietly: true)
             if installed.count > before { added += 1 }
@@ -342,7 +348,7 @@ public final class ExtensionService {
     /// Opens the extension's options page in a tab.
     public func openOptions(_ id: String) {
         guard let page = manifests[id]?.optionsPage, let url = host?.pageURL(id, path: page) else { return }
-        openTab?(url)
+        _ = openTab?(url, true)
     }
 
     public func revealFolder(_ id: String) {

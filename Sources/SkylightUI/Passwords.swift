@@ -75,10 +75,10 @@ struct PasswordSettings: View {
                     }
                 }
                 LabeledContent {
-                    Button("Choose…") { result = passwords.importCSV(into: current) ?? result }
+                    Button("Choose…") { result = passwords.importFile(into: current) ?? result }
                 } label: {
-                    Text("CSV file")
-                    Text("From Chrome, Safari, 1Password, Bitwarden and others")
+                    Text("Passwords file")
+                    Text("From Chrome, Safari, Aside Vault, 1Password, Bitwarden and others")
                 }
                 if let result { Text(result).foregroundStyle(.secondary) }
             } header: {

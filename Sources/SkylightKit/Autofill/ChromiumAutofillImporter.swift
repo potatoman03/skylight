@@ -67,7 +67,7 @@ public enum ChromiumAutofillImporter {
         var found: [AutofillCard] = []
         while sqlite3_step(statement) == SQLITE_ROW {
             let blob = ChromiumPasswordImporter.data(statement, 4)
-            guard let plain = ChromiumPasswordImporter.decrypt(blob, key: key, stripsHostHash: false) else { continue }
+            guard let plain = ChromiumPasswordImporter.decrypt(blob, key: key) else { continue }
             let number = plain.filter(\.isNumber)
             guard number.count >= 12, number.count <= 19 else { continue }
             found.append(AutofillCard(id: ChromiumPasswordImporter.text(statement, 0) ?? UUID().uuidString,

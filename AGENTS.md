@@ -151,6 +151,12 @@ Rules the map implies:
   workers when `ExtensionRuntime` reports a change.
 - WebKit silently drops what a content script sends from a tab it doesn't know, so `makePage` opens
   the tab with `WebKitExtensionHost.open` before the page starts loading.
+- **Extensions expect all of Chrome.** WebKit leaves out `notifications`, `privacy`, `idle`,
+  `management`, `downloads` and more, and `requestIdleCallback` in pages. Password managers read
+  them at startup and catch their own errors, so a gap looks like nothing happening. The
+  compatibility script stands in for them; what an extension can only want done refuses rather
+  than pretending. WebKit's own log says when a call fails:
+  `log show --last 5m --predicate 'category == "Extensions"'`.
 - **A popup's viewport follows its frame.** WebKit's popup web view lays out at its content's size
   and ignores the frame, so a popup that copies its viewport into its own size (Proton Pass does)
   gets stuck at whatever it saw first. `presentActionPopup` turns that mode off with a guarded

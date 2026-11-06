@@ -95,6 +95,9 @@ struct WelcomeSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Fact(symbol: "checkmark.circle.fill", tint: .green, text: source.summary)
                     Fact(symbol: "minus.circle", tint: .secondary, text: Browser.ImportSource.staysBehind)
+                    if let left = source.leftBehind {
+                        Fact(symbol: "minus.circle", tint: .secondary, text: left)
+                    }
                     Fact(symbol: "lock", tint: .secondary,
                          text: "macOS will ask for your Mac password so Skylight can read \(source.rawValue)'s passwords. They stay on this Mac.")
                 }
@@ -232,7 +235,7 @@ struct WelcomeSheet: View {
             primary("Continue") { go(1) }
         } else if let source {
             Button("Not Now") { go(1) }.disabled(importing)
-            primary(importing ? "Importing…" : "Import from \(source.rawValue)") {
+            primary(importing ? browser.importStep ?? "Importing…" : "Import from \(source.rawValue)") {
                 importing = true
                 Task {
                     let done = await browser.importBrowser(source, announcing: false)

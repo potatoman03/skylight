@@ -608,6 +608,26 @@ private let c = URL(string: "https://c.example")!
         #expect(result.spaces[0].pinned.map(\.title) == ["Docs", "Renamed"])
     }
 
+    // Current Arc writes `newContainerIDs` with objects for markers, and may leave out `containerIDs`.
+    @Test func readsArcsNewerContainers() throws {
+        let json = #"""
+        {"sidebar":{"containers":[{"global":{}},{"topAppsContainerIDs":[],
+          "spaces":["S1",{"id":"S1","title":"New","newContainerIDs":[{"unpinned":{"_0":{"shared":{}}}},"u1",{"pinned":{}},"p1"]},
+                    "S2",{"id":"S2","title":"Both","containerIDs":["pinned","gone"],"newContainerIDs":[{"pinned":{}},"p2"]},
+                    "S3",{"id":"S3","title":"Old","legacyContainerIDs":["pinned","p3"]}],
+          "items":["p1",{"id":"p1","childrenIds":["t1"],"data":{"itemContainer":{}}},
+                   "t1",{"id":"t1","childrenIds":[],"data":{"tab":{"savedURL":"https://one.example","savedTitle":"One"}}},
+                   "p2",{"id":"p2","data":{"itemContainer":{}}},
+                   "t2",{"id":"t2","parentID":"p2","data":{"tab":{"savedURL":"https://two.example","savedTitle":"Two"}}},
+                   "p3",{"id":"p3","childrenIds":["t3"],"data":{"itemContainer":{}}},
+                   "t3",{"id":"t3","childrenIds":[],"data":{"tab":{"savedURL":"https://three.example","savedTitle":"Three"}}},
+                   "u1",{"id":"u1","childrenIds":[],"data":{"itemContainer":{}}}]}]}}
+        """#
+        let result = try BrowserImporters.arc(Data(json.utf8))
+        #expect(result.spaces.map(\.name) == ["New", "Both", "Old"])
+        #expect(result.spaces.map { $0.pinned.map(\.title) } == [["One"], ["Two"], ["Three"]])
+    }
+
     @Test func readsArcProfiles() throws {
         let json = #"""
         {"sidebar":{"containers":[{"global":{}},{"topAppsContainerIDs":[{"default":true},"top",{"custom":{"_0":{"directoryBasename":"Profile 2","machineID":"m"}}},"top2"],

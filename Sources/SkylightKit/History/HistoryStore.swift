@@ -170,7 +170,7 @@ public final class HistoryStore {
 /// Reads a Chromium profile's `History`.
 public enum ChromiumHistoryImporter {
     /// The most recent pages, up to `limit`. Pages Chromium hides, like frames, are left out.
-    public static func read(history: URL, limit: Int = 20000) throws -> [HistoryEntry] {
+    public static func read(history: URL, limit: Int = 100_000) throws -> [HistoryEntry] {
         try ChromiumPasswordImporter.withCopy(of: history) { db in
             var statement: OpaquePointer?
             let sql = "SELECT url, title, visit_count, last_visit_time FROM urls WHERE hidden = 0 ORDER BY last_visit_time DESC LIMIT \(limit)"

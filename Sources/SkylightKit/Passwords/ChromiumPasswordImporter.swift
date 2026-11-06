@@ -30,6 +30,15 @@ public struct ChromiumBrowser: Sendable, Identifiable, Equatable {
         [accountLoginData, loginData].filter { FileManager.default.fileExists(atPath: $0.path) }
     }
     public var bookmarks: URL { profileDirectory.appending(path: "Bookmarks") }
+    /// The tab groups this profile keeps, as Spaces. Aside's sidebar sections are these.
+    public var tabGroups: [BrowserImport.ImportedSpace] {
+        let folder = profileDirectory.appending(path: "Sync Data/LevelDB")
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        func contents(_ extensions: Set<String>) -> [Data] {
+            files.filter { extensions.contains($0.pathExtension) }.compactMap { try? Data(contentsOf: $0) }
+        }
+        return ChromiumTabGroups.read(tables: contents(["ldb", "sst"]), logs: contents(["log"]), browser: name)
+    }
     public var history: URL { profileDirectory.appending(path: "History") }
     /// Addresses and cards.
     public var webData: URL { profileDirectory.appending(path: "Web Data") }
@@ -121,7 +130,6 @@ public enum ChromiumPasswordImporter {
     }
 
     private static func logins(in db: OpaquePointer?, safeStorageKey: String, source: String?) throws -> [Credential] {
-        let version = Int(try scalar(db, "SELECT value FROM meta WHERE key = 'version'") ?? "0") ?? 0
         let key = derivedKey(safeStorageKey)
 
         var statement: OpaquePointer?
@@ -136,7 +144,7 @@ public enum ChromiumPasswordImporter {
             guard let originText = text(statement, 0), let origin = CredentialOrigin.normalize(originText) else { continue }
             let username = text(statement, 1) ?? ""
             let blob = data(statement, 2)
-            guard let password = decrypt(blob, key: key, stripsHostHash: version >= 24), !password.isEmpty else { continue }
+            guard let password = decrypt(blob, key: key), !password.isEmpty else { continue }
             let created = sqlite3_column_int64(statement, 3)
             found.append(Credential(origin: origin, username: username, password: password,
                                     createdAt: created > 0 ? chromiumDate(created) : nil, source: source))
@@ -202,6 +210,13 @@ public enum ChromiumPasswordImporter {
         }
     }
 
+    /// Whether a saved password is this one with its first 32 bytes gone. Imports used to take
+    /// those off every login, so a long password came over as its tail. No one types that by chance.
+    public static func wasCut(_ saved: String, from imported: String) -> Bool {
+        let whole = Array(imported.utf8)
+        return whole.count > 32 && Array(saved.utf8) == Array(whole.dropFirst(32))
+    }
+
     // MARK: - Crypto
 
     static let salt = Array("saltysalt".utf8)
@@ -219,8 +234,9 @@ public enum ChromiumPasswordImporter {
         return key
     }
 
-    /// Decrypts a `v10` value. Newer databases (version 24+) put a SHA-256 of the domain first.
-    static func decrypt(_ blob: [UInt8], key: [UInt8], stripsHostHash: Bool) -> String? {
+    /// Decrypts a `v10` value. `stripsHostHash` is for cookies alone: from version 24 of that
+    /// database, each value starts with a SHA-256 of its domain. Logins and cards have no such thing.
+    static func decrypt(_ blob: [UInt8], key: [UInt8], stripsHostHash: Bool = false) -> String? {
         guard blob.count > 3, blob[0..<3] == Array("v10".utf8)[...] else {
             // Very old profiles stored plain text.
             return blob.isEmpty ? nil : String(bytes: blob, encoding: .utf8)
