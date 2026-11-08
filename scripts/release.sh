@@ -51,11 +51,8 @@ notarize "$ZIP"
 xcrun stapler staple "$APP"
 
 echo "Packing $DMG…"
-STAGE="$(mktemp -d)"
-ditto "$APP" "$STAGE/Skylight.app"
-ln -s /Applications "$STAGE/Applications"
-rm -f "$DMG"
-hdiutil create -volname "Skylight $VERSION" -srcfolder "$STAGE" -fs APFS -format ULMO -quiet "$DMG"
+# A dawn sky with the app, a line of light and Applications; Finder lays it out.
+"$ROOT/scripts/dmg.sh" "$APP" "$DMG" "Skylight" >/dev/null
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 notarize "$DMG"
 xcrun stapler staple "$DMG"
