@@ -24,6 +24,14 @@ public struct RootView: View {
 
     public init() {}
 
+    private struct SlideLayout: Equatable {
+        let tab: TabID?
+        let split: Bool
+        let fullscreen: Bool
+        let empty: Bool
+        let sidebarWidth: CGFloat
+    }
+
     private var showsSplit: Bool {
         let state = browser.store.state
         return state.selectedTabID.flatMap { state.activeSpace.split(containing: $0) }.map { $0.tabs.count > 1 } ?? false
@@ -36,14 +44,25 @@ public struct RootView: View {
         let host = browser.pages.hostView
         let width = max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound)
         slide = Task { @MainActor in
+            // The resize divider is fixed at the sidebar's resting edge; hide it while the
+            // page's edge moves, in both directions.
+            withTransaction(Transaction(animation: nil)) { sliding = true }
             host.beginSlide(closing: collapsed, width: width, color: browser.pages.visiblePageColor)
             if !collapsed {
-                withTransaction(Transaction(animation: nil)) { sliding = true; open = true }
+                withTransaction(Transaction(animation: nil)) { open = true }
             }
             await host.slideReady()
             guard !Task.isCancelled else { return }
             host.runSlide(seconds: Motion.sidebarSeconds, timing: Motion.sidebarTiming)
             try? await Task.sleep(for: Motion.sidebarTime)
+            guard !Task.isCancelled else { return }
+            if collapsed {
+                let tab = browser.store.state.selectedTabID
+                await host.waitForPaintedEdge {
+                    guard let tab, browser.store.state.selectedTabID == tab else { return false }
+                    return !browser.store.status(of: tab).isLoading
+                }
+            }
             guard !Task.isCancelled else { return }
             if collapsed { host.finishSlide(afterResize: true) }
             withTransaction(Transaction(animation: nil)) { open = !collapsed; sliding = false }
@@ -59,6 +78,8 @@ public struct RootView: View {
         let space = state.activeSpace
         let accent = prefs.showsTheme(in: space) ? prefs.theme(for: space).palette(dark: scheme == .dark, spaceHue: space.hue).accent : nil
         let sidebarWidth = max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound)
+        let slideLayout = SlideLayout(tab: state.selectedTabID, split: showsSplit, fullscreen: fullscreen,
+                                      empty: browser.showsEmptyPage, sidebarWidth: sidebarWidth)
         let sidebarOnScreen = browser.showsSidebar && !fullscreen
         // A peeking sidebar lies over the page, which stays where it is.
         let beside = open && !fullscreen ? sidebarWidth : 0
@@ -76,7 +97,7 @@ public struct RootView: View {
 
         // Our own sidebar column, flush with the page: the system's floating glass sidebar casts a
         // shadow on the page, and moves its toggle about.
-        ZStack(alignment: .leading) {
+        let content = ZStack(alignment: .leading) {
             ContentArea()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Up under the hidden toolbar, edge to edge.
@@ -105,16 +126,16 @@ public struct RootView: View {
                 .offset(x: (open || sliding || browser.sidebarPeeking) && !fullscreen ? 0 : -sidebarWidth - 1)
                 .allowsHitTesting(sidebarOnScreen)
                 .accessibilityHidden(!sidebarOnScreen)
-                // Under the page, whose edge crosses it. Moving this at the start of a slide would
-                // take too long. A dragged tab and a peek go over the page, so it comes up for them.
-                .zIndex(browser.sidebarPeeking || drag.active != nil ? 1 : -1)
+                // Let the page cover the sidebar only while its edge crosses it. At rest the
+                // sidebar must be above the page's transparent new-tab overlay for clicks.
+                .zIndex(!sliding || browser.sidebarPeeking || drag.active != nil ? 1 : -1)
                 .offset(x: welcome && !Motion.reduceMotion ? -16 : 0)
             // Above the page, which it reaches over.
-            Color.clear
-                .frame(width: sidebarWidth)
-                .overlay(alignment: .trailing) { SidebarEdge() }
+            SidebarEdge()
+                .opacity(sliding ? 0 : 1)
+                .frame(width: sidebarWidth, alignment: .trailing)
                 .offset(x: (open || browser.sidebarPeeking) && !fullscreen ? 0 : -sidebarWidth - 1)
-                .allowsHitTesting(sidebarOnScreen)
+                .allowsHitTesting(sidebarOnScreen && !sliding)
                 .zIndex(2)
         }
         .opacity(welcome ? 0 : 1)
@@ -160,7 +181,19 @@ public struct RootView: View {
             }
         }
         .onAppear { open = !prefs.sidebarCollapsed }
+        .onChange(of: slideLayout) { _, _ in
+            guard sliding else { return }
+            slide?.cancel()
+            browser.pages.hostView.cancelSlide()
+            withTransaction(Transaction(animation: nil)) {
+                open = !prefs.sidebarCollapsed
+                sliding = false
+                fitted = true
+            }
+        }
         .onChange(of: covered, initial: true) { _, width in browser.pages.setCovered(width) }
+        // Keep the window modifiers separate so Swift can type-check the view.
+        content
         // One backdrop behind the toolbar and sidebar, translucent or the theme's; only the page is opaque.
         .background {
             WindowBackdrop().ignoresSafeArea()
@@ -324,8 +357,8 @@ struct SidebarEdge: View {
     /// mouse-up, so the next one can't start from an old width and jump.
     @GestureState private var start: Double?
 
-    /// Wide enough that the toolbar's back, forward and reload buttons sit over the sidebar.
-    static let widths = 220.0...420.0
+    /// Allows a compact sidebar while leaving room for its icon-only header controls.
+    static let widths = 150.0...420.0
 
     var body: some View {
         Rectangle()
