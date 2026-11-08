@@ -521,6 +521,25 @@ private let c = URL(string: "https://c.example")!
         let asleep = Set(policy.pagesToSleep(awake: awake, protected: [], now: now))
         #expect(asleep == [TabID("t2"), TabID("t3")])
     }
+
+    @Test func keepsMorePagesOnBiggerMacs() {
+        let gigabyte: UInt64 = 1 << 30
+        #expect(HibernationPolicy(memoryBytes: 4 * gigabyte).maxAwake == 8)
+        #expect(HibernationPolicy(memoryBytes: 16 * gigabyte).maxAwake == 16)
+        #expect(HibernationPolicy(memoryBytes: 128 * gigabyte).maxAwake == 24)
+    }
+
+    @Test func aPinnedSetOfTabsStaysUpBetweenVisits() {
+        // Seven tabs, the last seen ten minutes ago: none should have to load again.
+        let awake = (0..<7).reduce(into: [TabID: Date]()) { $0[TabID("t\($1)")] = now.addingTimeInterval(Double($1) * -100) }
+        #expect(HibernationPolicy(memoryBytes: 8 << 30).pagesToSleep(awake: awake, protected: [], now: now).isEmpty)
+    }
+
+    @Test func givesBackTheOlderHalfWhenMemoryRunsShort() {
+        let awake = (0..<4).reduce(into: [TabID: Date]()) { $0[TabID("t\($1)")] = now.addingTimeInterval(Double($1) * 60) }
+        let shed = HibernationPolicy().pagesToShed(awake: awake, protected: [TabID("t0")])
+        #expect(shed == [TabID("t1"), TabID("t2")])
+    }
 }
 
 @Suite struct PersistenceTests {
@@ -609,6 +628,96 @@ private let c = URL(string: "https://c.example")!
     }
 
     // Current Arc writes `newContainerIDs` with objects for markers, and may leave out `containerIDs`.
+    @Test func foldersKeepTheirColorWhenImported() {
+        var state = BrowserState.initial()
+        let links = [BrowserImport.Link(url: URL(string: "https://a.example")!, title: "A")]
+        let data = BrowserImport(source: "Aside", spaces: [], favorites: [], folders: [.init(name: "Work", links: links, color: .green)])
+        _ = BrowserReducer.reduce(&state, .importBrowserData(data), env: ReducerEnvironment())
+        #expect(state.activeSpace.folders.first?.color == .green)
+    }
+
+    @Test func aFolderCanChangeItsColor() {
+        var state = BrowserState.initial()
+        let env = ReducerEnvironment()
+        _ = BrowserReducer.reduce(&state, .createFolder(id: "f", space: state.activeSpaceID, name: "Work"), env: env)
+        _ = BrowserReducer.reduce(&state, .setFolderColor("f", .pink), env: env)
+        #expect(state.activeSpace.folders[0].color == .pink)
+        _ = BrowserReducer.reduce(&state, .setFolderColor("f", nil), env: env)
+        #expect(state.activeSpace.folders[0].color == nil)
+    }
+
+    @Test func aFolderSavedWithoutAColorStillLoads() throws {
+        let saved = #"{"id":"f","name":"Work","tabs":[],"isOpen":true}"#
+        let folder = try JSONDecoder().decode(TabFolder.self, from: Data(saved.utf8))
+        #expect(folder.color == nil)
+    }
+
+    @Test func aSpaceTurnsIntoAFolderWithoutLosingATab() {
+        var state = BrowserState.initial()
+        let env = ReducerEnvironment()
+        let keep = state.activeSpaceID
+        _ = BrowserReducer.reduce(&state, .createSpace(name: "Email"), env: env)
+        let email = state.activeSpaceID
+        #expect(email != keep)
+        _ = BrowserReducer.reduce(&state, .openTab(URL(string: "https://mail.example")!), env: env)
+        let tabs = state.activeSpace.allTabIDs
+        #expect(!tabs.isEmpty)
+
+        _ = BrowserReducer.reduce(&state, .turnSpaceIntoFolder(email, in: keep), env: env)
+        #expect(state.activeSpaceID == keep)
+        #expect(!state.spaces.contains { $0.id == email })
+        let folder = state.activeSpace.folders.first { $0.name == "Email" }
+        #expect(folder?.tabs == tabs)
+        #expect(Set(tabs).isSubset(of: Set(state.activeSpace.pinned)))
+        #expect(tabs.allSatisfy { state.tabs[$0] != nil })
+    }
+
+    @Test func aSpaceOnlyTurnsIntoAFolderInItsOwnProfile() {
+        var state = BrowserState.initial()
+        let env = ReducerEnvironment()
+        let keep = state.activeSpaceID
+        _ = BrowserReducer.reduce(&state, .createProfile(name: "Work"), env: env)
+        let profile = state.profiles.last!.id
+        #expect(profile != state.activeSpace.profileID)
+        _ = BrowserReducer.reduce(&state, .createSpace(name: "Work", profile: profile), env: env)
+        let work = state.activeSpaceID
+        #expect(state.activeSpace.profileID == profile)
+        _ = BrowserReducer.reduce(&state, .openTab(URL(string: "https://mail.example")!), env: env)
+        let before = state
+        let result = BrowserReducer.reduce(&state, .turnSpaceIntoFolder(work, in: keep), env: env)
+        #expect(!result.applied)
+        #expect(state == before)
+    }
+
+    @Test func aRedSpaceKeepsItsColorAsAFolder() {
+        var state = BrowserState.initial()
+        let env = ReducerEnvironment()
+        let keep = state.activeSpaceID
+        _ = BrowserReducer.reduce(&state, .createSpace(name: "Red", hue: 0), env: env)
+        let red = state.activeSpaceID
+        _ = BrowserReducer.reduce(&state, .openTab(URL(string: "https://red.example")!), env: env)
+        _ = BrowserReducer.reduce(&state, .turnSpaceIntoFolder(red, in: keep), env: env)
+        #expect(state.activeSpace.folders.first { $0.name == "Red" }?.color == .red)
+    }
+
+    @Test func foldersGoInTheSpaceOnScreenWithoutMakingSpaces() {
+        var state = BrowserState.initial()
+        let spaces = state.spaces.count
+        let link = BrowserImport.Link(url: URL(string: "https://one.example/")!, title: "One")
+        let more = BrowserImport.Link(url: URL(string: "https://two.example/")!, title: "Two")
+        let data = BrowserImport(source: "Aside", spaces: [], favorites: [], folders: [.init(name: "Email", links: [link])])
+        BrowserReducer.reduce(&state, .importBrowserData(data), env: environment())
+        #expect(state.spaces.count == spaces)
+        #expect(state.activeSpace.folders.map(\.name) == ["Email"])
+        #expect(state.activeSpace.pinned.count == 1)
+        #expect(state.activeSpace.folders[0].tabs == state.activeSpace.pinned)
+
+        let again = BrowserImport(source: "Aside", spaces: [], favorites: [], folders: [.init(name: "email", links: [link, more])])
+        BrowserReducer.reduce(&state, .importBrowserData(again), env: environment())
+        #expect(state.activeSpace.folders.count == 1)
+        #expect(state.activeSpace.folders[0].tabs.count == 2)
+    }
+
     @Test func readsArcsNewerContainers() throws {
         let json = #"""
         {"sidebar":{"containers":[{"global":{}},{"topAppsContainerIDs":[],
@@ -665,9 +774,10 @@ private let c = URL(string: "https://c.example")!
         let result = try BrowserImporters.chromium(Data(json.utf8), browser: "Aside")
         #expect(result.source == "Aside")
         #expect(result.favorites.map(\.title) == ["A"])
-        #expect(result.spaces.map(\.name) == ["Main", "Aside"])
-        #expect(result.spaces[0].pinned.map(\.title) == ["B", "c.example"])
-        #expect(result.spaces[1].pinned.map(\.title) == ["O"])
+        #expect(result.spaces.isEmpty)
+        #expect(result.folders.map(\.name) == ["Main", "Bookmarks"])
+        #expect(result.folders[0].links.map(\.title) == ["B", "c.example"])
+        #expect(result.folders[1].links.map(\.title) == ["O"])
     }
 
     @Test func pinnedTabsUnloadOnClose() {

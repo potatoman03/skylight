@@ -148,8 +148,7 @@ public enum BrowserImporters {
     }
 
     /// A Chromium `Bookmarks` file. Loose links on the bookmarks bar become favorites (up to
-    /// eight). Each folder on the bar becomes a Space, the way Aside shows folders as sidebar
-    /// sections. Everything else lands in a Space named after the browser.
+    /// eight), and each folder on the bar a folder here. The rest go in a folder of bookmarks.
     public static func chromium(_ data: Data, browser: String) throws -> BrowserImport {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let roots = root["roots"] as? [String: Any] else { throw ImportError.unreadable(browser) }
@@ -168,23 +167,21 @@ public enum BrowserImporters {
 
         let bar = (roots["bookmark_bar"] as? [String: Any])?["children"] as? [Any] ?? []
         var loose: [BrowserImport.Link] = []
-        var folders: [BrowserImport.ImportedSpace] = []
+        var folders: [BrowserImport.ImportedFolder] = []
         for case let node as [String: Any] in bar {
             if node["type"] as? String == "url" {
                 if let link = link(node) { loose.append(link) }
-            } else if folders.count < 8 {
-                let pinned = Array(links(node).prefix(80))
-                guard !pinned.isEmpty else { continue }
-                let name = (node["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Folder \(folders.count + 1)"
-                folders.append(.init(name: name, icon: "folder", pinned: pinned))
             } else {
-                loose += links(node)
+                let found = Array(links(node).prefix(80))
+                guard !found.isEmpty else { continue }
+                let name = (node["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Folder \(folders.count + 1)"
+                folders.append(.init(name: name, links: found))
             }
         }
 
         let rest = Array((loose.dropFirst(8) + links(roots["other"]) + links(roots["synced"])).prefix(80))
-        let spaces = folders + (rest.isEmpty ? [] : [.init(name: browser, icon: "bookmark", pinned: rest)])
-        let result = BrowserImport(source: browser, spaces: spaces, favorites: Array(loose.prefix(8)))
+        if !rest.isEmpty { folders.append(.init(name: "Bookmarks", links: rest)) }
+        let result = BrowserImport(source: browser, spaces: [], favorites: Array(loose.prefix(8)), folders: folders)
         if result.isEmpty { throw ImportError.notFound(browser) }
         return result
     }

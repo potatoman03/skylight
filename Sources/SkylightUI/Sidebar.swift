@@ -152,7 +152,11 @@ struct Sidebar: View {
                 self.line(line, space: space)
                     .opacity(index == hidden ? 0 : 1)
                     .offset(y: drop.shift(of: index, hidden: hidden))
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.coordinates)) } action: { [drop] in
+                    // Height and place are all a drag needs, and they stay put while the sidebar resizes.
+                    .onGeometryChange(for: CGRect.self) {
+                        let frame = $0.frame(in: .named(Self.coordinates))
+                        return CGRect(x: 0, y: frame.minY, width: 0, height: frame.height)
+                    } action: { [drop] in
                         drop.frames[line.id] = $0
                     }
             }
@@ -199,7 +203,8 @@ struct Sidebar: View {
             if ids.count > 1, let split = space.split(containing: ids[0]) {
                 SplitRow(split: split, joining: joining, indent: indent)
             } else if let tab = browser.store.state.tabs[ids[0]] {
-                TabRow(tab: tab, kind: box == .today ? .today : .pinned, joining: joining, indent: indent)
+                TabRow(tab: tab, kind: box == .today ? .today : .pinned, selected: tab.id == browser.store.state.selectedTabID,
+                       joining: joining, indent: indent)
             }
         case let .hint(text, target):
             let inFolder = if case .folder = target { true } else { false }
@@ -441,12 +446,19 @@ private struct FolderRow: View {
     let folder: TabFolder
     let targeted: Bool
     @Environment(Browser.self) private var browser
+    @Environment(\.colorScheme) private var scheme
     @State private var editing = false
     @State private var name = ""
     @FocusState private var focused: Bool
 
     var body: some View {
-        Label {
+        HStack(spacing: 6) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.tertiary)
+                .rotationEffect(.degrees(folder.isOpen ? 90 : 0))
+                .frame(width: 10)
+            if let color = folder.color { Circle().fill(Theme.folder(color, scheme)).frame(width: 8, height: 8) }
             if editing {
                 TextField("Folder name", text: $name)
                     .inlineName()
@@ -455,18 +467,16 @@ private struct FolderRow: View {
                     .onExitCommand { editing = false }
                     .onChange(of: focused) { _, now in if !now { commit() } }
             } else {
-                HStack {
-                    Text(folder.name).fadingTail()
-                    Spacer(minLength: 4)
-                    if !folder.isOpen, !folder.tabs.isEmpty {
-                        Text("\(folder.tabs.count)").font(.caption).foregroundStyle(.tertiary).monospacedDigit()
-                    }
+                Text(folder.name)
+                    .fadingTail()
+                    .foregroundStyle(folder.color.map { AnyShapeStyle(Theme.folder($0, scheme)) } ?? AnyShapeStyle(.secondary))
+                Spacer(minLength: 4)
+                if !folder.isOpen, !folder.tabs.isEmpty {
+                    Text("\(folder.tabs.count)").foregroundStyle(.tertiary).monospacedDigit()
                 }
             }
-        } icon: {
-            Image(systemName: folder.isOpen ? "folder" : "folder.fill")
-                .foregroundStyle(.secondary)
         }
+        .font(.system(size: 12, weight: .semibold))
         .sidebarRow(targeted: targeted)
         .onTapGesture { if !editing { setOpen(!folder.isOpen) } }
         .contextMenu { FolderMenu(folder: folder, rename: startEditing) }
@@ -496,12 +506,24 @@ private struct FolderMenu: View {
     let folder: TabFolder
     let rename: () -> Void
     @Environment(Browser.self) private var browser
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let store = browser.store
         let folders = store.state.activeSpace.folders
         let index = folders.firstIndex { $0.id == folder.id } ?? 0
         Button("Rename…", action: rename)
+        Menu("Color") {
+            Toggle("None", isOn: Binding(get: { folder.color == nil },
+                                         set: { if $0 { store.send(.setFolderColor(folder.id, nil)) } }))
+            Divider()
+            ForEach(FolderColor.allCases) { color in
+                Toggle(isOn: Binding(get: { folder.color == color },
+                                     set: { if $0 { store.send(.setFolderColor(folder.id, color)) } })) {
+                    Label { Text(color.name) } icon: { Image(nsImage: Theme.swatch(Theme.folder(color, scheme))) }
+                }
+            }
+        }
         Button(folder.isOpen ? "Close Folder" : "Open Folder") {
             animate(Motion.travel) { _ = store.send(.setFolderOpen(folder.id, !folder.isOpen)) }
         }
@@ -779,6 +801,8 @@ private struct TabRow: View {
 
     let tab: BrowserTab
     let kind: Kind
+    /// Passed in, because reading it here would redraw every row on any change to the state.
+    let selected: Bool
     /// A dragged tab held over this one, which would split beside it.
     var joining: TabID?
     var indent: CGFloat = 0
@@ -794,28 +818,35 @@ private struct TabRow: View {
     var body: some View {
         let arriving = joining.flatMap { browser.store.state.tabs[$0] }
         let parted = arriving != nil
-        // Held over, the row parts into two panes of glass: this tab's, and the arriving one's.
-        GlassEffectContainer(spacing: SplitPane.blend) {
-            HStack(spacing: SplitPane.gap) {
-                content
-                    .padding(.horizontal, parted ? SplitPane.inset : 0)
-                    .frame(height: density.rowHeight - SplitPane.margin)
-                    .glassEffect(parted ? .regular : .identity, in: SplitPane.shape)
-                    .glassEffectID(tab.id, in: glass)
-                if let arriving {
-                    SplitPaneLabel(tab: arriving)
-                        .splitPane(arriving.id, in: glass, height: density.rowHeight - SplitPane.margin, arriving: true)
-                        .transition(Emerge())
+        Group {
+            // Glass is heavy, so a row only has it while a drag could part it.
+            if drag.active == nil {
+                content.frame(height: density.rowHeight - SplitPane.margin)
+            } else {
+                // Held over, the row parts into two panes of glass: this tab's, and the arriving one's.
+                GlassEffectContainer(spacing: SplitPane.blend) {
+                    HStack(spacing: SplitPane.gap) {
+                        content
+                            .padding(.horizontal, parted ? SplitPane.inset : 0)
+                            .frame(height: density.rowHeight - SplitPane.margin)
+                            .glassEffect(parted ? .regular : .identity, in: SplitPane.shape)
+                            .glassEffectID(tab.id, in: glass)
+                        if let arriving {
+                            SplitPaneLabel(tab: arriving)
+                                .splitPane(arriving.id, in: glass, height: density.rowHeight - SplitPane.margin, arriving: true)
+                                .transition(Emerge())
+                        }
+                    }
                 }
             }
         }
         // The pane's edge moves out, its name stays put.
         .padding(.leading, parted ? -SplitPane.inset : 0)
         .motion(Motion.flow, value: joining)
-        .sidebarRow(selected: browser.store.state.selectedTabID == tab.id, highlights: !parted, indent: indent)
+        .sidebarRow(selected: selected, highlights: !parted, indent: indent)
         .onHover { hovering = $0 }
         .onTapGesture {
-            if browser.store.state.selectedTabID != tab.id { browser.store.send(.selectTab(tab.id)) }
+            if !selected { browser.store.send(.selectTab(tab.id)) }
         }
         // Double-click the name to rename it. Alongside the click, so selecting doesn't wait.
         .simultaneousGesture(TapGesture(count: 2).onEnded { if !editing, canRename { startEditing() } })
@@ -1061,37 +1092,46 @@ private struct SplitPaneChrome: ViewModifier {
 private struct SpaceBar: View {
     let style: Preferences.SpaceBarStyle
     @Environment(Browser.self) private var browser
-    @Environment(\.colorScheme) private var scheme
+    @State private var hidden = HiddenEdges()
+
+    /// Which ends of the strip have Spaces scrolled out of sight.
+    private struct HiddenEdges: Equatable {
+        var leading = false
+        var trailing = false
+    }
 
     var body: some View {
         let state = browser.store.state
-        HStack(spacing: 2) {
+        HStack(spacing: 4) {
             SkylightMenuButton()
-                .padding(.trailing, 4)
-            ForEach(state.spaces) { space in
-                let active = space.id == state.activeSpaceID
-                Button { animate(Motion.swap) { _ = browser.store.send(.switchSpace(space.id)) } } label: {
-                    if style == .dots {
-                        Circle()
-                            .fill(active ? AnyShapeStyle(Theme.accent(space.hue, scheme)) : AnyShapeStyle(.tertiary))
-                            .frame(width: 7, height: 7)
-                            .frame(width: 18, height: 24)
-                            .contentShape(.rect)
-                    } else {
-                        SpaceIcon(icon: space.icon, name: space.name, size: 13)
-                            .frame(width: 28, height: 24)
-                            .foregroundStyle(active ? AnyShapeStyle(Theme.accent(space.hue, scheme)) : AnyShapeStyle(.secondary))
-                            .background(active ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 6))
-                            .contentShape(.rect)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(spacing: style == .dots ? 2 : 4) {
+                        ForEach(state.spaces) { space in
+                            SpaceChip(space: space, active: space.id == state.activeSpaceID, style: style).id(space.id)
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+                .scrollIndicators(.never)
+                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                .onScrollGeometryChange(for: HiddenEdges.self) { scroll in
+                    HiddenEdges(leading: scroll.contentOffset.x > 1,
+                                trailing: scroll.contentOffset.x + scroll.containerSize.width < scroll.contentSize.width - 1)
+                } action: { _, now in hidden = now }
+                .mask {
+                    HStack(spacing: 0) {
+                        LinearGradient(colors: [hidden.leading ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing)
+                            .frame(width: 16)
+                        Rectangle()
+                        LinearGradient(colors: [.black, hidden.trailing ? .clear : .black], startPoint: .leading, endPoint: .trailing)
+                            .frame(width: 16)
                     }
                 }
-                .buttonStyle(.borderless)
-                .help(space.name)
-                .contextMenu { SpaceMenu(space: space) }
-                .springLoadingBehavior(.enabled)
-                .dropDestination(for: String.self) { items, _ in browser.drop(items, on: .space(space.id)) }
+                .background { SpaceStripBounds(overflowing: hidden.leading || hidden.trailing) }
+                // The sidebar is rebuilt for each Space, so this also keeps the active one in view.
+                .onAppear { proxy.scrollTo(state.activeSpaceID, anchor: .center) }
             }
-            Spacer(minLength: 4)
             Button {
                 browser.newSpace()
             } label: {
@@ -1100,6 +1140,39 @@ private struct SpaceBar: View {
             .buttonStyle(.borderless)
             .help("New Space (⌘⇧N)")
         }
+    }
+}
+
+/// A Space on the strip: a token in its own color, nothing like a row in the list above it.
+private struct SpaceChip: View {
+    let space: Space
+    let active: Bool
+    let style: Preferences.SpaceBarStyle
+    @Environment(Browser.self) private var browser
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Button { animate(Motion.swap) { _ = browser.store.send(.switchSpace(space.id)) } } label: {
+            let color = Theme.accent(space.hue, scheme)
+            if style == .dots {
+                Circle()
+                    .fill(active ? AnyShapeStyle(color) : AnyShapeStyle(.tertiary))
+                    .frame(width: 7, height: 7)
+                    .frame(width: 18, height: 24)
+                    .contentShape(.rect)
+            } else {
+                SpaceIcon(icon: space.icon, name: space.name, size: 11)
+                    .foregroundStyle(active ? AnyShapeStyle(.white) : AnyShapeStyle(color))
+                    .frame(width: 24, height: 24)
+                    .background(active ? AnyShapeStyle(color) : AnyShapeStyle(color.opacity(0.16)), in: .circle)
+                    .contentShape(.circle)
+            }
+        }
+        .buttonStyle(.borderless)
+        .help(space.name)
+        .contextMenu { SpaceMenu(space: space) }
+        .springLoadingBehavior(.enabled)
+        .dropDestination(for: String.self) { items, _ in browser.drop(items, on: .space(space.id)) }
     }
 }
 
@@ -1249,6 +1322,15 @@ struct SpaceMenu: View {
             }
             Divider()
             Button("Custom…") { browser.customizeSpace(space.id) }
+        }
+        // Sign-ins stay with a profile, so only Spaces that share this one's.
+        let others = state.spaces.filter { $0.id != space.id && $0.profileID == space.profileID }
+        if !others.isEmpty {
+            Menu("Turn into Folder In") {
+                ForEach(others) { other in
+                    Button(other.name) { animate(Motion.swap) { _ = browser.store.send(.turnSpaceIntoFolder(space.id, in: other.id)) } }
+                }
+            }
         }
         Menu("Sidebar Tint") {
             ForEach(SpaceTint.allCases) { tint in

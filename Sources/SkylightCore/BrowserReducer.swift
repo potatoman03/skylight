@@ -233,6 +233,36 @@ public enum BrowserReducer {
             state.spaces[si].folders[k].isOpen = open
             return ReduceResult()
 
+        case let .setFolderColor(id, color):
+            guard let (si, k) = folderIndex(state, id) else { return .ignored }
+            state.spaces[si].folders[k].color = color
+            return ReduceResult()
+
+        case let .turnSpaceIntoFolder(id, target):
+            // Only within a profile: a tab's sign-ins belong to its Space's profile.
+            guard id != target, let i = state.spaces.firstIndex(where: { $0.id == id }),
+                  let into = state.spaces.first(where: { $0.id == target }),
+                  into.profileID == state.spaces[i].profileID else { return .ignored }
+            let removed = state.spaces.remove(at: i)
+            let t = state.spaces.firstIndex { $0.id == target }!
+            var folders = removed.folders
+            let filed = Set(folders.flatMap(\.tabs))
+            let loose = removed.allTabIDs.filter { !filed.contains($0) }
+            if let first = loose.first {
+                // Hues go round: red is at both 0 and 1.
+                let color = FolderColor.allCases.first { color in
+                    color.hue.map { let d = abs($0 - removed.hue).truncatingRemainder(dividingBy: 1); return min(d, 1 - d) < 0.015 } ?? false
+                }
+                folders.insert(TabFolder(id: "space-\(first)", name: removed.name, tabs: loose, color: color), at: 0)
+            }
+            state.spaces[t].pinned += folders.flatMap(\.tabs)
+            state.spaces[t].folders += folders
+            state.spaces[t].splits += removed.splits
+            state.closedTabs.removeAll { $0.spaceID == id }
+            guard state.activeSpaceID == id else { return ReduceResult() }
+            state.activeSpaceID = target
+            return ReduceResult(effects: [.showTab(state.selectedTabID)])
+
         case let .moveFolder(id, index):
             guard let (si, k) = folderIndex(state, id) else { return .ignored }
             let folder = state.spaces[si].folders.remove(at: k)
@@ -409,6 +439,19 @@ public enum BrowserReducer {
             }
             let favorites = data.favorites.compactMap { add($0, to: importing) }
             state.spaces[state.activeSpaceIndex].favorites += favorites
+            let here = state.activeSpaceIndex
+            for imported in data.folders {
+                let tabs = imported.links.compactMap { add($0, to: importing) }
+                guard let first = tabs.first else { continue }
+                state.spaces[here].pinned += tabs
+                if let k = state.spaces[here].folders.firstIndex(where: { $0.name.caseInsensitiveCompare(imported.name) == .orderedSame }) {
+                    state.spaces[here].folders[k].tabs += tabs
+                    if state.spaces[here].folders[k].color == nil { state.spaces[here].folders[k].color = imported.color }
+                } else {
+                    state.spaces[here].folders.append(TabFolder(id: "import-\(first)", name: imported.name, tabs: tabs,
+                                                                color: imported.color))
+                }
+            }
             for imported in data.spaces where !imported.pinned.isEmpty || imported.sourceProfile != nil {
                 let source = imported.sourceProfile.map(profile(from:)) ?? importing
                 if let i = state.spaces.firstIndex(where: { $0.name.caseInsensitiveCompare(imported.name) == .orderedSame }) {

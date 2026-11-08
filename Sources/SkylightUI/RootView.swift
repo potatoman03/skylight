@@ -29,6 +29,28 @@ public struct RootView: View {
         return state.selectedTabID.flatMap { state.activeSpace.split(containing: $0) }.map { $0.tabs.count > 1 } ?? false
     }
 
+    /// Slides the page's left edge over the sidebar or off it, as Aside does: the sidebar stays
+    /// where it is, the page lays out for each width on the way, and its right side stays still.
+    private func slidePage(collapsed: Bool) {
+        let prefs = browser.preferences
+        let host = browser.pages.hostView
+        let width = max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound)
+        slide = Task { @MainActor in
+            host.beginSlide(closing: collapsed, width: width, color: browser.pages.visiblePageColor)
+            if !collapsed {
+                withTransaction(Transaction(animation: nil)) { sliding = true; open = true }
+            }
+            await host.slideReady()
+            guard !Task.isCancelled else { return }
+            host.runSlide(seconds: Motion.sidebarSeconds, timing: Motion.sidebarTiming)
+            try? await Task.sleep(for: Motion.sidebarTime)
+            guard !Task.isCancelled else { return }
+            if collapsed { host.finishSlide(afterResize: true) }
+            withTransaction(Transaction(animation: nil)) { open = !collapsed; sliding = false }
+            if !collapsed { host.finishSlide(afterResize: false) }
+        }
+    }
+
     public var body: some View {
         let prefs = browser.preferences
         let state = browser.store.state
@@ -40,13 +62,17 @@ public struct RootView: View {
         let sidebarOnScreen = browser.showsSidebar && !fullscreen
         // A peeking sidebar lies over the page, which stays where it is.
         let beside = open && !fullscreen ? sidebarWidth : 0
-        // A site can't lay itself out as fast as its edge moves, and what it draws arrives a few
-        // frames behind the view, so resizing on the way would shake it. It moves as one piece,
-        // and is resized once, where its right edge is out of sight. An empty page has no site.
-        let rigid = !fitted && !browser.showsEmptyPage
+        // A page alone reaches out of sight past its left edge by the sidebar's width, open or not.
+        // A split's panes can't reach under the sidebar, so they move as one piece and are resized
+        // once, where their right edge is out of sight.
+        let rigid = !fitted && !browser.showsEmptyPage && showsSplit
+        // What a page alone lays out beside. A split's panes ignore it, so it doesn't change with one.
+        let covered = fullscreen ? 0 : sidebarWidth
         let sidebarRoom = rigid ? 0 : beside
         let emptyPage = state.selectedTab == nil
         let scene = prefs.showsScene(in: space, dark: scheme == .dark)
+        // Under the welcome, only the backdrop shows; the rest comes up as it leaves.
+        let welcome = browser.showsWelcome
 
         // Our own sidebar column, flush with the page: the system's floating glass sidebar casts a
         // shadow on the page, and moves its toggle about.
@@ -55,6 +81,8 @@ public struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Up under the hidden toolbar, edge to edge.
                 .ignoresSafeArea(.container, edges: fullscreen ? .top : [])
+                // A compact toolbar has a fixed height, so the bar's extra room comes out of the page.
+                .padding(.top, fullscreen ? 0 : 4)
                 // A split's rounded panes sit on the window's backdrop, like the sidebar. This never
                 // fades: going to a Space with no tab, it would flash white over the theme's picture.
                 .background {
@@ -69,7 +97,6 @@ public struct RootView: View {
                 .frame(width: sidebarWidth)
                 // Without its room, it's over the page rather than the window's backdrop.
                 .background { if !open, !sliding { SidebarGround() } }
-                .overlay(alignment: .trailing) { SidebarEdge() }
                 // It stays still while the page's edge crosses it, like a card sliding over it.
                 .mask(alignment: .leading) {
                     Rectangle().frame(width: sliding && !open ? 0 : sidebarWidth).ignoresSafeArea()
@@ -78,7 +105,21 @@ public struct RootView: View {
                 .offset(x: (open || sliding || browser.sidebarPeeking) && !fullscreen ? 0 : -sidebarWidth - 1)
                 .allowsHitTesting(sidebarOnScreen)
                 .accessibilityHidden(!sidebarOnScreen)
+                // Under the page, whose edge crosses it. Moving this at the start of a slide would
+                // take too long. A dragged tab and a peek go over the page, so it comes up for them.
+                .zIndex(browser.sidebarPeeking || drag.active != nil ? 1 : -1)
+                .offset(x: welcome && !Motion.reduceMotion ? -16 : 0)
+            // Above the page, which it reaches over.
+            Color.clear
+                .frame(width: sidebarWidth)
+                .overlay(alignment: .trailing) { SidebarEdge() }
+                .offset(x: (open || browser.sidebarPeeking) && !fullscreen ? 0 : -sidebarWidth - 1)
+                .allowsHitTesting(sidebarOnScreen)
+                .zIndex(2)
         }
+        .opacity(welcome ? 0 : 1)
+        .allowsHitTesting(!welcome)
+        .animation(Motion.resolved(.smooth(duration: 0.9)), value: welcome)
         // With the sidebar hidden, the pointer at the window's left edge brings it out, just as
         // showing it does, until the pointer leaves it. A thin strip leaves the page's edge usable.
         .overlay(alignment: .leading) {
@@ -97,6 +138,10 @@ public struct RootView: View {
         .onChange(of: prefs.sidebarCollapsed) { _, collapsed in
             leaving?.cancel()
             slide?.cancel()
+            if !Motion.reduceMotion, !showsSplit, !browser.showsEmptyPage, !fullscreen {
+                slidePage(collapsed: collapsed)
+                return
+            }
             // Everything in place first, so the move starts from there.
             withTransaction(Transaction(animation: nil)) {
                 sliding = true
@@ -115,6 +160,7 @@ public struct RootView: View {
             }
         }
         .onAppear { open = !prefs.sidebarCollapsed }
+        .onChange(of: covered, initial: true) { _, width in browser.pages.setCovered(width) }
         // One backdrop behind the toolbar and sidebar, translucent or the theme's; only the page is opaque.
         .background {
             WindowBackdrop().ignoresSafeArea()
@@ -207,34 +253,47 @@ private struct BrowserToolbar: ToolbarContent {
             }
             .labelStyle(.iconOnly)
             .buttonStyle(ToolbarIconStyle())
+            .modifier(HiddenByWelcome())
         }
         // Plain icons, no capsules behind them.
         .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .navigation) {
-            AddressField()
+            AddressField().modifier(HiddenByWelcome())
         }
         .sharedBackgroundVisibility(.hidden)
 
         // On an extension's page in the Chrome Web Store, whose own button only works in Chrome.
         if let id = browser.store.state.selectedTab.flatMap({ WebStore.extensionID(from: $0.url.absoluteString) }), browser.extensions.isAvailable {
             ToolbarItem(placement: .primaryAction) {
-                StoreAddButton(id: id)
+                StoreAddButton(id: id).modifier(HiddenByWelcome())
             }
             .sharedBackgroundVisibility(.hidden)
         }
 
         if browser.preferences.extensionPlacement.showsButtons, !browser.extensions.toolbar.isEmpty {
             ToolbarItem(placement: .primaryAction) {
-                PinnedExtensionButtons()
+                PinnedExtensionButtons().modifier(HiddenByWelcome())
             }
             .sharedBackgroundVisibility(.hidden)
         }
 
         ToolbarItem(placement: .primaryAction) {
-            ExtensionsMenuButton()
+            ExtensionsMenuButton().modifier(HiddenByWelcome())
         }
         .sharedBackgroundVisibility(.hidden)
+    }
+}
+
+/// The toolbar's controls wait while the welcome is up, and come back with the sidebar.
+private struct HiddenByWelcome: ViewModifier {
+    @Environment(Browser.self) private var browser
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(browser.showsWelcome ? 0 : 1)
+            .allowsHitTesting(!browser.showsWelcome)
+            .animation(Motion.resolved(.smooth(duration: 0.9)), value: browser.showsWelcome)
     }
 }
 
@@ -261,7 +320,9 @@ private struct SidebarGround: View {
 /// The sidebar's edge: a hairline you can drag to resize it, which remembers the width.
 struct SidebarEdge: View {
     @Environment(Browser.self) private var browser
-    @State private var start: Double?
+    /// The width when the drag began. This clears itself however a drag ends, even with no
+    /// mouse-up, so the next one can't start from an old width and jump.
+    @GestureState private var start: Double?
 
     /// Wide enough that the toolbar's back, forward and reload buttons sit over the sidebar.
     static let widths = 220.0...420.0
@@ -275,15 +336,19 @@ struct SidebarEdge: View {
                     .frame(width: 16)
                     .contentShape(.rect)
                     .pointerStyle(.frameResize(position: .trailing))
-                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                        .onChanged { drag in
+                    // A click that wobbles isn't a drag.
+                    .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                        .updating($start) { drag, start, _ in
                             let prefs = browser.preferences
                             let from = start ?? prefs.sidebarWidth
                             start = from
-                            prefs.sidebarWidth = min(max(from + drag.translation.width, Self.widths.lowerBound), Self.widths.upperBound).rounded()
-                        }
-                        .onEnded { _ in start = nil })
+                            prefs.resizingSidebar = true
+                            prefs.sidebarWidth = min(max(from + drag.translation.width, Self.widths.lowerBound), Self.widths.upperBound)
+                        })
                     .ignoresSafeArea()
+            }
+            .onChange(of: start == nil) { _, ended in
+                if ended { browser.preferences.resizingSidebar = false }
             }
     }
 }

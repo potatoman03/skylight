@@ -28,8 +28,15 @@ enum Theme {
 
     /// A round swatch for menus, which draw only images in color, not SwiftUI shapes.
     @MainActor
-    static func swatch(_ hue: Double, _ scheme: ColorScheme) -> NSImage {
-        let color = NSColor(accent(hue, scheme))
+    static func swatch(_ hue: Double, _ scheme: ColorScheme) -> NSImage { swatch(accent(hue, scheme)) }
+
+    /// A folder's label, the same colors as a Space's.
+    static func folder(_ color: FolderColor, _ scheme: ColorScheme) -> Color {
+        color.hue.map { accent($0, scheme) } ?? .gray
+    }
+
+    static func swatch(_ swatch: Color) -> NSImage {
+        let color = NSColor(swatch)
         let image = NSImage(size: NSSize(width: 14, height: 14), flipped: false) { rect in
             color.setFill()
             NSBezierPath(ovalIn: rect.insetBy(dx: 1.5, dy: 1.5)).fill()
@@ -126,6 +133,11 @@ struct Favicon: View {
             }
         }
         .frame(width: size, height: size)
+        // Before it shows, so a row rebuilt for any reason never flashes its letter.
+        .onAppear {
+            guard image == nil else { return }
+            image = Self.candidates(icon: url, page: page, large: size > 18).lazy.compactMap(FaviconCache.shared.cached).first
+        }
         .task(id: [url, page]) {
             let candidates = Self.candidates(icon: url, page: page, large: size > 18)
             for candidate in candidates {

@@ -33,7 +33,7 @@ public final class PageCoordinator: BrowserEffectHandler {
     /// Space between split panes and their corner radius.
     @ObservationIgnored public var paneStyle: @MainActor () -> (gap: CGFloat, radius: CGFloat) = { (PaneStyle.gap, PaneStyle.radius) }
 
-    @ObservationIgnored public var policy = HibernationPolicy()
+    @ObservationIgnored public var policy = HibernationPolicy(memoryBytes: ProcessInfo.processInfo.physicalMemory)
     /// Today tabs idle this long are archived.
     @ObservationIgnored public var archiveAfter: @MainActor () -> TimeInterval = { 12 * 60 * 60 }
     @ObservationIgnored public weak var sink: PageEventSink?
@@ -41,6 +41,8 @@ public final class PageCoordinator: BrowserEffectHandler {
     @ObservationIgnored public var onPageGone: (@MainActor (TabID, _ tabClosed: Bool) -> Void)?
     /// Pages woke, slept, appeared or got their address: extensions want to know.
     @ObservationIgnored public var onPagesChange: (@MainActor () -> Void)?
+    /// Tabs that must not sleep, on top of those on screen: anything playing, say.
+    @ObservationIgnored public var staysAwake: (@MainActor () -> Set<TabID>)?
     /// A tab went somewhere, or learned its page's title.
     @ObservationIgnored public var onVisit: (@MainActor (TabID, URL?, String?) -> Void)?
     /// A page went into fullscreen or came out of it: the window follows.
@@ -58,6 +60,12 @@ public final class PageCoordinator: BrowserEffectHandler {
     @ObservationIgnored private var closing: Set<ObjectIdentifier> = []
     @ObservationIgnored private var sweepTimer: Timer?
     @ObservationIgnored private var clickMonitor: Any?
+    @ObservationIgnored private var memoryPressure: DispatchSourceMemoryPressure?
+    @ObservationIgnored private var covered: CGFloat = 0
+    @ObservationIgnored private var settling: Task<Void, Never>?
+
+    /// How many of the last-used tabs get their pages back after launch.
+    private static let warmedOnLaunch = 3
 
     public init(engine: WebEngine, paths: AppPaths, store: BrowserStore) {
         self.engine = engine
@@ -75,6 +83,37 @@ public final class PageCoordinator: BrowserEffectHandler {
             MainActor.assumeIsolated { self?.focusPane(at: event) }
             return event
         }
+        let pressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        pressure.setEventHandler { [weak self] in
+            MainActor.assumeIsolated { self?.shedPages() }
+        }
+        pressure.resume()
+        memoryPressure = pressure
+        Task { await warmRecentTabs() }
+    }
+
+    /// Going back to a tab should find it there, not load it, so the tabs in use last come back
+    /// behind the scenes: one at a time, after the page on screen, so they never hold it up.
+    private func warmRecentTabs() async {
+        guard let store, !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+        if let visibleTabID { await waitUntilLoaded(visibleTabID) }
+        let tabs = store.state.spaces.flatMap(\.allTabIDs).compactMap { store.state.tabs[$0] }
+        let recent = tabs.sorted { $0.lastActiveAt > $1.lastActiveAt }.prefix(Self.warmedOnLaunch)
+        for tab in recent where pages[tab.id] == nil {
+            guard wake(tab.id) != nil else { continue }
+            await waitUntilLoaded(tab.id, timeout: .seconds(5))
+        }
+    }
+
+    private func shedPages() {
+        for id in policy.pagesToShed(awake: lastSeen, protected: protectedTabs()) { sleep(id) }
+    }
+
+    private func protectedTabs() -> Set<TabID> {
+        var protected = store?.state.selectedTabIDs ?? []
+        protected.formUnion(visibleTabIDs)
+        protected.formUnion(staysAwake?() ?? [])
+        return protected
     }
 
     private func focusPane(at event: NSEvent) {
@@ -131,6 +170,7 @@ public final class PageCoordinator: BrowserEffectHandler {
         var views: [NSView] = []
         for pane in panes {
             guard let page = wake(pane) else { continue }
+            page.setCovered(cover(of: pane))
             page.view.isHidden = false
             page.setVisible(true)
             lastSeen[pane] = .now
@@ -165,6 +205,29 @@ public final class PageCoordinator: BrowserEffectHandler {
     /// Lays the visible panes out again (after the gap or radius preference changes).
     public func relayout() { show(visibleTabID) }
 
+    /// How much of the window's left lies over a page alone. Pages on screen follow at once; the
+    /// rest wait until it settles, so dragging the sidebar's edge doesn't lay out every open tab.
+    public func setCovered(_ width: CGFloat) {
+        guard width != covered else { return }
+        covered = width
+        hostView.coveredWidth = width
+        for id in visibleTabIDs { pages[id]?.setCovered(cover(of: id)) }
+        settling?.cancel()
+        settling = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self, !Task.isCancelled else { return }
+            for (id, page) in self.pages { page.setCovered(self.cover(of: id)) }
+        }
+    }
+
+    /// A split's panes sit beside the sidebar, so nothing covers them.
+    private func cover(of id: TabID) -> CGFloat {
+        visibleTabIDs.count > 1 && visibleTabIDs.contains(id) ? 0 : covered
+    }
+
+    /// The colour of the page on screen.
+    public var visiblePageColor: NSColor { visibleTabID.flatMap { pages[$0]?.backgroundColor } ?? .clear }
+
     /// Brings the fullscreen page back into the window.
     public func exitFullscreen() {
         guard let id = fullscreenTabID else { return }
@@ -197,10 +260,14 @@ public final class PageCoordinator: BrowserEffectHandler {
         pageProfiles[id] = profileID
         tabForPage[ObjectIdentifier(page)] = id
         lastSeen[id] = .now
+        page.setCovered(cover(of: id))
         page.view.isHidden = !visibleTabIDs.contains(id)
         page.setVisible(visibleTabIDs.contains(id))
         hostView.addPage(page.view)
-        store.updateStatus(id) { $0.isAwake = true }
+        store.updateStatus(id) {
+            $0.isAwake = true
+            $0.isLoading = page.isLoading
+        }
         return page
     }
 
@@ -270,9 +337,7 @@ public final class PageCoordinator: BrowserEffectHandler {
     /// Sleeps idle pages and archives idle Today tabs.
     func sweep(now: Date = .now) {
         guard let store else { return }
-        var protected = store.state.selectedTabIDs
-        protected.formUnion(visibleTabIDs)
-        for id in policy.pagesToSleep(awake: lastSeen, protected: protected, now: now) { sleep(id) }
+        for id in policy.pagesToSleep(awake: lastSeen, protected: protectedTabs(), now: now) { sleep(id) }
         store.send(.archiveTabs(idleSince: now.addingTimeInterval(-archiveAfter())))
     }
 
@@ -288,6 +353,7 @@ public final class PageCoordinator: BrowserEffectHandler {
 
     public func closeAll() {
         sweepTimer?.invalidate()
+        memoryPressure?.cancel()
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         for page in pages.values { closing.insert(ObjectIdentifier(page)) }
         engine.closeAll()
@@ -309,9 +375,9 @@ extension PageCoordinator: WebPageDelegate {
         if let full = event.isFullscreen {
             if full, visibleTabIDs.contains(id) { setFullscreen(id) } else if !full, fullscreenTabID == id { setFullscreen(nil) }
         }
+        if let progress = event.progress { store.setProgress(id, progress) }
         store.updateStatus(id) { status in
             if let v = event.isLoading { status.isLoading = v }
-            if let v = event.progress { status.progress = v }
             if let v = event.canGoBack { status.canGoBack = v }
             if let v = event.canGoForward { status.canGoForward = v }
         }
@@ -374,13 +440,42 @@ public enum PaneStyle {
 public final class PageHostView: NSView {
     public override var isFlipped: Bool { true }
 
+    public override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        clipsToBounds = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("Not from a coder") }
+
     private var panes: [NSView] = []
     private var split: TabSplit?
     private var gap: CGFloat = 0
     private var radius: CGFloat = 0
+    private var arrival: CheckedContinuation<Void, Never>?
+    /// The sidebar width this view is waiting to make room for, before an opening slide runs.
+    private var opening: CGFloat?
+    /// Counts slides, so a late timeout can't end a newer one's wait.
+    private var slideNumber = 0
+    /// While the sidebar slides: where in the window the page starts, from where to where, and when.
+    private var slideEdge: CGFloat?
+    private var edgeFrom: CGFloat = 0
+    private var edgeTo: CGFloat = 0
+    private var edgeStart: CFTimeInterval = 0
+    private var edgeSeconds: Double = 0
+    private var edgeTiming = CAMediaTimingFunction(name: .linear)
+    private var edgeLink: CADisplayLink?
+    private let pageEdge = CALayer()
+    private let barBand = CALayer()
+    private var glassEdge: NSGlassEffectView?
+    private let pin = RightPin()
+    /// How much of a page's left side something covers.
+    var coveredWidth: CGFloat = 0 { didSet { layoutPanes() } }
+    private var clearsSlideOnResize = false
 
     func addPage(_ view: NSView) {
-        view.frame = bounds
+        view.frame = lonePageFrame
         view.autoresizingMask = []
         view.wantsLayer = true
         addSubview(view)
@@ -399,18 +494,332 @@ public final class PageHostView: NSView {
 
     public override func resizeSubviews(withOldSize oldSize: NSSize) { layoutPanes() }
 
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        layoutPanes()
+    }
+
+    /// A page alone reaches out of sight past this view's left edge, up to the window's or by what
+    /// covers it, whichever is more. It lays out beside what covers it, so the same frame serves as
+    /// the edge moves over it. While the sidebar slides, the page starts at the sliding edge instead
+    /// and keeps its right edge where it is.
+    private var lonePageFrame: CGRect {
+        let reach = self.reach
+        if let slideEdge {
+            let x = slideEdge - reach - coveredWidth
+            return CGRect(x: x, y: 0, width: bounds.width - x, height: bounds.height)
+        }
+        let lead = reach > 0 ? reach : coveredWidth
+        return CGRect(x: -lead, y: 0, width: bounds.width + lead, height: bounds.height)
+    }
+
+    /// How far this view's left edge is from the window's.
+    private var reach: CGFloat { max(0, (window?.contentView?.bounds.width ?? bounds.width) - bounds.width) }
+
+    /// How far the sliding edge is from where it's going.
+    public var slideOffset: CGFloat { slideEdge == nil ? 0 : edge(at: CACurrentMediaTime()) - edgeTo }
+
+    /// Where the sliding edge is at `time`, in the window.
+    private func edge(at time: CFTimeInterval) -> CGFloat {
+        guard edgeSeconds > 0 else { return edgeTo }
+        let done = min(1, max(0, (time - edgeStart) / edgeSeconds))
+        return edgeFrom + (edgeTo - edgeFrom) * CGFloat(Self.eased(edgeTiming, done))
+    }
+
+    /// The timing curve's value at `x`.
+    private static func eased(_ timing: CAMediaTimingFunction, _ x: Double) -> Double {
+        var one: [Float] = [0, 0], two: [Float] = [0, 0]
+        timing.getControlPoint(at: 1, values: &one)
+        timing.getControlPoint(at: 2, values: &two)
+        func curve(_ t: Double, _ a: Float, _ b: Float) -> Double {
+            let u = 1 - t
+            return 3 * u * u * t * Double(a) + 3 * u * t * t * Double(b) + t * t * t
+        }
+        var low = 0.0, high = 1.0
+        for _ in 0..<32 {
+            let mid = (low + high) / 2
+            if curve(mid, one[0], two[0]) < x { low = mid } else { high = mid }
+        }
+        return curve((low + high) / 2, one[1], two[1])
+    }
+
+    /// How far this view's top is from the window's.
+    private var barHeight: CGFloat {
+        guard let window else { return 0 }
+        let inWindow = convert(bounds, to: nil)
+        return max(0, window.frame.height - inWindow.maxY)
+    }
+
+    /// Gets the page ready to slide with the sidebar's edge, which is `width` wide. A page laid
+    /// out for a new width lands a little after it's asked for, so until then its right side is
+    /// held where it was, and its left side shows `color`.
+    public func beginSlide(closing: Bool, width: CGFloat, color: NSColor) {
+        clearsSlideOnResize = false
+        // A slide cut short by this one stops waiting: its task was cancelled and ends there.
+        slideNumber += 1
+        arrive()
+        guard split == nil else { return }
+        let from = slideEdge == nil ? reach : edge(at: CACurrentMediaTime())
+        edgeLink?.invalidate()
+        edgeLink = nil
+        edgeSeconds = 0
+        edgeFrom = from
+        edgeTo = closing ? 0 : width
+        slideEdge = from
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        clipsToBounds = false
+        // Only what's right of the sliding edge shows; the page reaches under the sidebar.
+        pageEdge.backgroundColor = NSColor.black.cgColor
+        pageEdge.removeAllAnimations()
+        layer?.mask = pageEdge
+        // The toolbar's dark band over the page goes with its edge, or its colour would change all at once.
+        effectiveAppearance.performAsCurrentDrawingAppearance { barBand.backgroundColor = NSColor.windowBackgroundColor.cgColor }
+        barBand.removeAllAnimations()
+        if barBand.superlayer == nil { layer?.addSublayer(barBand) }
+        placeEdgeLayers(at: from, width: width)
+        if let page = panes.first { pin.start(page, color: color.cgColor) }
+        if closing || Self.same(reach, width) {
+            layoutPanes()
+        } else {
+            opening = width
+        }
+        CATransaction.commit()
+    }
+
+    private func placeEdgeLayers(at edge: CGFloat, width: CGFloat) {
+        let bar = barHeight, x = edge - reach
+        pageEdge.frame = CGRect(x: x, y: isFlipped ? -bar : 0, width: 3 * (window?.contentView?.bounds.width ?? bounds.width), height: bounds.height + bar)
+        barBand.frame = CGRect(x: x, y: isFlipped ? -bar : bounds.height, width: width, height: bar)
+        glassEdge?.frame = CGRect(x: x, y: 0, width: Self.glassEdgeWidth, height: bounds.height)
+    }
+
+    /// Returns once this view is where the slide needs it.
+    public func slideReady() async {
+        guard opening != nil else { return }
+        let number = slideNumber
+        await withCheckedContinuation { continuation in
+            arrival = continuation
+            // If the room never comes (the window changed under it, say), slide anyway.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(400))
+                guard let self, self.slideNumber == number else { return }
+                self.arrive()
+            }
+        }
+    }
+
+    private func arrive() {
+        opening = nil
+        let waiting = arrival
+        arrival = nil
+        waiting?.resume()
+    }
+
+    /// The view's frame lands on the pixel grid, and a dragged width needn't.
+    private static func same(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) < 1 }
+
+    /// Slides the edge to where it rests. Core Animation moves the edge itself, so nothing the app
+    /// or the page does can make it step; the page's frame follows every frame, a little ahead.
+    public func runSlide(seconds: Double, timing: CAMediaTimingFunction) {
+        guard slideEdge != nil else { return }
+        edgeStart = CACurrentMediaTime()
+        edgeSeconds = seconds
+        edgeTiming = timing
+        let width = barBand.frame.width
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        showGlassEdge(seconds: seconds)
+        placeEdgeLayers(at: edgeTo, width: width)
+        for moving in [pageEdge, barBand, glassEdge?.layer].compactMap({ $0 }) {
+            let slide = CABasicAnimation(keyPath: "transform.translation.x")
+            slide.fromValue = edgeFrom - edgeTo
+            slide.toValue = 0
+            slide.duration = seconds
+            slide.timingFunction = timing
+            slide.beginTime = moving.convertTime(edgeStart, from: nil)
+            slide.fillMode = .backwards
+            moving.add(slide, forKey: "slide")
+        }
+        CATransaction.commit()
+        let link = displayLink(target: self, selector: #selector(followEdge))
+        link.add(to: .main, forMode: .common)
+        edgeLink = link
+    }
+
+    /// Keeps the page's left side ahead of the edge, under the sidebar. A layout lands a few frames
+    /// after it's asked for, so a page getting wider asks for where the edge will be by then; one
+    /// getting narrower is covered while it catches up.
+    @objc private func followEdge() {
+        let now = CACurrentMediaTime()
+        let ahead = edgeTo < edgeFrom ? 0.05 : 0
+        slideEdge = edge(at: now + ahead)
+        if now - edgeStart >= edgeSeconds {
+            slideEdge = edgeTo
+            edgeLink?.invalidate()
+            edgeLink = nil
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        panes.first?.frame = lonePageFrame
+        pin.update()
+        CATransaction.commit()
+    }
+
+    /// A strip of Liquid Glass rides the page's leading edge while it moves.
+    private func showGlassEdge(seconds: Double) {
+        let glass = glassEdge ?? NSGlassEffectView()
+        if glassEdge == nil {
+            glass.style = .clear
+            glass.cornerRadius = 10
+            glass.wantsLayer = true
+            glass.alphaValue = 0
+            glassEdge = glass
+            addSubview(glass)
+        }
+        glass.layer?.zPosition = 2
+        let shine = CAKeyframeAnimation(keyPath: "opacity")
+        shine.values = [0, 1, 1, 0]
+        shine.keyTimes = [0, 0.08, 0.6, 1]
+        shine.duration = seconds
+        glass.layer?.add(shine, forKey: "shine")
+    }
+
+    private static let glassEdgeWidth: CGFloat = 20
+
+    /// Ends the slide. With `afterResize` it ends when this view next changes size, in the same
+    /// frame, so a page that has just reached the window's edge doesn't blink.
+    public func finishSlide(afterResize: Bool) {
+        if afterResize { clearsSlideOnResize = true } else { clearSlide() }
+    }
+
+    private func clearSlide() {
+        clearsSlideOnResize = false
+        edgeLink?.invalidate()
+        edgeLink = nil
+        slideEdge = nil
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        pageEdge.removeAllAnimations()
+        barBand.removeAllAnimations()
+        glassEdge?.layer?.removeAnimation(forKey: "slide")
+        layer?.mask = nil
+        barBand.removeFromSuperlayer()
+        clipsToBounds = true
+        panes.first.map { $0.frame = lonePageFrame }
+        // The page's last layout may still be on its way; the pin lets go once it's in.
+        pin.stop()
+        CATransaction.commit()
+    }
+
     private func layoutPanes() {
+        if clearsSlideOnResize { clearSlide() }
         let frames = split.map { PaneStyle.frames(of: $0, in: bounds.size, gap: gap) }
-        for view in subviews {
+        for view in subviews where view !== glassEdge {
             if let frames, let i = panes.firstIndex(where: { $0 === view }) {
                 view.frame = frames[i]
                 view.layer?.cornerRadius = radius
                 view.layer?.cornerCurve = .continuous
                 view.layer?.masksToBounds = true
             } else {
-                view.frame = bounds
+                view.frame = lonePageFrame
                 view.layer?.cornerRadius = 0
             }
         }
+        pin.update()
+        // Until it starts moving, the edge stays put in the window as this view moves.
+        if let slideEdge, edgeSeconds == 0 {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            placeEdgeLayers(at: slideEdge, width: barBand.frame.width)
+            CATransaction.commit()
+        }
+        if let opening, Self.same(reach, opening) { arrive() }
     }
 }
+
+/// Holds a WebKit page's drawing against its view's right edge until the page lays out for the
+/// view's new width. A view that changes width every frame then never shows the page's right
+/// side moving: WebKit keeps showing the last layout, from the left, until the next one lands.
+///
+/// WebKit's own "overhang areas" layer spans the layout on screen, beside any covered part, and
+/// changes in the same commit as it, so watching it moves the drawing in step.
+@MainActor
+final class RightPin {
+    private weak var page: NSView?
+    private weak var clip: CALayer?
+    private weak var root: CALayer?
+    private var watch: NSKeyValueObservation?
+    private var moved: NSKeyValueObservation?
+    private static let laidOut = "overhang areas"
+    private var holding = false
+    private var color: CGColor?
+    private var rootColor: CGColor?
+
+    func start(_ page: NSView, color: CGColor) {
+        if self.page !== page { release() }
+        self.page = page
+        self.color = color
+        holding = true
+        update()
+    }
+
+    /// Lets go once the page's layout matches its view.
+    func stop() {
+        holding = false
+        update()
+    }
+
+    func update() {
+        guard let page, let layer = page.layer else { return }
+        guard let root = layer.sublayers?.first(where: { Self.find(Self.laidOut, in: $0) != nil }),
+              let clip = Self.find(Self.laidOut, in: root) else { return }
+        if clip !== self.clip {
+            self.clip = clip
+            watch = clip.observe(\.bounds) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.update() }
+            }
+            moved = clip.observe(\.position) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.update() }
+            }
+        }
+        if root !== self.root {
+            self.root = root
+            rootColor = root.backgroundColor
+        }
+        var right = clip.bounds.width
+        var step: CALayer? = clip
+        while let current = step, current !== root {
+            right += current.frame.minX
+            step = current.superlayer
+        }
+        let shift = page.bounds.width - right
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        root.sublayerTransform = CATransform3DMakeTranslation(shift, 0, 0)
+        root.backgroundColor = holding ? color : rootColor
+        CATransaction.commit()
+        if !holding && abs(shift) < 0.5 { release() }
+    }
+
+    private func release() {
+        if let root {
+            root.sublayerTransform = CATransform3DIdentity
+            root.backgroundColor = rootColor
+        }
+        watch = nil
+        moved = nil
+        clip = nil
+        root = nil
+        page = nil
+    }
+
+    private static func find(_ name: String, in layer: CALayer) -> CALayer? {
+        if layer.name == name { return layer }
+        for sub in layer.sublayers ?? [] {
+            if let found = find(name, in: sub) { return found }
+        }
+        return nil
+    }
+}
+

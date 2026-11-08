@@ -147,6 +147,35 @@ public struct Tab: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// A folder's label, the colors Chromium gives tab groups.
+public enum FolderColor: String, Codable, CaseIterable, Identifiable, Sendable {
+    case grey, blue, red, yellow, green, pink, purple, cyan, orange
+
+    public var id: String { rawValue }
+    public var name: String { rawValue.capitalized }
+
+    /// Nil for grey, which has none.
+    public var hue: Double? {
+        switch self {
+        case .grey: nil
+        case .blue: 0.58
+        case .red: 0.99
+        case .yellow: 0.13
+        case .green: 0.35
+        case .pink: 0.90
+        case .purple: 0.77
+        case .cyan: 0.47
+        case .orange: 0.07
+        }
+    }
+
+    /// The number Chromium saves. 0 means no color.
+    public init?(chromium number: Int64) {
+        guard number > 0, number <= Self.allCases.count else { return nil }
+        self = Self.allCases[Int(number) - 1]
+    }
+}
+
 /// A named group of a Space's pinned tabs, which you can open and close in the sidebar.
 public struct TabFolder: Identifiable, Codable, Equatable, Sendable {
     public let id: String
@@ -154,12 +183,15 @@ public struct TabFolder: Identifiable, Codable, Equatable, Sendable {
     /// In the folder's own order. Every one is also in the Space's `pinned`.
     public var tabs: [TabID]
     public var isOpen: Bool
+    public var color: FolderColor?
 
-    public init(id: String = UUID().uuidString, name: String, tabs: [TabID] = [], isOpen: Bool = true) {
+    public init(id: String = UUID().uuidString, name: String, tabs: [TabID] = [], isOpen: Bool = true,
+                color: FolderColor? = nil) {
         self.id = id
         self.name = name
         self.tabs = tabs
         self.isOpen = isOpen
+        self.color = color
     }
 }
 
@@ -277,7 +309,6 @@ public struct ClosedTab: Codable, Equatable, Sendable {
 public struct PageStatus: Equatable, Sendable {
     public var isAwake = false
     public var isLoading = false
-    public var progress: Double = 0
     public var canGoBack = false
     public var canGoForward = false
 

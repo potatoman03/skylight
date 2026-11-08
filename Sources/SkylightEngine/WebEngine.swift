@@ -103,6 +103,10 @@ public protocol WebPage: AnyObject {
     /// The view that displays the page. Owned by the page; the UI only hosts it.
     var view: NSView { get }
 
+    /// Whether a load is under way. Read this after making a page: its first load starts before
+    /// the caller knows which tab it belongs to, so no event reports it.
+    var isLoading: Bool { get }
+
     func load(_ url: URL)
     func goBack()
     func goForward()
@@ -110,6 +114,13 @@ public protocol WebPage: AnyObject {
     /// Reloads without using anything cached.
     func hardReload()
     func stop()
+
+    /// Tells the page something lies over its leftmost `width` points, so it lays out beside them.
+    /// The view stays where it is, so the page's right edge doesn't move when this changes.
+    func setCovered(_ width: CGFloat)
+
+    /// The colour of the page's background.
+    var backgroundColor: NSColor { get }
 
     /// Tells the engine the page is (not) on screen, so it can throttle work.
     func setVisible(_ visible: Bool)

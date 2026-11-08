@@ -24,8 +24,8 @@ private enum Fixture {
 
     static func string(_ field: UInt64, _ value: String) -> [UInt8] { string(field, Array(value.utf8)) }
 
-    static func group(_ id: String, _ title: String, order: Int64, color: Int64 = 2, wrapped: Bool = true) -> [UInt8] {
-        let group = string(2, title) + number(3, color) + number(4, order)
+    static func group(_ id: String, _ title: String, order: Int64, wrapped: Bool = true) -> [UInt8] {
+        let group = string(2, title) + number(3, 2) + number(4, order)
         return specifics(id, 4, group, wrapped: wrapped)
     }
 
@@ -83,22 +83,29 @@ private enum Fixture {
 }
 
 @Suite struct TabGroupTests {
+    @Test func groupColorsBecomeFolderColors() {
+        #expect(FolderColor(chromium: 0) == nil)
+        #expect(FolderColor(chromium: 1) == .grey)
+        #expect(FolderColor(chromium: 2) == .blue)
+        #expect(FolderColor(chromium: 9) == .orange)
+        #expect(FolderColor(chromium: 10) == nil)
+    }
+
     @Test func groupsComeOutInTheOrderTheBrowserShows() {
         let log = Fixture.log(from: 10, [
             (Fixture.key("b"), Fixture.group("b", "Second", order: 1)),
-            (Fixture.key("a"), Fixture.group("a", "First", order: 0, color: 1)),
+            (Fixture.key("a"), Fixture.group("a", "First", order: 0)),
             (Fixture.key("t1"), Fixture.tab("t1", in: "a", "https://one.example/", "One", at: 1)),
             (Fixture.key("t2"), Fixture.tab("t2", in: "a", "https://two.example/", "Two", at: 0)),
             (Fixture.key("t3"), Fixture.tab("t3", in: "b", "https://three.example/page")),
             (Fixture.key("t4"), Fixture.tab("t4", in: "b", "aside://settings/", "Internal")),
             (Array("passwords-dt-x".utf8), Array("not a group".utf8)),
         ])
-        let spaces = ChromiumTabGroups.read(tables: [], logs: [log], browser: "Aside")
-        #expect(spaces.map(\.name) == ["First", "Second"])
-        #expect(spaces[0].pinned.map(\.title) == ["Two", "One"])
-        #expect(spaces[1].pinned.map(\.title) == ["three.example"])
-        #expect(spaces[0].hue == nil)
-        #expect(spaces[1].hue == 0.6)
+        let folders = ChromiumTabGroups.read(tables: [], logs: [log])
+        #expect(folders.map(\.name) == ["First", "Second"])
+        #expect(folders.map(\.color) == [.blue, .blue])
+        #expect(folders[0].links.map(\.title) == ["Two", "One"])
+        #expect(folders[1].links.map(\.title) == ["three.example"])
     }
 
     @Test func aDeletedGroupAndItsTabsStayGone() {
@@ -112,9 +119,9 @@ private enum Fixture {
             (Fixture.key("gone"), nil),
             (Fixture.key("kept"), Fixture.group("kept", "New name", order: 1)),
         ])
-        let spaces = ChromiumTabGroups.read(tables: [table], logs: [log], browser: "Aside")
-        #expect(spaces.map(\.name) == ["New name"])
-        #expect(spaces[0].pinned.map(\.url.host) == ["kept.example"])
+        let folders = ChromiumTabGroups.read(tables: [table], logs: [log])
+        #expect(folders.map(\.name) == ["New name"])
+        #expect(folders[0].links.map { $0.url.host() } == ["kept.example"])
     }
 
     @Test func theOlderFormatAndTheAccountStoreRead() {
@@ -122,9 +129,9 @@ private enum Fixture {
             (Array("A-saved_tab_group-dt-g".utf8), Fixture.group("g", "Synced", order: 0, wrapped: false)),
             (Array("A-saved_tab_group-dt-t".utf8), Fixture.tab("t", in: "g", "https://example.com/", wrapped: false)),
         ])
-        let spaces = ChromiumTabGroups.read(tables: [], logs: [log], browser: "Chrome")
-        #expect(spaces.map(\.name) == ["Synced"])
-        #expect(spaces[0].pinned.count == 1)
+        let folders = ChromiumTabGroups.read(tables: [], logs: [log])
+        #expect(folders.map(\.name) == ["Synced"])
+        #expect(folders[0].links.count == 1)
     }
 
     @Test func aCompressedTableReads() {
@@ -139,28 +146,71 @@ private enum Fixture {
         #expect(LevelDB.snappy(ArraySlice(bytes)) == Array("abababab".utf8))
     }
 
-    @Test func pastTheLimitTabsLandInOneSpace() {
-        var writes: [(key: [UInt8], value: [UInt8]?)] = []
-        for i in 0..<10 {
-            writes.append((Fixture.key("g\(i)"), Fixture.group("g\(i)", "Group \(i)", order: Int64(i))))
-            writes.append((Fixture.key("t\(i)"), Fixture.tab("t\(i)", in: "g\(i)", "https://site\(i).example/")))
-        }
-        let spaces = ChromiumTabGroups.read(tables: [], logs: [Fixture.log(from: 1, writes)], browser: "Chrome")
-        #expect(spaces.count == ChromiumTabGroups.spaceLimit + 1)
-        #expect(spaces.last?.name == "Chrome")
-        #expect(spaces.last?.pinned.count == 2)
-    }
-
     @Test func aFileCutAnywhereGivesWhatItHas() {
         let table = [UInt8](Fixture.table([(Fixture.key("g"), 1, Fixture.group("g", "Name", order: 0))], compressed: true))
         let log = [UInt8](Fixture.log(from: 1, [(Fixture.key("g"), Fixture.group("g", "Name", order: 0))]))
         for cut in 0..<max(table.count, log.count) {
-            _ = ChromiumTabGroups.read(tables: [Data(table.prefix(cut))], logs: [Data(log.prefix(cut))], browser: "Chrome")
+            _ = ChromiumTabGroups.read(tables: [Data(table.prefix(cut))], logs: [Data(log.prefix(cut))])
             var bad = table
             if cut < bad.count {
                 bad[cut] ^= 0xFF
-                _ = ChromiumTabGroups.read(tables: [Data(bad)], logs: [], browser: "Chrome")
+                _ = ChromiumTabGroups.read(tables: [Data(bad)], logs: [])
             }
         }
+    }
+}
+
+@Suite struct ImportReportTests {
+    private func report() -> ImportReport {
+        var report = ImportReport(source: "Aside")
+        report.folders = ["Email", "Bookmarks"]
+        report.home = "Personal"
+        report.tabs = 12
+        report.passwords = 1
+        report.sites = 400
+        report.extensions = ["Proton Pass"]
+        report.extensionsOff = 1
+        report.pages = 29_981
+        report.leftBehind = "Anything in Aside Vault stays there"
+        report.staysBehind = "Passkeys stay behind"
+        return report
+    }
+
+    @Test func itSaysWhatCameWhereAndWhatDidnt() {
+        let report = report()
+        #expect(report.headline == "Here's what came over from Aside")
+        let added = report.lines.filter { $0.kind == .added }
+        #expect(added.first?.title == "2 folders with 12 tabs in Personal")
+        #expect(added.first?.detail == "Email and Bookmarks")
+        #expect(added.map(\.title).contains("1 password"))
+        #expect(added.map(\.title).contains("29,981 pages of history"))
+        #expect(report.lines.filter { $0.kind == .needsYou }.map(\.title) == ["Anything in Aside Vault stays there"])
+        #expect(report.lines.filter { $0.kind == .skipped }.map(\.title)
+            == ["No new cards or addresses", "1 extension stayed off, as in Aside", "Passkeys stay behind"])
+    }
+
+    @Test func arcsSpacesAreCalledSpaces() {
+        var report = ImportReport(source: "Arc")
+        report.spaces = ["Home", "School"]
+        report.tabs = 13
+        #expect(report.lines.first?.title == "2 Spaces with 13 tabs")
+    }
+
+    @Test func aSecondRunSaysThereWasNothingNew() {
+        let report = ImportReport(source: "Aside")
+        #expect(report.headline == "Everything from Aside is already here")
+        #expect(report.message == "Everything from Aside is already here")
+        #expect(!report.lines.contains { $0.kind == .added })
+    }
+
+    @Test func aRefusalLeadsWithWhatHappened() {
+        var report = ImportReport(source: "Aside")
+        report.pages = 2
+        report.problem = "Passwords stayed behind"
+        report.extensionsFailed = 2
+        #expect(report.failed)
+        #expect(report.headline == "Some of Aside stayed behind")
+        #expect(report.lines.filter { $0.kind == .needsYou }.map(\.title) == ["Passwords stayed behind", "2 extensions couldn't be added"])
+        #expect(!report.lines.contains { $0.title == "No new passwords" })
     }
 }
