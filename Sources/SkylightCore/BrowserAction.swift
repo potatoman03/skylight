@@ -40,6 +40,9 @@ public enum BrowserAction: Equatable, Sendable {
     /// Removes a folder. Its tabs stay pinned, or close with it when `closeTabs` is set.
     case deleteFolder(String, closeTabs: Bool = false)
     case setFolderOpen(String, Bool)
+    case setFolderColor(String, FolderColor?)
+    /// Ends a Space, keeping its tabs as folders in another: the loose ones under the Space's name.
+    case turnSpaceIntoFolder(SpaceID, in: SpaceID)
     /// Moves a folder to another position among the Space's folders.
     case moveFolder(String, to: Int)
     /// Puts a tab in a folder at `index` (pinning it, in the folder's Space), or with nil takes it
@@ -135,19 +138,35 @@ public struct BrowserImport: Equatable, Sendable {
         }
     }
 
+    /// A folder for the Space on screen.
+    public struct ImportedFolder: Equatable, Sendable {
+        public var name: String
+        public var links: [Link]
+        public var color: FolderColor?
+        public init(name: String, links: [Link], color: FolderColor? = nil) {
+            self.name = name
+            self.links = links
+            self.color = color
+        }
+    }
+
     public var source: String
     public var spaces: [ImportedSpace]
     public var favorites: [Link]
+    public var folders: [ImportedFolder]
     /// What the other browser calls its profiles, by folder.
     public var profileNames: [String: String] = [:]
 
-    public init(source: String, spaces: [ImportedSpace], favorites: [Link]) {
+    public init(source: String, spaces: [ImportedSpace], favorites: [Link], folders: [ImportedFolder] = []) {
         self.source = source
         self.spaces = spaces
         self.favorites = favorites
+        self.folders = folders
     }
 
-    public var isEmpty: Bool { favorites.isEmpty && spaces.allSatisfy { $0.pinned.isEmpty && $0.sourceProfile == nil } }
+    public var isEmpty: Bool {
+        favorites.isEmpty && folders.allSatisfy(\.links.isEmpty) && spaces.allSatisfy { $0.pinned.isEmpty && $0.sourceProfile == nil }
+    }
 
     /// The other browser's profiles that Spaces came from, by folder, in the order they appear.
     public var profileFolders: [String] {

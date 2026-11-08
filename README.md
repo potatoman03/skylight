@@ -54,7 +54,7 @@ SKYLIGHT_DEV=1 SKYLIGHT_DATA_DIR="$(mktemp -d)" build/Skylight.app/Contents/MacO
 swift test
 ```
 
-262 tests in Swift Testing, over SkylightCore, SkylightKit and SkylightMCP. They use temporary
+274 tests in Swift Testing, over SkylightCore, SkylightKit and SkylightMCP. They use temporary
 folders and in-memory stores only. `swift test -c release --filter Performance` prints the timings
 quoted under Performance below.
 
@@ -147,8 +147,9 @@ switches to that Space so you can drop it there. Swipe two fingers sideways over
 to the next or previous Space; it stops at the first and last. Links dragged in from a page or
 another app open where you drop them. Closing a
 pinned tab or favorite only unloads it; Delete in its menu removes it. Today tabs untouched for 12
-hours are archived (⌘⇧T brings them back; the time is in Settings). Pages you haven't looked at in
-20 minutes go to sleep and reload when you return.
+hours are archived (⌘⇧T brings them back; the time is in Settings). Pages stay up so going back to a tab
+is instant; after 4 hours unseen, or when the Mac runs short of memory, the oldest go to sleep and
+reload when you return. The tabs you used last come back behind the scenes after launch.
 
 Each Space has a color, an icon and a **profile**. A profile keeps its own cookies, site logins,
 saved passwords and extension data, so Spaces on different profiles can be signed in to different
@@ -194,8 +195,8 @@ Copying and exporting ask for Touch ID or your password.
 **Import** (File → Import From, or Settings → Import) brings a browser's saved passwords and
 sign-ins into the Space on screen, after macOS asks to let Skylight read that browser's key. It also
 brings over Arc's Spaces, pinned tabs and favorites, or a Chromium browser's bookmarks: the bookmarks
-bar becomes favorites and each folder a Space. Saved tab groups, which are Aside's sidebar sections,
-become Spaces too, read from the browser's `Sync Data/LevelDB` while it keeps running.
+bar becomes favorites and each folder a folder in that Space. Saved tab groups, which are Aside's
+sidebar sections, become folders too, read from the browser's `Sync Data/LevelDB` while it keeps running.
 Aside Vault turns off Aside's own password, card and address saving and keeps its items encrypted, so
 export it as JSON and choose the file in Settings → Import; that brings logins, cards and addresses.
 Arc's other profiles become profiles here, and their Spaces keep their own logins and favorites.
@@ -213,9 +214,11 @@ or your password first and only goes to a secure page. Security codes are never 
 **History** (⌘Y) is kept per profile, on this Mac, and the address field suggests from it. Clear it
 from the history sheet.
 
-A new install opens with a short **welcome**: import from another browser, pick a look, make
-Skylight the default browser, and a few things worth knowing. Help → Welcome to Skylight brings it
-back.
+A new install opens with a short **welcome** that fills the window: light washes in with a soft
+sweep of sound (drawn in code, and silent when the Mac's interface sounds are off), then it walks
+through importing from another browser, picking one of the picture themes, making Skylight the
+default browser, and a few things worth knowing. The picture only flows during the opening, and not
+at all with Reduce Motion. Help → Welcome to Skylight brings it back.
 
 The sky is a small Metal shader: light falls through it, slowly, in the theme's colors. It runs at
 30 fps only while it's showing and the window is in front, and stops with Reduce Motion or when

@@ -33,8 +33,17 @@ public final class Browser {
     public var renameTab: TabID?
     /// Whether the keyboard shortcuts sheet is up.
     public var showShortcuts = false
-    /// The welcome sheet is up.
-    public var showsWelcome = false
+    /// The welcome is up, over the whole window. Pages hide under it, and the window's own
+    /// controls go with them.
+    public var showsWelcome = false {
+        didSet {
+            guard showsWelcome != oldValue else { return }
+            pages.hostView.isHidden = showsWelcome
+            onWelcomeChange?(showsWelcome)
+        }
+    }
+    /// The welcome came or went: the window shows or hides what isn't SwiftUI's.
+    @ObservationIgnored public var onWelcomeChange: (@MainActor (Bool) -> Void)?
     /// The history sheet is up.
     public var showHistory = false
     /// Whether Skylight's menu, from the Space button in the sidebar, is open.
@@ -81,6 +90,7 @@ public final class Browser {
         store.effectHandler = pages
         pages.sink = self
         pages.onVisit = { [weak self] id, url, title in self?.noteVisit(id, url: url, title: title) }
+        pages.staysAwake = { [media] in Set(media.states.filter { $0.value.playing }.keys) }
         autofill.profiles = { store.state.profiles.filter { $0.passwordsFrom == nil }.map(\.id) }
         autofill.reload()
         passwords.mergeAutofill = { [autofill] found, profile in autofill.merge(found, into: profile) }
@@ -458,21 +468,16 @@ public final class Browser {
         public var summary: String {
             switch self {
             case .arc: "Spaces, pinned tabs, favorites, \(Self.everything)"
-            case .aside: "Sidebar sections as Spaces, bookmarks, \(Self.everything)"
-            default: "Bookmarks, tab groups, \(Self.everything)"
+            case .aside: "Sidebar sections as folders, bookmarks, \(Self.everything)"
+            default: "Bookmarks and tab groups as folders, \(Self.everything)"
             }
         }
     }
 
     /// What an import is doing now, while one runs. Extensions can take a while to download.
     public private(set) var importStep: String?
-
-    /// How an import went, in a sentence.
-    public struct ImportResult: Sendable {
-        public var message: String
-        /// Something didn't come over, and the message says what.
-        public var failed: Bool
-    }
+    /// The import to show the result of, over the window.
+    public var importReport: ImportReport?
 
     /// The Spaces and tabs a browser has: its sidebar or bookmarks, and its tab groups, either of
     /// which can be missing. Signed-out Aside writes no bookmarks at all.
@@ -488,19 +493,24 @@ public final class Browser {
         }
         guard !groups.isEmpty else { return found }
         var imported = found ?? BrowserImport(source: source.rawValue, spaces: [], favorites: [])
-        imported.spaces = groups + imported.spaces
+        imported.folders = groups + imported.folders
         return imported
     }
 
     /// Brings Spaces, tabs, passwords and sign-ins over from another browser, into the Space on
     /// screen. Arc's other profiles become profiles here, keeping their own. macOS asks before
-    /// Skylight can read that browser's key. `announcing` shows the result as a toast too.
+    /// Skylight can read that browser's key. `announcing` shows the result over the window.
     @discardableResult
-    public func importBrowser(_ source: ImportSource, announcing: Bool = true) async -> ImportResult {
+    public func importBrowser(_ source: ImportSource, announcing: Bool = true) async -> ImportReport {
         defer { importStep = nil }
+        var report = ImportReport(source: source.rawValue)
+        report.leftBehind = source.leftBehind
+        report.staysBehind = ImportSource.staysBehind
         var problem: String?
         var tabs = 0
         let profilesBefore = store.state.profiles.count
+        let spacesBefore = Set(store.state.spaces.map(\.id))
+        let foldersBefore = Set(store.state.activeSpace.folders.map(\.id))
         // Each of the browser's profiles, and the profile here that gets its logins.
         var targets = source.chromium.map { [(browser: $0, profile: store.state.activeSpace.profileID)] } ?? []
         do {
@@ -551,34 +561,34 @@ public final class Browser {
             let entries = (try? await Task.detached { try ChromiumHistoryImporter.read(history: file) }.value) ?? []
             pagesFound += history.add(entries, to: target.profile)
         }
-        let wanted = targets.flatMap { target in
-            ChromiumExtensions.storeIDs(in: target.browser.preferenceFiles.compactMap { try? Data(contentsOf: $0) })
-        }
+        // Profiles share extensions, and one installs once.
+        var wanted: [String] = []
+        for id in targets.flatMap({ ChromiumExtensions.storeIDs(in: $0.browser.preferenceFiles.compactMap { try? Data(contentsOf: $0) }) })
+        where !wanted.contains(id) { wanted.append(id) }
+        // Off in one profile but on in another, it comes over.
+        let turnedOff = Set(targets.flatMap { target in
+            ChromiumExtensions.turnedOffIDs(in: target.browser.preferenceFiles.compactMap { try? Data(contentsOf: $0) })
+        }).subtracting(wanted).count
         let adopted = await extensions.adopt(wanted) { [weak self] number, total in
             self?.importStep = "Adding extension \(number) of \(total)…"
         }
 
-        var parts: [String] = []
-        let profiles = store.state.profiles.count - profilesBefore
-        if profiles > 0 { parts.append("\(profiles) profile\(profiles == 1 ? "" : "s")") }
-        if tabs > 0 { parts.append("\(tabs) tab\(tabs == 1 ? "" : "s")") }
-        if logins > 0 { parts.append("\(logins) password\(logins == 1 ? "" : "s")") }
-        if !sites.isEmpty { parts.append("sign-ins for \(sites.count) site\(sites.count == 1 ? "" : "s")") }
-        if adopted > 0 { parts.append("\(adopted) extension\(adopted == 1 ? "" : "s")") }
-        if addresses > 0 { parts.append("\(addresses) address\(addresses == 1 ? "" : "es")") }
-        if cards > 0 { parts.append("\(cards) card\(cards == 1 ? "" : "s")") }
-        if pagesFound > 0 { parts.append("\(pagesFound.formatted()) page\(pagesFound == 1 ? "" : "s") of history") }
-        let summary = parts.isEmpty ? nil : "Imported " + ListFormatter.localizedString(byJoining: parts) + " from \(source.rawValue)"
-        let found = [summary, problem].compactMap(\.self).joined(separator: ". ")
-        let message = [found.isEmpty ? nil : found, source.leftBehind].compactMap(\.self).joined(separator: ". ")
-        guard !found.isEmpty else {
-            let same = ["Everything from \(source.rawValue) is already here", source.leftBehind]
-                .compactMap(\.self).joined(separator: ". ")
-            if announcing { toasts.show(same, symbol: "square.and.arrow.down") }
-            return ImportResult(message: same, failed: false)
-        }
-        if announcing { toasts.show(message, symbol: problem == nil ? "square.and.arrow.down" : "exclamationmark.triangle") }
-        return ImportResult(message: message, failed: problem != nil)
+        report.profiles = store.state.profiles.count - profilesBefore
+        report.spaces = store.state.spaces.filter { !spacesBefore.contains($0.id) }.map(\.name)
+        report.folders = store.state.activeSpace.folders.filter { !foldersBefore.contains($0.id) }.map(\.name)
+        report.home = store.state.activeSpace.name
+        report.tabs = tabs
+        report.passwords = logins
+        report.sites = sites.count
+        report.extensions = adopted.added
+        report.extensionsFailed = adopted.failed
+        report.extensionsOff = turnedOff
+        report.addresses = addresses
+        report.cards = cards
+        report.pages = pagesFound
+        report.problem = problem
+        if announcing { importReport = report }
+        return report
     }
 
     /// Opens the welcome on a new install, and returns whether it did. Anyone else never needs it.

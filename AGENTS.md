@@ -67,7 +67,7 @@ Rules the map implies:
 | A view, Settings page, sidebar row, toolbar item | `SkylightUI`. Motion tokens are in `Motion.swift`, colors in `Theme.swift`. |
 | A menu item or keyboard shortcut | `Sources/Skylight/MainMenu.swift` (the action is an `@objc` method on `AppDelegate`). The shortcuts sheet reads the menu bar, so it picks the item up. |
 | A row in Skylight's menu (the Space button at the left of the Space bar) | `MenuContent` in `Sources/SkylightUI/SkylightMenu.swift`. Give it a menu bar command where one exists, so its action and shortcut can't drift. |
-| Build, bundle, signing | `scripts/bundle.sh`. Releases that installed copies update to: `scripts/publish.sh`. Notarized DMGs: `scripts/release.sh`. |
+| Build, bundle, signing | `scripts/bundle.sh`. Releases that installed copies update to: `scripts/publish.sh`. Notarized DMGs: `scripts/release.sh`, which packs them with `scripts/dmg.sh` (its background is drawn by `scripts/dmg-background.swift`). |
 | The website | `site/`, plain HTML and CSS with no build step. `.github/workflows/pages.yml` deploys it to GitHub Pages when it changes on `main`. |
 | Updates | `Sources/Skylight/Updater.swift` (Sparkle, app target only). The feed URL and public key are in `bundle.sh`. |
 
@@ -78,15 +78,20 @@ Rules the map implies:
   moves and resizes at once, outside any `withAnimation`. Anything drawn over a page (dividers,
   grips, drop previews) must follow its frame without animating, or it drifts from the page. To
   change how panes arrive, use the coordinator's `CATransition` crossfade, not a SwiftUI
-  transition. The one exception is showing or hiding the sidebar, where the page moves over it
-  as one piece and is resized once, off screen: a site drawn while its view resizes arrives a
-  few frames late and shakes.
+  transition. The one exception is showing or hiding the sidebar: Core Animation moves the
+  visible edge (a mask), and a display link sets the page's frame from the same curve every
+  frame. WebKit shows each new width's layout a few frames late, so `RightPin` holds the drawing
+  against the view's right edge until it lands, watching WebKit's "overhang areas" layer. A page
+  alone also reaches under the sidebar and lays out beside it through `setCovered`, so dragging
+  the sidebar's edge never moves its right side. Don't animate `obscuredContentInsets`: WebKit
+  holds it back for 70 ms or more and drops widths.
   A theme's picture is an AppKit view too, so anything holding one doesn't fade: the wash over it
   would fade and the picture wouldn't, and it flashes.
 - **Tabs are not pages.** A tab is a saved place in `BrowserState`. A page exists only while its
   tab is awake (`PageCoordinator.pages`) and is put to sleep by `HibernationPolicy`. Code that
   needs a page must handle there being none (`page(for:)` returns nil). Use `wake(_:)` only if the
-  user asked for the tab.
+  user asked for the tab. The one exception is after launch, when the three tabs used last come
+  back one at a time behind the page on screen (not in Low Power Mode).
 - **One source of truth.** Every change goes through `BrowserStore.send(_:)`. The reducer never
   touches the engine, the clock or the disk directly: `ReducerEnvironment` supplies time and ids,
   so tests are deterministic.
@@ -184,13 +189,18 @@ Rules the map implies:
   build/Skylight.app` activates that copy instead (same bundle id). Start the executable directly,
   and quit only the process you started. WebKit's network process ignores `CFFIXED_USER_HOME`, so
   a test run's stores always land in the real `~/Library/WebKit`. Keep test data made up.
+- **The welcome's picture flows only in the opening.** `FlowingPicture` (Metal, on a
+  `CAMetalDisplayLink`, so the main thread never waits for a drawable) moves the theme picture
+  while the name arrives, comes to rest, and is then removed; later steps show the still picture.
+  Keep it that way, and keep it off with Reduce Motion. The opening's sound (`OpeningSound`) is
+  synthesized and respects the Mac's interface sound setting.
 - **Main actor everywhere UI-side.** The store, `Browser`, services and the engine adapters are
   `@MainActor`. Timers and notification observers hop in with `MainActor.assumeIsolated`.
 
 ## Verifying a change
 
 1. `swift build`. It must finish without errors.
-2. `swift test`: every test passes (239 at the time of writing).
+2. `swift test`: every test passes (276 at the time of writing).
 3. For anything that runs in the app: `scripts/bundle.sh`, then
    `SKYLIGHT_DEV=1 SKYLIGHT_DATA_DIR="$(mktemp -d)" build/Skylight.app/Contents/MacOS/Skylight`,
    and try it. Check light and dark mode, and Reduce Motion if it animates.

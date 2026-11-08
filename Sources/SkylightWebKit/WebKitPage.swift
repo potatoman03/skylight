@@ -30,7 +30,36 @@ final class WebKitPage: NSObject, SkylightEngine.WebPage {
         observe()
     }
 
+    private var nextCover: CGFloat?
+    private var coverIsLayingOut = false
+
     var view: NSView { webView }
+    var isLoading: Bool { webView.isLoading }
+
+    var backgroundColor: NSColor { webView.underPageBackgroundColor }
+
+    func setCovered(_ width: CGFloat) {
+        nextCover = width
+        if !coverIsLayingOut { applyCover() }
+    }
+
+    /// Each change lays the whole page out, and they'd pile up behind a dragged edge faster than a
+    /// big page can get through them. So one goes at a time, and the next is whatever's latest.
+    private func applyCover() {
+        guard let width = nextCover else { return }
+        nextCover = nil
+        guard webView.obscuredContentInsets.left != width else { return }
+        coverIsLayingOut = true
+        webView.obscuredContentInsets = NSEdgeInsets(top: 0, left: width, bottom: 0, right: 0)
+        // Reading this waits for the layout.
+        webView.evaluateJavaScript("innerWidth", in: nil, in: .defaultClient) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.coverIsLayingOut = false
+                self.applyCover()
+            }
+        }
+    }
 
     func load(_ url: URL) {
         if url.isFileURL {

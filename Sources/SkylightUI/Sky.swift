@@ -27,9 +27,9 @@ struct SkyBackdrop: View {
             LinearGradient(colors: [Color(palette.sky), Color(palette.horizon)], startPoint: .top, endPoint: .bottom)
                 .motion(Motion.hue, value: palette)
             if let image, let url {
+                // One view, which crossfades to a new picture itself: SwiftUI can't fade an AppKit view,
+                // so swapping views would show the sky between the two.
                 ThemeImageView(url: url, image: image)
-                    .id(url)
-                    .transition(.opacity)
                 if palette.ascii != nil || palette.rays > 0 && rays && !Motion.reduceMotion {
                     SkyMetalView(palette: palette, dark: scheme == .dark, rays: rays, overlay: true)
                 }
@@ -150,6 +150,19 @@ private enum Thumbnails {
     }
 }
 
+extension CGImage {
+    /// A picture at full size, decoded now and turned the way its file says to show it.
+    static func upright(at url: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int
+        else { return nil }
+        let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
+                                        kCGImageSourceThumbnailMaxPixelSize: max(width, height), kCGImageSourceShouldCacheImmediately: true]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+}
+
 /// An image cropped to fill the view. `NSImageView` because it plays GIFs, which stop when the
 /// window can't be seen and when Reduce Motion is on.
 final class BackdropImageView: NSView {
@@ -180,6 +193,7 @@ final class BackdropImageView: NSView {
         self.focus = focus
         self.zoom = zoom
         if url != self.url {
+            let replacing = self.url != nil && imageView.image != nil && window != nil
             self.url = url
             if thumbnail {
                 Task { [weak self] in
@@ -189,7 +203,14 @@ final class BackdropImageView: NSView {
                     self.needsLayout = true
                 }
             } else {
-                imageView.image = NSImage(contentsOf: url)
+                if replacing {
+                    let fade = CATransition()
+                    fade.type = .fade
+                    fade.duration = Motion.reduceMotion ? 0.15 : 0.6
+                    fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    imageView.layer?.add(fade, forKey: "picture")
+                }
+                imageView.image = Self.image(at: url)
             }
         }
         if blur != self.blur {
@@ -197,6 +218,13 @@ final class BackdropImageView: NSView {
             imageView.layer?.filters = blur > 0 ? [CIFilter(name: "CIGaussianBlur", parameters: ["inputRadius": blur])].compactMap { $0 } : nil
         }
         needsLayout = true
+    }
+
+    /// A still picture decoded now, so it doesn't decode on the first frame it's drawn; a GIF as
+    /// it is, so it plays.
+    private static func image(at url: URL) -> NSImage? {
+        guard !url.pathExtension.lowercased().hasPrefix("gif"), let image = CGImage.upright(at: url) else { return NSImage(contentsOf: url) }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
 
     override func layout() {

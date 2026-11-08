@@ -137,18 +137,19 @@ public final class ExtensionService {
 
     /// Adds what you already use in another browser, fresh from the store: you chose these there,
     /// so there's no asking one by one. Their own settings and sign-ins stay with that browser.
-    /// Returns how many were added. `progress` hears which one of how many is starting.
-    public func adopt(_ ids: [String], progress: (Int, Int) -> Void = { _, _ in }) async -> Int {
-        guard isAvailable else { return 0 }
+    /// Returns the names of those added and how many couldn't be. `progress` hears which one of
+    /// how many is starting.
+    public func adopt(_ ids: [String], progress: (Int, Int) -> Void = { _, _ in }) async -> (added: [String], failed: Int) {
+        guard isAvailable else { return ([], 0) }
         let missing = ids.filter { id in !installed.contains { $0.id == id } }
-        var added = 0
+        var added: [String] = []
         for (index, id) in missing.enumerated() {
             progress(index + 1, missing.count)
             let before = installed.count
             await install(fromStore: id, quietly: true)
-            if installed.count > before { added += 1 }
+            if installed.count > before { added.append(manifests[id]?.name ?? id) }
         }
-        return added
+        return (added, missing.count - added.count)
     }
 
     /// The extension's name and what it can do, with Add and Cancel. For an update, only what

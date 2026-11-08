@@ -30,14 +30,14 @@ public struct ChromiumBrowser: Sendable, Identifiable, Equatable {
         [accountLoginData, loginData].filter { FileManager.default.fileExists(atPath: $0.path) }
     }
     public var bookmarks: URL { profileDirectory.appending(path: "Bookmarks") }
-    /// The tab groups this profile keeps, as Spaces. Aside's sidebar sections are these.
-    public var tabGroups: [BrowserImport.ImportedSpace] {
+    /// The tab groups this profile keeps, as folders. Aside's sidebar sections are these.
+    public var tabGroups: [BrowserImport.ImportedFolder] {
         let folder = profileDirectory.appending(path: "Sync Data/LevelDB")
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
         func contents(_ extensions: Set<String>) -> [Data] {
             files.filter { extensions.contains($0.pathExtension) }.compactMap { try? Data(contentsOf: $0) }
         }
-        return ChromiumTabGroups.read(tables: contents(["ldb", "sst"]), logs: contents(["log"]), browser: name)
+        return ChromiumTabGroups.read(tables: contents(["ldb", "sst"]), logs: contents(["log"]))
     }
     public var history: URL { profileDirectory.appending(path: "History") }
     /// Addresses and cards.

@@ -327,6 +327,7 @@ struct ProfileBadge: View {
 private struct ImportSettings: View {
     @Environment(Browser.self) private var browser
     @State private var results: [String: String] = [:]
+    @State private var report: ImportReport?
     @State private var importing: Browser.ImportSource?
     @State private var csvResult: String?
 
@@ -348,7 +349,9 @@ private struct ImportSettings: View {
                             Button("Import") {
                                 importing = source
                                 Task {
-                                    results[source.rawValue] = await browser.importBrowser(source).message
+                                    let done = await browser.importBrowser(source, announcing: false)
+                                    results[source.rawValue] = done.message
+                                    report = done
                                     importing = nil
                                 }
                             }
@@ -376,6 +379,7 @@ private struct ImportSettings: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(item: $report) { ImportReportSheet(report: $0) }
     }
 
 }

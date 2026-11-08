@@ -362,16 +362,15 @@ struct SkylightMenuButton: View {
     @State private var openedByPress = false
 
     var body: some View {
-        let space = browser.store.state.activeSpace
         Button {
             if !openedByPress { browser.toggleMainMenu() }
             openedByPress = false
         } label: {
             HStack(spacing: 4) {
-                SpaceIcon(icon: space.icon, name: space.name, size: 10)
-                    .foregroundStyle(.white)
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
                     .frame(width: 20, height: 20)
-                    .background(Theme.accent(space.hue), in: .circle)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.secondary)

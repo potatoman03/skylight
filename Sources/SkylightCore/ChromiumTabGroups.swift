@@ -4,36 +4,31 @@ import Foundation
 /// are these, and Chrome's saved groups too. That database also holds what the browser syncs,
 /// so only keys naming a saved group are ever kept.
 public enum ChromiumTabGroups {
-    /// How many become Spaces. Anything past them lands in a Space named after the browser.
-    static let spaceLimit = 8
-
-    /// Each group as a Space, in the order the browser shows them. `tables` are the database's
+    /// Each group as a folder, in the order the browser shows them. `tables` are the database's
     /// `.ldb` files and `logs` its `.log` files.
-    public static func read(tables: [Data], logs: [Data], browser: String) -> [BrowserImport.ImportedSpace] {
+    public static func read(tables: [Data], logs: [Data]) -> [BrowserImport.ImportedFolder] {
         let entries = LevelDB.entries(tables: tables, logs: logs, where: isGroup)
-        var groups: [(id: [UInt8], space: BrowserImport.ImportedSpace, order: [Int64])] = []
+        var groups: [(id: [UInt8], name: String, color: FolderColor?, order: [Int64])] = []
         var tabs: [[UInt8]: [(link: BrowserImport.Link, position: Int64)]] = [:]
         for value in entries.values {
             guard let saved = Specifics(value) else { continue }
             if let group = saved.group {
                 let name = group.bytes(2).flatMap { String(bytes: $0, encoding: .utf8) } ?? ""
-                groups.append((saved.id, .init(name: name, icon: "folder", hue: hue(of: group.number(3)), pinned: []),
-                               [group.number(4) ?? .max, group.number(1) ?? .max]))
+                let color = group.number(3).flatMap(FolderColor.init(chromium:))
+                groups.append((saved.id, name, color, [group.number(4) ?? .max, group.number(1) ?? .max]))
             } else if let tab = saved.tab, let group = tab.bytes(1).map(Array.init), let link = link(tab) {
                 tabs[group, default: []].append((link, tab.number(2) ?? .max))
             }
         }
 
-        var spaces: [BrowserImport.ImportedSpace] = []
-        for var group in groups.sorted(by: { $0.order.lexicographicallyPrecedes($1.order) }) {
+        var folders: [BrowserImport.ImportedFolder] = []
+        for group in groups.sorted(by: { $0.order.lexicographicallyPrecedes($1.order) }) {
             // A tab whose group has gone is one the browser no longer shows.
-            group.space.pinned = (tabs[group.id] ?? []).sorted { $0.position < $1.position }.prefix(80).map(\.link)
-            guard !group.space.pinned.isEmpty else { continue }
-            if group.space.name.isEmpty { group.space.name = "Group \(spaces.count + 1)" }
-            spaces.append(group.space)
+            let links = (tabs[group.id] ?? []).sorted { $0.position < $1.position }.prefix(80).map(\.link)
+            guard !links.isEmpty else { continue }
+            folders.append(.init(name: group.name.isEmpty ? "Group \(folders.count + 1)" : group.name, links: links, color: group.color))
         }
-        let rest = Array(spaces.dropFirst(spaceLimit).flatMap(\.pinned).prefix(80))
-        return spaces.prefix(spaceLimit) + (rest.isEmpty ? [] : [.init(name: browser, icon: "bookmark", pinned: rest)])
+        return folders
     }
 
     /// Chromium keeps one store for this device and one for the signed-in account.
@@ -47,21 +42,6 @@ public enum ChromiumTabGroups {
               ["http", "https"].contains(url.scheme ?? "") else { return nil }
         let title = tab.bytes(4).flatMap { String(bytes: $0, encoding: .utf8) }.flatMap { $0.isEmpty ? nil : $0 }
         return BrowserImport.Link(url: url, title: title ?? url.host() ?? raw)
-    }
-
-    /// `SavedTabGroupColor`. Grey has no hue worth keeping.
-    private static func hue(of color: Int64?) -> Double? {
-        switch color {
-        case 2: 0.6
-        case 3: 0
-        case 4: 0.13
-        case 5: 0.38
-        case 6: 0.92
-        case 7: 0.77
-        case 8: 0.5
-        case 9: 0.07
-        default: nil
-        }
     }
 
     /// `SavedTabGroupSpecifics`, wrapped in `SavedTabGroupData` by newer browsers.

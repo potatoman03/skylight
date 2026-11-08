@@ -61,6 +61,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         toggle.view = toggleView
         window.addTitlebarAccessoryViewController(toggle)
         sidebarToggle = toggle
+        browser.onWelcomeChange = { [weak self] showing in
+            guard let toggle = self?.sidebarToggle else { return }
+            // Back with the sidebar, after the welcome has faded.
+            if showing { toggle.isHidden = true } else {
+                toggle.view.alphaValue = 0
+                toggle.isHidden = false
+                NSAnimationContext.runAnimationGroup { $0.duration = 0.6; toggle.view.animator().alphaValue = 1 }
+            }
+        }
         window.delegate = self
         browser.pages.onFullscreenChange = { [weak self] fullscreen in self?.pageFullscreenChanged(fullscreen) }
         browser.showSettings = { [weak self, weak browser] section in

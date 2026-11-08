@@ -66,15 +66,9 @@ struct AddressField: View {
         }
         // Loading shows as a hairline under the address.
         .overlay(alignment: .bottomLeading) {
-            GeometryReader { geo in
-                Capsule()
-                    .fill(.tint)
-                    .frame(width: geo.size.width * max(status.progress, 0.05), height: 2)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-                    .opacity(status.isLoading && !editing && !newTab ? 1 : 0)
-                    .animation(.easeOut(duration: 0.2), value: status.progress)
+            if status.isLoading, !editing, !newTab, let tab = browser.store.state.selectedTabID {
+                LoadingLine(tab: tab).allowsHitTesting(false)
             }
-            .allowsHitTesting(false)
         }
         .background { ViewProbe(found: { anchor.addField($0) }, moved: { anchor.moved() }) }
         .contentShape(.rect)
@@ -656,5 +650,22 @@ private struct PaletteRow: View {
         .frame(height: 36)
         .background(highlighted ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 10))
         .contentShape(.rect)
+    }
+}
+
+/// How far the page has loaded. On its own, so progress doesn't redraw the toolbar.
+private struct LoadingLine: View {
+    let tab: TabID
+    @Environment(Browser.self) private var browser
+
+    var body: some View {
+        let progress = browser.store.progress(of: tab)
+        GeometryReader { geo in
+            Capsule()
+                .fill(.tint)
+                .frame(width: geo.size.width * max(progress, 0.05), height: 2)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .animation(.easeOut(duration: 0.2), value: progress)
+        }
     }
 }

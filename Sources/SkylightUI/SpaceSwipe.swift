@@ -6,6 +6,22 @@ import SwiftUI
 /// monitor rather than `scrollWheel(with:)`, because the list's scroll view gets those first. Only
 /// here over the sidebar: a page's sideways scrolling and Chromium's back and forward swipe never
 /// come through.
+/// Marks the Space strip while it has more Spaces than room: a swipe there scrolls the strip.
+struct SpaceStripBounds: NSViewRepresentable {
+    let overflowing: Bool
+
+    final class Marker: NSView {
+        nonisolated(unsafe) weak static var current: Marker?
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    func makeNSView(context: Context) -> Marker { Marker() }
+
+    func updateNSView(_ view: Marker, context: Context) {
+        if overflowing { Marker.current = view } else if Marker.current === view { Marker.current = nil }
+    }
+}
+
 struct SpaceSwipeArea: NSViewRepresentable {
     let handle: (SpaceSwipe.Event) -> SpaceSwipe.Response
 
@@ -41,7 +57,11 @@ struct SpaceSwipeArea: NSViewRepresentable {
         }
 
         private func isUnderPointer(_ event: NSEvent) -> Bool {
-            event.window === window && bounds.contains(convert(event.locationInWindow, from: nil))
+            guard event.window === window, bounds.contains(convert(event.locationInWindow, from: nil)) else {
+                return false
+            }
+            guard let strip = SpaceStripBounds.Marker.current, strip.window === window else { return true }
+            return !strip.bounds.contains(strip.convert(event.locationInWindow, from: nil))
         }
     }
 }
