@@ -467,8 +467,9 @@ public final class PageHostView: NSView {
     private var edgeTiming = CAMediaTimingFunction(name: .linear)
     private var edgeLink: CADisplayLink?
     private let pageEdge = CALayer()
+    /// Clips the animated edge to the part of the page WebKit has actually painted.
+    private let paintedEdge = CALayer()
     private let barBand = CALayer()
-    private var glassEdge: NSGlassEffectView?
     private let pin = RightPin()
     /// How much of a page's left side something covers.
     var coveredWidth: CGFloat = 0 { didSet { layoutPanes() } }
@@ -482,6 +483,8 @@ public final class PageHostView: NSView {
     }
 
     func arrange(_ views: [NSView], split: TabSplit?, gap: CGFloat, radius: CGFloat) {
+        let panesChanged = panes.count != views.count || zip(panes, views).contains { $0.0 !== $0.1 }
+        if slideEdge != nil, panesChanged || self.split != split { cancelSlide() }
         panes = views
         self.split = views.count > 1 ? split : nil
         self.gap = gap
@@ -496,6 +499,7 @@ public final class PageHostView: NSView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if window == nil, slideEdge != nil { cancelSlide() }
         layoutPanes()
     }
 
@@ -559,7 +563,8 @@ public final class PageHostView: NSView {
         slideNumber += 1
         arrive()
         guard split == nil else { return }
-        let from = slideEdge == nil ? reach : edge(at: CACurrentMediaTime())
+        // A reversal starts at the edge the user can see, even if painting held it back.
+        let from = slideEdge == nil ? reach : max(edge(at: CACurrentMediaTime()), paintedLeft)
         edgeLink?.invalidate()
         edgeLink = nil
         edgeSeconds = 0
@@ -572,12 +577,21 @@ public final class PageHostView: NSView {
         // Only what's right of the sliding edge shows; the page reaches under the sidebar.
         pageEdge.backgroundColor = NSColor.black.cgColor
         pageEdge.removeAllAnimations()
-        layer?.mask = pageEdge
+        paintedEdge.masksToBounds = true
+        if pageEdge.superlayer !== paintedEdge { paintedEdge.addSublayer(pageEdge) }
+        layer?.mask = paintedEdge
         // The toolbar's dark band over the page goes with its edge, or its colour would change all at once.
         effectiveAppearance.performAsCurrentDrawingAppearance { barBand.backgroundColor = NSColor.windowBackgroundColor.cgColor }
         barBand.removeAllAnimations()
         if barBand.superlayer == nil { layer?.addSublayer(barBand) }
         placeEdgeLayers(at: from, width: width)
+        pin.onCoverageChange = { [weak self] in
+            guard let self, self.slideEdge != nil else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            self.placeEdgeLayers(at: self.edgeSeconds > 0 ? self.edgeTo : self.edgeFrom, width: self.barBand.frame.width)
+            CATransaction.commit()
+        }
         if let page = panes.first { pin.start(page, color: color.cgColor) }
         if closing || Self.same(reach, width) {
             layoutPanes()
@@ -589,9 +603,30 @@ public final class PageHostView: NSView {
 
     private func placeEdgeLayers(at edge: CGFloat, width: CGFloat) {
         let bar = barHeight, x = edge - reach
-        pageEdge.frame = CGRect(x: x, y: isFlipped ? -bar : 0, width: 3 * (window?.contentView?.bounds.width ?? bounds.width), height: bounds.height + bar)
+        let windowWidth = window?.contentView?.bounds.width ?? bounds.width
+        let left = paintedLeft - reach
+        paintedEdge.frame = CGRect(x: left, y: isFlipped ? -bar : 0, width: 3 * windowWidth, height: bounds.height + bar)
+        pageEdge.frame = CGRect(x: x - left, y: 0, width: 3 * windowWidth, height: bounds.height + bar)
         barBand.frame = CGRect(x: x, y: isFlipped ? -bar : bounds.height, width: width, height: bar)
-        glassEdge?.frame = CGRect(x: x, y: 0, width: Self.glassEdgeWidth, height: bounds.height)
+    }
+
+    /// RightPin keeps the committed drawing against the window's right edge. Anything to the
+    /// left of it is still the page's background, so don't uncover that part of the sidebar yet.
+    private var paintedLeft: CGFloat {
+        guard let width = pin.paintedWidth else { return 0 }
+        return max(0, (window?.contentView?.bounds.width ?? bounds.width) - width)
+    }
+
+    /// Keep the old layout in place until the final wider page is drawn. A stalled or hidden
+    /// page mustn't keep the sidebar transition open forever.
+    public func waitForPaintedEdge(while keepWaiting: @MainActor () -> Bool = { true }) async {
+        guard edgeTo < edgeFrom else { return }
+        let deadline = CACurrentMediaTime() + 2
+        while !Task.isCancelled, slideEdge != nil, pin.paintedWidth != nil,
+              paintedLeft > edgeTo + 0.5, CACurrentMediaTime() < deadline,
+              window?.occlusionState.contains(.visible) == true, keepWaiting() {
+            try? await Task.sleep(for: .milliseconds(8))
+        }
     }
 
     /// Returns once this view is where the slide needs it.
@@ -629,9 +664,8 @@ public final class PageHostView: NSView {
         let width = barBand.frame.width
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        showGlassEdge(seconds: seconds)
         placeEdgeLayers(at: edgeTo, width: width)
-        for moving in [pageEdge, barBand, glassEdge?.layer].compactMap({ $0 }) {
+        for moving in [pageEdge, barBand] {
             let slide = CABasicAnimation(keyPath: "transform.translation.x")
             slide.fromValue = edgeFrom - edgeTo
             slide.toValue = 0
@@ -666,31 +700,17 @@ public final class PageHostView: NSView {
         CATransaction.commit()
     }
 
-    /// A strip of Liquid Glass rides the page's leading edge while it moves.
-    private func showGlassEdge(seconds: Double) {
-        let glass = glassEdge ?? NSGlassEffectView()
-        if glassEdge == nil {
-            glass.style = .clear
-            glass.cornerRadius = 10
-            glass.wantsLayer = true
-            glass.alphaValue = 0
-            glassEdge = glass
-            addSubview(glass)
-        }
-        glass.layer?.zPosition = 2
-        let shine = CAKeyframeAnimation(keyPath: "opacity")
-        shine.values = [0, 1, 1, 0]
-        shine.keyTimes = [0, 0.08, 0.6, 1]
-        shine.duration = seconds
-        glass.layer?.add(shine, forKey: "shine")
-    }
-
-    private static let glassEdgeWidth: CGFloat = 20
-
     /// Ends the slide. With `afterResize` it ends when this view next changes size, in the same
     /// frame, so a page that has just reached the window's edge doesn't blink.
     public func finishSlide(afterResize: Bool) {
         if afterResize { clearsSlideOnResize = true } else { clearSlide() }
+    }
+
+    /// Settle a slide whose page or layout has changed, including any pending opening wait.
+    public func cancelSlide() {
+        slideNumber += 1
+        arrive()
+        clearSlide()
     }
 
     private func clearSlide() {
@@ -701,13 +721,14 @@ public final class PageHostView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         pageEdge.removeAllAnimations()
+        pin.onCoverageChange = nil
         barBand.removeAllAnimations()
-        glassEdge?.layer?.removeAnimation(forKey: "slide")
         layer?.mask = nil
         barBand.removeFromSuperlayer()
         clipsToBounds = true
         panes.first.map { $0.frame = lonePageFrame }
-        // The page's last layout may still be on its way; the pin lets go once it's in.
+        // A drawing transform must never outlive the slide: it would move pixels without moving
+        // WebKit's hit targets, and can survive a navigation to a new page.
         pin.stop()
         CATransaction.commit()
     }
@@ -715,7 +736,7 @@ public final class PageHostView: NSView {
     private func layoutPanes() {
         if clearsSlideOnResize { clearSlide() }
         let frames = split.map { PaneStyle.frames(of: $0, in: bounds.size, gap: gap) }
-        for view in subviews where view !== glassEdge {
+        for view in subviews {
             if let frames, let i = panes.firstIndex(where: { $0 === view }) {
                 view.frame = frames[i]
                 view.layer?.cornerRadius = radius
@@ -755,6 +776,8 @@ final class RightPin {
     private var holding = false
     private var color: CGColor?
     private var rootColor: CGColor?
+    var onCoverageChange: (() -> Void)?
+    var paintedWidth: CGFloat? { clip?.bounds.width }
 
     func start(_ page: NSView, color: CGColor) {
         if self.page !== page { release() }
@@ -764,10 +787,10 @@ final class RightPin {
         update()
     }
 
-    /// Lets go once the page's layout matches its view.
+    /// Restore WebKit's drawing coordinates as soon as the transition ends.
     func stop() {
         holding = false
-        update()
+        release()
     }
 
     func update() {
@@ -784,6 +807,7 @@ final class RightPin {
             }
         }
         if root !== self.root {
+            restoreRoot()
             self.root = root
             rootColor = root.backgroundColor
         }
@@ -799,19 +823,27 @@ final class RightPin {
         root.sublayerTransform = CATransform3DMakeTranslation(shift, 0, 0)
         root.backgroundColor = holding ? color : rootColor
         CATransaction.commit()
+        onCoverageChange?()
         if !holding && abs(shift) < 0.5 { release() }
     }
 
     private func release() {
-        if let root {
-            root.sublayerTransform = CATransform3DIdentity
-            root.backgroundColor = rootColor
-        }
+        restoreRoot()
         watch = nil
         moved = nil
         clip = nil
         root = nil
         page = nil
+    }
+
+    private func restoreRoot() {
+        if let root {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            root.sublayerTransform = CATransform3DIdentity
+            root.backgroundColor = rootColor
+            CATransaction.commit()
+        }
     }
 
     private static func find(_ name: String, in layer: CALayer) -> CALayer? {

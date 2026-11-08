@@ -141,7 +141,8 @@ working. [CONTRIBUTING.md](CONTRIBUTING.md) covers branches, commits and pull re
 | ⌥⌘I | Developer tools, beside the page |
 
 The sidebar works like Arc's. Each Space has its own **favorites** at the top, its **pinned** tabs,
-then **Today** (with **Clear**). Drag tabs between sections; the list shows an
+then **Today** (with **Clear**). Drag the sidebar's edge to resize it; it can be as narrow as 150 points.
+Drag tabs between sections; the list shows an
 insertion line where a tab will land, and holding a tab over a Space's button at the bottom
 switches to that Space so you can drop it there. Swipe two fingers sideways over the sidebar to go
 to the next or previous Space; it stops at the first and last. Links dragged in from a page or

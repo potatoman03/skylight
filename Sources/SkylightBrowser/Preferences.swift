@@ -255,7 +255,7 @@ public final class Preferences {
     public var archiveAfterHours: Double = 12 { didSet { save() } }
     public var sidebarCollapsed = false { didSet { save() } }
     /// The sidebar's width, as you last dragged it.
-    public var sidebarWidth: Double = 240 { didSet { if !resizingSidebar { save() } } }
+    public var sidebarWidth: Double = 150 { didSet { if !resizingSidebar { save() } } }
     /// While the sidebar's edge is dragged it moves every frame, and is saved when it lands.
     public var resizingSidebar = false { didSet { if !resizingSidebar { save() } } }
     /// The app's theme; Spaces can pick their own.
