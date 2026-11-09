@@ -58,6 +58,107 @@ private let c = URL(string: "https://c.example")!
         #expect(result.effects == [.load(result.openedTabID!, b)])
     }
 
+    @Test func externalLinkNavigatesPinnedTabInsideFolder() {
+        var state = BrowserState.initial()
+        let home = URL(string: "https://dashboard.example/")!
+        let detail = URL(string: "https://dashboard.example/sessions/123?view=transcript")!
+        let pin = open(&state, home)[0]
+        BrowserReducer.reduce(&state, .togglePin(pin), env: env)
+        BrowserReducer.reduce(&state, .createFolder(id: "dashboards", space: state.activeSpaceID, name: "Dashboards", tabs: [pin]), env: env)
+        let other = open(&state, b)[0]
+        let result = BrowserReducer.reduce(&state, .openExternal([detail]), env: env)
+        #expect(state.selectedTabID == pin)
+        #expect(state.tabs[pin]?.url == detail)
+        #expect(state.activeSpace.today == [other])
+        #expect(state.activeSpace.folders.first?.tabs == [pin])
+        #expect(result.effects == [.load(pin, detail), .showTab(pin)])
+
+        let next = URL(string: "https://dashboard.example/students/456")!
+        BrowserReducer.reduce(&state, .openExternal([next]), env: env)
+        #expect(state.selectedTabID == pin)
+        #expect(state.tabs[pin]?.url == next)
+        #expect(state.activeSpace.today == [other])
+    }
+
+    @Test func externalLinksUseFavoritesAndTreatDefaultPortsAsSameOrigin() {
+        var state = BrowserState.initial()
+        let pin = open(&state, URL(string: "https://example.com:443/")!)[0]
+        BrowserReducer.reduce(&state, .toggleFavorite(pin), env: env)
+        let link = URL(string: "https://EXAMPLE.com/path")!
+        BrowserReducer.reduce(&state, .openExternal([link]), env: env)
+        #expect(state.selectedTabID == pin)
+        #expect(state.tabs[pin]?.url == link)
+        #expect(state.activeSpace.today.isEmpty)
+    }
+
+    @Test func externalLinksDoNotCrossOriginsOrSpaces() {
+        for link in ["http://example.com/path", "https://sub.example.com/path", "https://example.com:8443/path"] {
+            var state = BrowserState.initial()
+            let pin = open(&state, URL(string: "https://example.com/")!)[0]
+            BrowserReducer.reduce(&state, .togglePin(pin), env: env)
+            BrowserReducer.reduce(&state, .openExternal([URL(string: link)!]), env: env)
+            #expect(state.tabs[pin]?.url == URL(string: "https://example.com/")!)
+            #expect(state.activeSpace.today.count == 1)
+        }
+        var state = BrowserState.initial()
+        let pin = open(&state, URL(string: "https://example.com/")!)[0]
+        BrowserReducer.reduce(&state, .togglePin(pin), env: env)
+        BrowserReducer.reduce(&state, .switchSpace(state.spaces[1].id), env: env)
+        BrowserReducer.reduce(&state, .openExternal([URL(string: "https://example.com/path")!]), env: env)
+        #expect(state.tabs[pin]?.url == URL(string: "https://example.com/")!)
+        #expect(state.activeSpace.today.count == 1)
+    }
+
+    @Test func externalLinkDoesNotChooseBetweenAmbiguousPins() {
+        var state = BrowserState.initial()
+        let firstURL = URL(string: "https://example.com/one")!
+        let secondURL = URL(string: "https://example.com/two")!
+        let ids = open(&state, firstURL, secondURL)
+        for id in ids { BrowserReducer.reduce(&state, .togglePin(id), env: env) }
+        BrowserReducer.reduce(&state, .openExternal([firstURL]), env: env)
+        #expect(state.selectedTabID == ids[0])
+        #expect(state.activeSpace.today.isEmpty)
+        BrowserReducer.reduce(&state, .openExternal([URL(string: "https://example.com/other")!]), env: env)
+        #expect(state.activeSpace.today.count == 1)
+        #expect(state.tabs[ids[0]]?.url == firstURL)
+        #expect(state.tabs[ids[1]]?.url == secondURL)
+    }
+
+    @Test func multipleExternalLinksAreNotLostWhenTheyMatchTheSamePin() {
+        var state = BrowserState.initial()
+        let pin = open(&state, URL(string: "https://example.com/")!)[0]
+        BrowserReducer.reduce(&state, .togglePin(pin), env: env)
+        let one = URL(string: "https://example.com/one")!
+        let two = URL(string: "https://example.com/two")!
+        BrowserReducer.reduce(&state, .openExternal([one, two]), env: env)
+        #expect(state.tabs[pin]?.url == one)
+        #expect(state.activeSpace.today.count == 1)
+        #expect(state.selectedTab?.url == two)
+    }
+
+    @Test func aBatchDoesNotTurnAmbiguousPinsIntoAnArbitraryMatch() {
+        var state = BrowserState.initial()
+        let one = URL(string: "https://example.com/one")!
+        let two = URL(string: "https://example.com/two")!
+        let other = URL(string: "https://example.com/other")!
+        let ids = open(&state, one, two)
+        for id in ids { BrowserReducer.reduce(&state, .togglePin(id), env: env) }
+        BrowserReducer.reduce(&state, .openExternal([one, other]), env: env)
+        #expect(state.tabs[ids[0]]?.url == one)
+        #expect(state.tabs[ids[1]]?.url == two)
+        #expect(state.activeSpace.today.count == 1)
+        #expect(state.selectedTab?.url == other)
+    }
+
+    @Test func externalFilesStillOpenInToday() {
+        var state = BrowserState.initial()
+        let file = URL(fileURLWithPath: "/tmp/skylight-fixture.html")
+        BrowserReducer.reduce(&state, .openExternal([file]), env: env)
+        #expect(state.activeSpace.today.count == 1)
+        #expect(state.selectedTab?.url == file)
+        #expect(!BrowserReducer.reduce(&state, .openExternal([URL(string: "mailto:test@example.com")!]), env: env).applied)
+    }
+
     @Test func closingSelectsNeighborBelowThenAbove() {
         var state = BrowserState.initial()
         let ids = open(&state, a, b, c)

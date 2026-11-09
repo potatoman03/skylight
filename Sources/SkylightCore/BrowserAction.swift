@@ -10,6 +10,8 @@ public enum BrowserAction: Equatable, Sendable {
     }
 
     case openTab(URL, placement: Placement = .afterSelected, select: Bool = true, space: SpaceID? = nil)
+    /// Links handed to the browser by another app or the operating system.
+    case openExternal([URL])
     case closeTab(TabID)
     case reopenClosedTab
     case selectTab(TabID)
