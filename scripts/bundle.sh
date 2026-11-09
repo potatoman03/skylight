@@ -22,7 +22,7 @@ VERSION="${SKYLIGHT_VERSION:-0.1.0}"
 # What updates compare: the commit count, so a build from a later commit is newer.
 BUILD="${SKYLIGHT_BUILD:-$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)}"
 # Where updates come from (scripts/publish.sh puts them there), and the key they're signed with.
-FEED="https://github.com/potatoman03/skylight/releases/latest/download/appcast.xml"
+FEED="https://potatoman03.github.io/skylight/appcast.xml"
 UPDATE_KEY="MZEEASeQo9BloEsZVxVOKxWW+SxlzcsdyApewIsQz/k="
 BUNDLE_ID="app.skylight.Skylight"
 if [[ -z "${SKYLIGHT_SIGN_IDENTITY:-}" && -f "$ROOT/.signing" ]]; then source "$ROOT/.signing"; fi

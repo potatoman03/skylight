@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Publishes a release: signs it with your Developer ID and has Apple notarize it (scripts/release.sh),
 # zips it, signs the zip with the update key, writes the update feed, and puts them on a GitHub
-# release. Skylight reads the feed from the latest release (SUFeedURL in bundle.sh), so the newest
-# release wins. The release also gets Skylight.dmg for new people: its name never changes, so the
+# release. The website workflow copies the newest signed update and feed to GitHub Pages; Skylight
+# reads that feed (SUFeedURL in bundle.sh). The release also gets Skylight.dmg for new people: its name never changes, so the
 # website's link to releases/latest/download/Skylight.dmg is always the newest.
 #
 #   scripts/publish.sh 0.2.0

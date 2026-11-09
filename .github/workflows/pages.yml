@@ -6,6 +6,9 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/pages.yml"
+      - "scripts/prepare-update-feed.py"
+  release:
+    types: [published]
   workflow_dispatch:
 
 concurrency:
@@ -27,8 +30,22 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Include the latest signed update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p update-download public
+          cp -R site/. public/
+          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          version="${tag#v}"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir update-download \
+            --pattern appcast.xml --pattern "Skylight-${version}.zip"
+          python3 scripts/prepare-update-feed.py update-download/appcast.xml \
+            "update-download/Skylight-${version}.zip" public
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: public
       - id: deploy
         uses: actions/deploy-pages@v4
