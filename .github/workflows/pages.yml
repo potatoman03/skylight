@@ -10,9 +10,14 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      test_release_trigger:
+        description: Test the release-triggered deployment
+        type: boolean
+        default: false
 
 concurrency:
-  group: pages-${{ github.event_name == 'release' && 'trigger' || 'deploy' }}
+  group: pages-${{ (github.event_name == 'release' || inputs.test_release_trigger) && 'trigger' || 'deploy' }}
   cancel-in-progress: true
 
 permissions:
@@ -23,7 +28,7 @@ permissions:
 jobs:
   refresh:
     name: Refresh after a release
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || inputs.test_release_trigger
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -35,7 +40,7 @@ jobs:
         run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
   deploy:
     name: Deploy
-    if: github.event_name != 'release'
+    if: github.event_name != 'release' && !inputs.test_release_trigger
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
