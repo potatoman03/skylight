@@ -66,7 +66,7 @@ let package = Package(
         ),
 
         .testTarget(name: "SkylightCoreTests", dependencies: ["SkylightCore"]),
-        .testTarget(name: "SkylightBrowserTests", dependencies: ["SkylightBrowser", "SkylightCore"]),
+        .testTarget(name: "SkylightBrowserTests", dependencies: ["SkylightBrowser", "SkylightCore", "SkylightEngine"]),
         .testTarget(name: "SkylightKitTests", dependencies: ["SkylightKit", "SkylightCore"]),
         .testTarget(name: "SkylightMCPTests", dependencies: ["SkylightMCP", "SkylightAgent"]),
     ]

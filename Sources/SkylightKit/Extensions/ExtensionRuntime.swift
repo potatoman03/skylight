@@ -10,6 +10,46 @@ public enum ExtensionRuntime {
     static let compatibilityFile = "skylight-compatibility.js"
     static let pageCompatibilityFile = "skylight-page-compatibility.js"
     static let workerFile = "skylight-worker.js"
+    static let loomID = "liecbddmkiiihnedobmlmillhodjkdmb"
+    static let loomReadyWorkerFile = "skylight-loom-ready-worker.js"
+    static let loomReadyPageFile = "skylight-loom-ready-page.js"
+
+    /// Loom's popup sends its recorder command immediately, while WebKit may still be starting the
+    /// worker. A command sent during that interval can resolve without reaching any listener.
+    static let loomReadyWorker = """
+    chrome.runtime.onMessage.addListener((message, sender, respond) => {
+      if (sender.id === chrome.runtime.id && message?.type === '__skylight_loom_worker_ready__') {
+        respond('__skylight_loom_ready__');
+      }
+      return false;
+    });
+    """
+
+    /// Wait only for Loom's recorder command. Its other messages and all other extensions keep
+    /// their normal semantics; if the worker never starts, send the command after a bounded wait.
+    static let loomReadyPage = """
+    (() => {
+      const runtime = globalThis.chrome?.runtime;
+      if (!runtime?.sendMessage) return;
+      const send = runtime.sendMessage.bind(runtime);
+      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      let pending;
+      const ready = () => pending ??= (async () => {
+        for (let attempt = 0; attempt < 30; attempt++) {
+          const answer = await Promise.race([
+            send({ type: '__skylight_loom_worker_ready__' }).catch(() => undefined),
+            delay(100),
+          ]);
+          if (answer === '__skylight_loom_ready__') return;
+          await delay(50);
+        }
+      })();
+      runtime.sendMessage = (...args) => {
+        if (args.length !== 1 || args[0]?.type !== 'extensionIconClicked') return send(...args);
+        return ready().then(() => send(...args));
+      };
+    })();
+    """
 
     /// Safari's engine keeps `requestIdleCallback` behind a flag, and scripts written for Chrome
     /// assume it. Without it Proton Pass never finds a page's login forms, and nothing says why.
@@ -69,7 +109,7 @@ public enum ExtensionRuntime {
       \(idleCallback)
       // Content scripts never had the rest.
       if (!api.tabs) return;
-      for (const name of ['action', 'cookies', 'extension', 'i18n', 'permissions', 'storage', 'tabs', 'webNavigation', 'webRequest', 'windows']) {
+      for (const name of ['action', 'cookies', 'extension', 'i18n', 'permissions', 'scripting', 'storage', 'tabs', 'webNavigation', 'webRequest', 'windows']) {
         if (api[name]) Object.defineProperty(api, Symbol(`skylight.${name}`), { value: api[name] });
       }
       const answer = (value) => (...args) => {
@@ -103,6 +143,16 @@ public enum ExtensionRuntime {
         }
       }
       if (api.webRequest) add(api.webRequest, 'handlerBehaviorChanged', answer());
+      // WebKit rejects Chrome's file wildcard and rejects the entire registration with it. Keep
+      // the supported patterns so an extension can still register on the web. Do not claim that
+      // a file-only registration succeeded: let WebKit reject that request as before.
+      if (api.scripting?.registerContentScripts) {
+        const register = api.scripting.registerContentScripts.bind(api.scripting);
+        api.scripting.registerContentScripts = (scripts, ...args) => register(scripts.map((script) => {
+          const matches = script.matches?.filter((match) => match !== 'file://*/*');
+          return matches?.length ? { ...script, matches } : script;
+        }), ...args);
+      }
       if (api.windows) add(api.windows, 'onBoundsChanged', event());
       if (api.i18n) add(api.i18n, 'detectLanguage', answer({ isReliable: false, languages: [] }));
       if (api.permissions) {
@@ -161,9 +211,6 @@ public enum ExtensionRuntime {
         proxy: { settings: setting({ mode: 'system' }), onProxyError: event() },
         search: stub([], { query: refuse('Searching') }),
         sessions: { ...stub(['onChanged'], { getRecentlyClosed: [], getDevices: [], restore: refuse('Restoring a session') }), MAX_SESSION_RESULTS: 25 },
-        sidePanel: stub(['onOpened'], {
-          open: refuse('The side panel'), getOptions: { enabled: false }, setOptions: undefined, getPanelBehavior: { openPanelOnActionClick: false }, setPanelBehavior: undefined,
-        }),
         system: {
           cpu: stub([], { getInfo: { numOfProcessors: 0, archName: '', modelName: '', features: [], processors: [] } }),
           display: stub(['onDisplayChanged'], { getInfo: [] }),
@@ -188,6 +235,21 @@ public enum ExtensionRuntime {
         /// WebKit keeps a worker's scripts and reuses them whatever's on disk, and an update to one
         /// it already has crashes its web process, so a changed worker has to be forgotten first.
         public let workerChanged: Bool
+        private let record: URL?
+        private let digest: Data?
+
+        fileprivate init(folder: URL, workerChanged: Bool, record: URL? = nil, digest: Data? = nil) {
+            self.folder = folder
+            self.workerChanged = workerChanged
+            self.record = record
+            self.digest = digest
+        }
+
+        /// Remember a worker only after WebKit has accepted it. Otherwise the next launch must
+        /// still discard any older cached worker and try again.
+        public func markLoaded() throws {
+            if let record, let digest { try digest.write(to: record, options: .atomic) }
+        }
     }
 
     /// `folder` itself if the extension needs nothing, or a fresh copy in `root`.
@@ -207,9 +269,30 @@ public enum ExtensionRuntime {
 
         // Rooted paths, because a relative one would be read against the wrapper's own place.
         let path = "/" + worker.split(separator: "/").joined(separator: "/")
-        let wrapper = background["type"] as? String == "module"
-            ? "import \"/\(compatibilityFile)\";\nimport \"\(path)\";\n"
-            : "importScripts(\"/\(compatibilityFile)\", \"\(path)\");\n"
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .withoutEscapingSlashes
+        let literal = String(decoding: try encoder.encode(path), as: UTF8.self)
+        let wrapper: String
+        if background["type"] as? String == "module" {
+            wrapper = "import \"/\(compatibilityFile)\";\nimport \(literal);\n"
+                + (id == loomID ? "import \"/\(loomReadyWorkerFile)\";\n" : "")
+        } else {
+            // A classic worker resolves importScripts against the worker's URL, not the imported
+            // file. The stable wrapper is at the root, so retain the original worker's base for
+            // its relative imports without changing the registered worker URL.
+            let base = worker.contains("/") ? """
+            (() => {
+              const nativeImport = globalThis.importScripts;
+              const base = new URL(\(literal), globalThis.location.href);
+              globalThis.importScripts = function(...urls) {
+                return nativeImport.apply(this, urls.map(url => new URL(url, base).href));
+              };
+            })();
+
+            """ : ""
+            wrapper = base + "importScripts(\"/\(compatibilityFile)\", \(literal));\n"
+                + (id == loomID ? "importScripts(\"/\(loomReadyWorkerFile)\");\n" : "")
+        }
         try Data(compatibility.utf8).write(to: copy.appending(path: compatibilityFile))
         try Data(idleCallback.utf8).write(to: copy.appending(path: pageCompatibilityFile))
         try Data(wrapper.utf8).write(to: copy.appending(path: workerFile))
@@ -220,18 +303,29 @@ public enum ExtensionRuntime {
             manifest["content_scripts"] = scripts.map(loadingCompatibility)
         }
         try addCompatibility(toPagesIn: copy)
+        if id == loomID {
+            try Data(loomReadyWorker.utf8).write(to: copy.appending(path: loomReadyWorkerFile))
+            try Data(loomReadyPage.utf8).write(to: copy.appending(path: loomReadyPageFile))
+            let popup = copy.appending(path: "html/popup.html")
+            if let page = try? String(contentsOf: popup, encoding: .utf8),
+               let compatibility = page.range(of: "<script src=\"/\(compatibilityFile)\"></script>") {
+                let tag = "<script src=\"/\(loomReadyPageFile)\"></script>"
+                try (page[..<compatibility.upperBound] + tag + page[compatibility.upperBound...])
+                    .write(to: popup, atomically: true, encoding: .utf8)
+            }
+        }
         try JSONSerialization.data(withJSONObject: manifest).write(to: copy.appending(path: "manifest.json"))
 
         var hash = SHA256()
         hash.update(data: data)
         hash.update(data: Data(compatibility.utf8))
         hash.update(data: Data(wrapper.utf8))
+        if id == loomID { hash.update(data: Data(loomReadyWorker.utf8)) }
         hash.update(data: (try? Data(contentsOf: folder.appending(path: worker))) ?? Data())
         let digest = Data(hash.finalize())
         let record = workerRecord(id: id, in: root)
         let changed = (try? Data(contentsOf: record)) != digest
-        try digest.write(to: record)
-        return Prepared(folder: copy, workerChanged: changed)
+        return Prepared(folder: copy, workerChanged: changed, record: record, digest: digest)
     }
 
     /// A page's own world never runs extension APIs, so main world scripts only get what the page lacks.

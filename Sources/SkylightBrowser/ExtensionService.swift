@@ -38,6 +38,7 @@ public final class ExtensionService {
     /// Extension ids being installed or loaded.
     public private(set) var busy: Set<String> = []
     public private(set) var lastError: String?
+    public private(set) var restartingWorkers = false
     public var isAvailable: Bool { host != nil }
 
     @ObservationIgnored private let host: ExtensionHost?
@@ -46,6 +47,10 @@ public final class ExtensionService {
     /// The copies extensions run from. See `ExtensionRuntime`.
     @ObservationIgnored private let runtimeFolder: URL
     @ObservationIgnored private let toasts: ToastCenter
+    // A worker reset stops every extension, so it must not overlap another load or unload.
+    @ObservationIgnored private var lifecycleActive = false
+    @ObservationIgnored private var lifecycleWaiters: [CheckedContinuation<Void, Never>] = []
+    @ObservationIgnored private var loaded: Set<String> = []
     @ObservationIgnored var openTab: ((URL, Bool) -> WebPage?)?
     @ObservationIgnored var selectTab: ((WebPage) -> Void)?
     @ObservationIgnored var closeTab: ((WebPage) -> Void)?
@@ -86,9 +91,52 @@ public final class ExtensionService {
 
     /// Loads every extension that's turned on.
     func start() async {
-        await withTaskGroup(of: Void.self) { group in
-            for ext in enabled { group.addTask { await self.load(ext) } }
+        guard let host else { return }
+        await enterLifecycle()
+        defer { leaveLifecycle() }
+        let candidates = enabled
+        let root = runtimeFolder
+        let prepared = await withTaskGroup(of: (Installed, Result<ExtensionRuntime.Prepared, any Error>).self) { group in
+            for ext in candidates {
+                group.addTask {
+                    do { return (ext, .success(try ExtensionRuntime.prepare(ext.folder, id: ext.id, in: root))) }
+                    catch { return (ext, .failure(error)) }
+                }
+            }
+            var results: [(Installed, Result<ExtensionRuntime.Prepared, any Error>)] = []
+            for await result in group { results.append(result) }
+            return results
         }
+        let ready = prepared.compactMap { ext, result -> (Installed, ExtensionRuntime.Prepared)? in
+            switch result {
+            case .success(let item): return (ext, item)
+            case .failure(let error): fail("\(manifests[ext.id]?.name ?? "An extension") didn't load: \(error.localizedDescription)"); return nil
+            }
+        }.filter { ext, _ in installed.contains { $0.id == ext.id && $0.enabled } }
+        // All changes share one reset; concurrent resets can unload contexts that just started.
+        if ready.contains(where: { $0.1.workerChanged }) {
+            do { try await resetWorkers(on: host) }
+            catch { fail(error.localizedDescription); return }
+        }
+        for (ext, item) in ready where installed.contains(where: { $0.id == ext.id && $0.enabled }) {
+            do {
+                try await host.load(item.folder, id: ext.id)
+                loaded.insert(ext.id)
+                try item.markLoaded()
+            } catch {
+                fail("\(manifests[ext.id]?.name ?? "An extension") didn't load: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func enterLifecycle() async {
+        if !lifecycleActive { lifecycleActive = true; return }
+        await withCheckedContinuation { lifecycleWaiters.append($0) }
+    }
+
+    private func leaveLifecycle() {
+        if lifecycleWaiters.isEmpty { lifecycleActive = false }
+        else { lifecycleWaiters.removeFirst().resume() }
     }
 
     // MARK: - Lookup
@@ -187,14 +235,18 @@ public final class ExtensionService {
     }
 
     private func add(_ ext: Installed, quietly: Bool = false) async throws {
-        var ext = ext
-        manifests[ext.id] = try ExtensionManifest.load(from: ext.folder)
+        await enterLifecycle()
+        defer { leaveLifecycle() }
+        guard !installed.contains(where: { $0.id == ext.id }) else {
+            throw WebEngineError.script("This extension is already installed.")
+        }
+        let manifest = try ExtensionManifest.load(from: ext.folder)
         if let host {
             busy.insert(ext.id)
             defer { busy.remove(ext.id) }
-            try await run(ext, on: host)
+            try await runNow(ext, on: host)
         }
-        installed.removeAll { $0.id == ext.id }
+        manifests[ext.id] = manifest
         installed.append(ext)
         save()
         let name = manifests[ext.id]?.name ?? "the extension"
@@ -295,16 +347,43 @@ public final class ExtensionService {
             }
             updatesToApprove[id] = nil
             if popup?.id == id { closePopup() }
-            if ext.enabled { try? await host?.unload(id) }
+            await enterLifecycle()
+            defer { leaveLifecycle() }
+            guard let current = installed.first(where: { $0.id == id && $0.folder == ext.folder }) else {
+                try? FileManager.default.removeItem(at: staging)
+                return
+            }
+            if loaded.contains(id) { try await host?.unload(id); loaded.remove(id) }
             try replace(ext.folder, with: staging)
             manifests[id] = new
-            if ext.enabled, let host { try await run(ext, on: host) }
+            if current.enabled, let host { try await runNow(current, on: host) }
         } catch {
             fail("Couldn't update \(old.name): \(error.localizedDescription)")
         }
     }
 
     // MARK: - Managing
+
+    /// Restart cached background workers without removing extension storage or site cookies.
+    /// A worker reset can require extensions to renew their push subscriptions.
+    public func restartWorkers() {
+        guard let host, !restartingWorkers else { return }
+        restartingWorkers = true
+        Task {
+            await enterLifecycle()
+            defer { leaveLifecycle(); restartingWorkers = false }
+            closePopup()
+            do {
+                try await resetWorkers(on: host)
+                // An earlier context load may have failed entirely, leaving the extension enabled
+                // but absent from the host. Try those again after clearing the worker cache.
+                for ext in enabled where !loaded.contains(ext.id) {
+                    try await runNow(ext, on: host, workersAlreadyReset: true)
+                }
+                toasts.show("Extension backgrounds restarted", symbol: "arrow.clockwise")
+            } catch { fail(error.localizedDescription) }
+        }
+    }
 
     public func setEnabled(_ id: String, _ on: Bool) {
         guard let i = installed.firstIndex(where: { $0.id == id }), installed[i].enabled != on else { return }
@@ -313,7 +392,24 @@ public final class ExtensionService {
         let ext = installed[i]
         if popup?.id == id { closePopup() }
         Task {
-            if on { await load(ext) } else { try? await host?.unload(id) }
+            await enterLifecycle()
+            defer { leaveLifecycle() }
+            guard let current = installed.first(where: { $0.id == ext.id }) else { return }
+            if current.enabled {
+                if !loaded.contains(id) { await loadNow(current) }
+            } else if loaded.contains(id) {
+                do {
+                    try await host?.unload(id)
+                    loaded.remove(id)
+                } catch {
+                    // Don't say an extension is off while WebKit is still running it.
+                    if let index = installed.firstIndex(where: { $0.id == id && !$0.enabled }) {
+                        installed[index].enabled = true
+                        save()
+                    }
+                    fail("Couldn't turn off \(manifests[id]?.name ?? "the extension"): \(error.localizedDescription)")
+                }
+            }
         }
     }
 
@@ -333,17 +429,31 @@ public final class ExtensionService {
     }
 
     public func remove(_ id: String) {
-        guard let ext = installed.first(where: { $0.id == id }) else { return }
+        guard let index = installed.firstIndex(where: { $0.id == id }) else { return }
+        let ext = installed[index]
+        let manifest = manifests[id]
         if popup?.id == id { closePopup() }
         installed.removeAll { $0.id == id }
         manifests[id] = nil
         save()
         let runtimeFolder = runtimeFolder
         Task {
-            try? await host?.unload(id)
+            await enterLifecycle()
+            defer { leaveLifecycle() }
+            do { try await host?.unload(id) }
+            catch {
+                if !installed.contains(where: { $0.id == id }) {
+                    installed.insert(ext, at: min(index, installed.count))
+                    manifests[id] = manifest
+                    save()
+                }
+                fail("Couldn't remove \(manifest?.name ?? "the extension"): \(error.localizedDescription)")
+                return
+            }
+            loaded.remove(id)
             ExtensionRuntime.discard(id: id, in: runtimeFolder)
+            if ext.source == .store { try? FileManager.default.removeItem(at: ext.folder) }
         }
-        if ext.source == .store { try? FileManager.default.removeItem(at: ext.folder) }
     }
 
     /// Opens the extension's options page in a tab.
@@ -357,22 +467,31 @@ public final class ExtensionService {
         NSWorkspace.shared.activateFileViewerSelecting([ext.folder])
     }
 
-    private func load(_ ext: Installed) async {
+    private func loadNow(_ ext: Installed) async {
         guard let host else { return }
         busy.insert(ext.id)
         defer { busy.remove(ext.id) }
         do {
-            try await run(ext, on: host)
+            try await runNow(ext, on: host)
         } catch {
             fail("\(manifests[ext.id]?.name ?? "An extension") didn't load: \(error.localizedDescription)")
         }
     }
 
-    private func run(_ ext: Installed, on host: ExtensionHost) async throws {
+    private func runNow(_ ext: Installed, on host: ExtensionHost, workersAlreadyReset: Bool = false) async throws {
         let (folder, id, root) = (ext.folder, ext.id, runtimeFolder)
         let prepared = try await Task.detached { try ExtensionRuntime.prepare(folder, id: id, in: root) }.value
-        if prepared.workerChanged { await host.forgetWorkers() }
+        if prepared.workerChanged && !workersAlreadyReset { try await resetWorkers(on: host) }
         try await host.load(prepared.folder, id: id)
+        loaded.insert(id)
+        try prepared.markLoaded()
+    }
+
+    private func resetWorkers(on host: ExtensionHost) async throws {
+        let failures = await host.forgetWorkers()
+        guard failures.isEmpty else {
+            throw WebEngineError.script("Couldn't restart \(failures.count) extension background\(failures.count == 1 ? "" : "s").")
+        }
     }
 
     private func save() {

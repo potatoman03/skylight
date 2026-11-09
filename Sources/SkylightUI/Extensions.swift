@@ -236,6 +236,7 @@ struct ExtensionSettings: View {
     @Environment(Browser.self) private var browser
     @State private var storeLink = ""
     @State private var search = ""
+    @State private var confirmingRestart = false
 
     var body: some View {
         @Bindable var prefs = browser.preferences
@@ -273,6 +274,10 @@ struct ExtensionSettings: View {
                     ForEach(service.installed) { ext in
                         InstalledExtensionRow(ext: ext)
                     }
+                    Button(service.restartingWorkers ? "Restarting…" : "Restart Extension Backgrounds…") {
+                        confirmingRestart = true
+                    }
+                    .disabled(!service.isAvailable || service.restartingWorkers)
                 } header: {
                     Text("Installed")
                 }
@@ -310,6 +315,12 @@ struct ExtensionSettings: View {
             }
         }
         .formStyle(.grouped)
+        .alert("Restart extension backgrounds?", isPresented: $confirmingRestart) {
+            Button("Restart") { service.restartWorkers() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This reloads extension workers without deleting their saved data. Extensions may need to set up push notifications again.")
+        }
     }
 
     /// Opens the store in a tab and puts the browser in front of Settings.

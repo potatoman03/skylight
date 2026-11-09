@@ -275,6 +275,33 @@ import Testing
         #expect(afterCompatibility(chrome, "chrome.notifications.mine && !chrome.notifications.create")?.toBool() == true)
     }
 
+    @Test func unsupportedSidePanelIsNotAdvertised() {
+        #expect(afterCompatibility(Self.worker, "typeof chrome.sidePanel")?.toString() == "undefined")
+        let chrome = "{ runtime: { id: 'made-up' }, tabs: {}, sidePanel: { supported: true } }"
+        #expect(afterCompatibility(chrome, "chrome.sidePanel.supported")?.toBool() == true)
+    }
+
+    @Test func dynamicScriptsKeepSupportedMatches() {
+        let chrome = """
+        { runtime: { id: 'made-up' }, tabs: {}, scripting: {
+          registerContentScripts: function(scripts, callback) { this.received = scripts; callback?.(); return 17; }
+        } }
+        """
+        let expression = """
+        (() => {
+          const input = [{ id: 'mixed', matches: ['file://*/*', 'https://*/*'], js: ['content.js'] },
+                         { id: 'fileOnly', matches: ['file://*/*'] }];
+          let called = false;
+          const result = chrome.scripting.registerContentScripts(input, () => { called = true; });
+          const received = chrome.scripting.received;
+          return called && result === 17 && input[0].matches.length === 2 &&
+            received[0].matches.join() === 'https://*/*' && received[0].js[0] === 'content.js' &&
+            received[1].matches[0] === 'file://*/*';
+        })()
+        """
+        #expect(afterCompatibility(chrome, expression)?.toBool() == true)
+    }
+
     @Test func standInsCallBackAndAnswer() {
         let run = "let called; chrome.idle.queryState(60, (state) => { called = state; }); called"
         #expect(afterCompatibility(Self.worker, run)?.toString() == "active")
@@ -347,6 +374,16 @@ import Testing
             == "import \"/\(ExtensionRuntime.compatibilityFile)\";\nimport \"/js/background.js\";\n")
     }
 
+    @Test func nestedClassicWorkersKeepTheirOriginalImportBase() throws {
+        let (root, source) = try folder(manifest: #"{"background": {"service_worker": "js/background.js"}}"#)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try ExtensionRuntime.prepare(source, id: "made-up", in: root.appending(path: "runtime")).folder
+        let wrapper = try text(ExtensionRuntime.workerFile, in: prepared)
+        #expect(wrapper.contains("new URL(\"/js/background.js\", globalThis.location.href)"))
+        #expect(wrapper.contains("new URL(url, base).href"))
+        #expect(wrapper.contains("importScripts(\"/\(ExtensionRuntime.compatibilityFile)\", \"/js/background.js\")"))
+    }
+
     @Test func theInstalledFolderStaysAsItWas() throws {
         let manifest = #"{"background": {"service_worker": "background.js"}}"#
         let (root, source) = try folder(manifest: manifest)
@@ -361,20 +398,26 @@ import Testing
         let (root, source) = try folder(manifest: #"{"version": "1", "background": {"service_worker": "background.js"}}"#)
         defer { try? FileManager.default.removeItem(at: root) }
         let runtime = root.appending(path: "runtime")
-        func changed() throws -> Bool { try ExtensionRuntime.prepare(source, id: "made-up", in: runtime).workerChanged }
-        #expect(try changed())
-        #expect(try !changed())
+        func prepare() throws -> ExtensionRuntime.Prepared { try ExtensionRuntime.prepare(source, id: "made-up", in: runtime) }
+        let initial = try prepare()
+        #expect(initial.workerChanged)
+        // If loading fails, the next attempt still has to invalidate the old worker.
+        #expect(try prepare().workerChanged)
+        try initial.markLoaded()
+        #expect(try !prepare().workerChanged)
 
         try Data("// updated".utf8).write(to: source.appending(path: "background.js"))
-        #expect(try changed())
-        #expect(try !changed())
+        let updated = try prepare()
+        #expect(updated.workerChanged)
+        try updated.markLoaded()
+        #expect(try !prepare().workerChanged)
 
         let manifest = #"{"version": "2", "background": {"service_worker": "background.js"}}"#
         try Data(manifest.utf8).write(to: source.appending(path: "manifest.json"))
-        #expect(try changed())
+        #expect(try prepare().workerChanged)
 
         ExtensionRuntime.discard(id: "made-up", in: runtime)
-        #expect(try changed())
+        #expect(try prepare().workerChanged)
     }
 
     @Test func nothingToWrapRunsFromWhereItIs() throws {

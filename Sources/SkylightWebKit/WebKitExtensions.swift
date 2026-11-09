@@ -16,27 +16,48 @@ final class WebKitExtensionHost: NSObject, ExtensionHost {
     private var extensions: [String: WKWebExtension] = [:]
     private var controllers: [ObjectIdentifier: WKWebExtensionController] = [:]
     private var windows: [ObjectIdentifier: ExtensionWindow] = [:]
+    private var resettingWorkers = false
 
     func load(_ directory: URL, id: String) async throws {
         let webExtension = try await WKWebExtension(resourceBaseURL: directory)
+        guard extensions[id] == nil else { throw WebEngineError.script("This extension is already loaded.") }
         extensions[id] = webExtension
-        for controller in controllers.values { try add(webExtension, id: id, to: controller) }
+        var added: [WKWebExtensionController] = []
+        do {
+            for controller in controllers.values {
+                try add(webExtension, id: id, to: controller)
+                added.append(controller)
+            }
+        } catch {
+            // A failure in one profile must not leave a partly loaded extension in the others.
+            extensions[id] = nil
+            for controller in added {
+                if let context = context(id, in: controller) { try? controller.unload(context) }
+            }
+            throw error
+        }
     }
 
     func unload(_ id: String) async throws {
-        extensions[id] = nil
         for controller in controllers.values {
             if let context = context(id, in: controller) { try controller.unload(context) }
         }
+        extensions[id] = nil
     }
 
     /// Extension workers live in the default data store, which nothing else in Skylight uses. Their
     /// addresses don't show up in its data records, so it's all of them or none. Those already
     /// running are stopped first and started again after.
-    func forgetWorkers() async {
+    func forgetWorkers() async -> Set<String> {
+        resettingWorkers = true
+        defer { resettingWorkers = false }
+        var failures: Set<String> = []
         let running = controllers.values.contains { !$0.extensionContexts.isEmpty }
         for controller in controllers.values {
-            for context in controller.extensionContexts { try? controller.unload(context) }
+            for context in controller.extensionContexts {
+                do { try controller.unload(context) }
+                catch { failures.insert(context.uniqueIdentifier) }
+            }
         }
         // A worker takes a moment to stop, and starting one again before that fails.
         if running { try? await Task.sleep(for: .seconds(1)) }
@@ -44,8 +65,12 @@ final class WebKitExtensionHost: NSObject, ExtensionHost {
                                                       modifiedSince: .distantPast)
         if running { try? await Task.sleep(for: .seconds(1)) }
         for controller in controllers.values {
-            for (id, webExtension) in extensions { try? add(webExtension, id: id, to: controller) }
+            for (id, webExtension) in extensions {
+                do { try add(webExtension, id: id, to: controller) }
+                catch { failures.insert(id) }
+            }
         }
+        return failures
     }
 
     func setTabs(_ groups: [ExtensionTabs]) {
@@ -91,7 +116,9 @@ final class WebKitExtensionHost: NSObject, ExtensionHost {
         windows[ObjectIdentifier(controller)] = window
         controller.didOpenWindow(window)
         controller.didFocusWindow(window)
-        for (id, webExtension) in extensions { try? add(webExtension, id: id, to: controller) }
+        if !resettingWorkers {
+            for (id, webExtension) in extensions { try? add(webExtension, id: id, to: controller) }
+        }
         return controller
     }
 
