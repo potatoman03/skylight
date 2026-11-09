@@ -50,7 +50,7 @@ ditto -c -k --keepParent "$APP" "$ZIP"
 notarize "$ZIP"
 xcrun stapler staple "$APP"
 
-echo "Packing $DMG…"
+echo "Packing ${DMG}…"
 # A dawn sky with the app, a line of light and Applications; Finder lays it out.
 "$ROOT/scripts/dmg.sh" "$APP" "$DMG" "Skylight" >/dev/null
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
