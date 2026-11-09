@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: pages
+  group: pages-${{ github.event_name == 'release' && 'trigger' || 'deploy' }}
   cancel-in-progress: true
 
 permissions:
@@ -21,8 +21,21 @@ permissions:
   id-token: write
 
 jobs:
+  refresh:
+    name: Refresh after a release
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Start deployment from main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
   deploy:
     name: Deploy
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
