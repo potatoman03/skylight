@@ -199,15 +199,12 @@ public final class Browser {
         open(url, inNewTab: inNewTab)
     }
 
-    /// Opens links from other apps (or web pages and files opened with Skylight) as new tabs at the
-    /// top of Today, showing the last one.
+    /// Opens links from other apps, reusing an unambiguous pinned tab in the current Space.
     public func openExternal(_ urls: [URL]) {
         let usable = urls.filter { ["http", "https", "file"].contains($0.scheme?.lowercased() ?? "") }
         guard !usable.isEmpty else { return }
         if commandBar.isPresented { commandBar.dismiss() }
-        for (i, url) in usable.enumerated() {
-            store.send(.openTab(url, placement: .top, select: i == usable.count - 1))
-        }
+        store.send(.openExternal(usable))
     }
 
     /// No tab, or a new one that hasn't gone anywhere yet.

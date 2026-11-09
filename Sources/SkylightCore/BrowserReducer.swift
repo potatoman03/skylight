@@ -33,6 +33,23 @@ public enum BrowserReducer {
         case let .openTab(url, placement, select, spaceID):
             return openTab(&state, url: url, placement: placement, select: select, spaceID: spaceID, env: env)
 
+        case let .openExternal(urls):
+            let urls = urls.filter { ["http", "https", "file"].contains($0.scheme?.lowercased() ?? "") }
+            guard !urls.isEmpty else { return .ignored }
+            var effects: [BrowserEffect] = []
+            var reused: Set<TabID> = []
+            for (index, url) in urls.enumerated() {
+                let select = index == urls.count - 1
+                if let id = pinnedTab(for: url, in: state, excluding: reused) {
+                    reused.insert(id)
+                    if state.tabs[id]?.url != url { effects += apply(&state, .navigate(id, url), env: env).effects }
+                    if select { effects += apply(&state, .selectTab(id), env: env).effects }
+                } else {
+                    effects += openTab(&state, url: url, placement: .top, select: select, spaceID: nil, env: env).effects
+                }
+            }
+            return ReduceResult(effects: effects)
+
         case let .closeTab(id):
             return closeTab(&state, id, now: env.now())
 
@@ -501,6 +518,26 @@ public enum BrowserReducer {
     }
 
     // MARK: - Helpers
+
+    /// Reuse only an unambiguous pin from the current Space. An exact URL breaks a same-origin tie;
+    /// otherwise choosing between multiple pins could replace the wrong page or account.
+    private static func pinnedTab(for url: URL, in state: BrowserState, excluding: Set<TabID>) -> TabID? {
+        guard let origin = webOrigin(url) else { return nil }
+        let ids = (state.activeSpace.favorites + state.activeSpace.pinned).filter { id in
+            guard let tab = state.tabs[id], let tabOrigin = webOrigin(tab.url) else { return false }
+            return tabOrigin == origin
+        }
+        let exact = ids.filter { state.tabs[$0]?.url == url }
+        let match = exact.count == 1 ? exact[0] : (ids.count == 1 ? ids[0] : nil)
+        guard let match, !excluding.contains(match) else { return nil }
+        return match
+    }
+
+    private static func webOrigin(_ url: URL) -> (String, String, Int)? {
+        guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = url.host(percentEncoded: false)?.lowercased(), !host.isEmpty else { return nil }
+        return (scheme, host, url.port ?? (scheme == "https" ? 443 : 80))
+    }
 
     private static func openTab(_ state: inout BrowserState, url: URL, placement: BrowserAction.Placement,
                                 select: Bool, spaceID: SpaceID?, env: ReducerEnvironment) -> ReduceResult {

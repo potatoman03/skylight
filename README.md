@@ -146,9 +146,10 @@ Drag tabs between sections; the list shows an
 insertion line where a tab will land, and holding a tab over a Space's button at the bottom
 switches to that Space so you can drop it there. Swipe two fingers sideways over the sidebar to go
 to the next or previous Space; it stops at the first and last. Links dragged in from a page or
-another app open where you drop them. Closing a
-pinned tab or favorite only unloads it; Delete in its menu removes it. Today tabs untouched for 12
-hours are archived (⌘⇧T brings them back; the time is in Settings). Pages stay up so going back to a tab
+another app open where you drop them. Closing a pinned tab or favorite only unloads it; Delete in
+its menu removes it. Links opened from other apps reuse a pinned tab or favorite in the current
+Space when its web origin matches unambiguously; otherwise they open in Today. Today tabs untouched
+for 12 hours are archived (⌘⇧T brings them back; the time is in Settings). Pages stay up so going back to a tab
 is instant; after 4 hours unseen, or when the Mac runs short of memory, the oldest go to sleep and
 reload when you return. The tabs you used last come back behind the scenes after launch.
 
