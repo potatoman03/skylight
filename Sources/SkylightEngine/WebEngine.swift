@@ -67,8 +67,8 @@ public protocol ExtensionHost: AnyObject {
     /// Loads an unpacked extension folder as `id`.
     func load(_ directory: URL, id: String) async throws
     func unload(_ id: String) async throws
-    /// Drops every extension's stored service worker, so the next run loads each one from disk.
-    func forgetWorkers() async
+    /// Drops stored workers and restores the extensions. Returns IDs that could not be restored.
+    func forgetWorkers() async -> Set<String>
     /// The pages each profile's extensions can see.
     func setTabs(_ groups: [ExtensionTabs])
     /// Clicks the extension's toolbar button: its popup opens, or `action.onClicked` fires.

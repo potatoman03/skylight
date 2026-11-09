@@ -248,6 +248,9 @@ leaves out a few Chrome APIs (`runtime.onUpdateAvailable`, `offscreen` and other
 with a service worker run from a private copy that stands in for them. Offscreen documents don't
 work, which for Proton Pass means it can't clear the clipboard after a delay. Badges don't show yet, `tabs.create` opens the tab without returning it, and extensions can't talk to a companion
 app on your Mac (native messaging), which some password managers need to unlock.
+If an extension's background stops responding, Settings → Extensions → Restart Extension
+Backgrounds reloads it without deleting its saved data. Extensions may need to renew their push
+subscriptions afterward. Screen recording remains unsupported by some Chrome extensions.
 
 ## Packages
 
