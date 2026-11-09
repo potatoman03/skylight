@@ -800,15 +800,52 @@ private struct Basic: View {
 private var sourceIcons: [Browser.ImportSource: NSImage] = [:]
 
 extension Browser.ImportSource {
-    /// The browser's own icon, or a generic app's if it's gone. Kept, because finding it asks
+    /// The browser's own icon, or a tile with its initial when the app is gone (its data can
+    /// outlive it, and macOS draws a generic app as a blank page). Kept, because finding it asks
     /// Launch Services and reads the app's icon file.
     @MainActor
     fileprivate var icon: NSImage {
         if let icon = sourceIcons[self] { return icon }
-        let workspace = NSWorkspace.shared
-        let app = (chromium?.bundleIDs ?? []).lazy.compactMap { workspace.urlForApplication(withBundleIdentifier: $0) }.first
-        let icon = app.map { workspace.icon(forFile: $0.path) } ?? workspace.icon(for: .application)
+        let icon = Self.appIcon(chromium?.bundleIDs ?? []) ?? Self.tile(rawValue)
         sourceIcons[self] = icon
         return icon
+    }
+
+    /// Reads the icon from the app itself first: for some apps, Arc among them, `icon(forFile:)`
+    /// returns a folder's icon.
+    @MainActor
+    private static func appIcon(_ bundleIDs: [String]) -> NSImage? {
+        let workspace = NSWorkspace.shared
+        guard let url = bundleIDs.lazy.compactMap({ workspace.urlForApplication(withBundleIdentifier: $0) }).first else { return nil }
+        if let bundle = Bundle(url: url) {
+            if let name = bundle.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
+               let path = bundle.path(forResource: name.hasSuffix(".icns") ? name : name + ".icns", ofType: nil),
+               let image = NSImage(contentsOfFile: path) {
+                return image
+            }
+            if let name = bundle.object(forInfoDictionaryKey: "CFBundleIconName") as? String,
+               let image = bundle.image(forResource: name) {
+                return image
+            }
+        }
+        return workspace.icon(forFile: url.path)
+    }
+
+    /// A light tile on the app icon grid with the browser's initial, drawn at whatever size it's shown.
+    private static func tile(_ name: String) -> NSImage {
+        NSImage(size: NSSize(width: 128, height: 128), flipped: false) { rect in
+            let inset = rect.insetBy(dx: rect.width * 0.1, dy: rect.height * 0.1)
+            let shape = NSBezierPath(roundedRect: inset, xRadius: inset.width * 0.225, yRadius: inset.width * 0.225)
+            NSGradient(starting: NSColor(white: 0.98, alpha: 1), ending: NSColor(white: 0.86, alpha: 1))?.draw(in: shape, angle: -90)
+            NSColor(white: 0, alpha: 0.08).setStroke()
+            shape.lineWidth = rect.width / 128
+            shape.stroke()
+            let base = NSFont.systemFont(ofSize: inset.height * 0.5, weight: .semibold)
+            let font = base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: base.pointSize) } ?? base
+            let letter = NSAttributedString(string: String(name.prefix(1)), attributes: [.font: font, .foregroundColor: NSColor(white: 0.32, alpha: 1)])
+            let size = letter.size()
+            letter.draw(at: NSPoint(x: inset.midX - size.width / 2, y: inset.midY - size.height / 2))
+            return true
+        }
     }
 }
