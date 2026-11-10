@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 /// Gets a Chrome extension ready to run on WebKit. WebKit leaves out a few Chrome APIs, and an
@@ -82,6 +83,39 @@ public enum ExtensionRuntime {
       if (Object.getOwnPropertyDescriptor(globalThis, 'chrome')?.configurable === false) return;
       for (const name of ['chrome', 'browser']) {
         Object.defineProperty(globalThis, name, { get: () => api, set: () => {}, configurable: false });
+      }
+      // Some macOS WebKit versions crash when a newly started background worker removes a menu
+      // created by another extension context. An empty update establishes the worker's frame
+      // without changing the menu, after which the original removal (and its result) can run.
+      const patchedMenus = new Set();
+      for (const name of ['contextMenus', 'menus']) {
+        const menus = api[name];
+        if (!menus || patchedMenus.has(menus) || typeof menus.remove !== 'function' || typeof menus.update !== 'function') continue;
+        patchedMenus.add(menus);
+        Object.defineProperty(api, Symbol(`skylight.${name}`), { value: menus });
+        const remove = menus.remove.bind(menus);
+        const update = menus.update.bind(menus);
+        menus.remove = (id, ...args) => {
+          if ((typeof id !== 'string' && typeof id !== 'number') || args.length > 1 ||
+              (args[0] != null && typeof args[0] !== 'function')) return remove(id, ...args);
+          const prepare = (next) => {
+            let called = false;
+            const proceed = () => {
+              if (called) return;
+              called = true;
+              void api.runtime.lastError;
+              next();
+            };
+            try { update(id, {}, proceed); } catch (_) { proceed(); }
+          };
+          if (typeof args[0] === 'function') {
+            prepare(() => remove(id, args[0]));
+            return;
+          }
+          return new Promise((resolve, reject) => prepare(() => {
+            try { Promise.resolve(remove(id)).then(resolve, reject); } catch (error) { reject(error); }
+          }));
+        };
       }
       const add = (object, name, value) => { if (!(name in object)) object[name] = value; };
       const event = () => {
@@ -263,9 +297,6 @@ public enum ExtensionRuntime {
 
         let copy = root.appending(path: id, directoryHint: .isDirectory)
         let files = FileManager.default
-        try? files.removeItem(at: copy)
-        try files.createDirectory(at: root, withIntermediateDirectories: true)
-        try files.copyItem(at: folder, to: copy)
 
         // Rooted paths, because a relative one would be read against the wrapper's own place.
         let path = "/" + worker.split(separator: "/").joined(separator: "/")
@@ -293,6 +324,32 @@ public enum ExtensionRuntime {
             wrapper = base + "importScripts(\"/\(compatibilityFile)\", \(literal));\n"
                 + (id == loomID ? "importScripts(\"/\(loomReadyWorkerFile)\");\n" : "")
         }
+
+        var hash = SHA256()
+        hash.update(data: data)
+        hash.update(data: Data(compatibility.utf8))
+        hash.update(data: Data(wrapper.utf8))
+        if id == loomID { hash.update(data: Data(loomReadyWorker.utf8)) }
+        hash.update(data: (try? Data(contentsOf: folder.appending(path: worker))) ?? Data())
+        let digest = Data(hash.finalize())
+        let record = workerRecord(id: id, in: root)
+        let changed = (try? Data(contentsOf: record)) != digest
+        let result = Prepared(folder: copy, workerChanged: changed, record: record, digest: digest)
+
+        // The runtime is generated from the source, but copying thousands of files every launch
+        // delays the first page. Reuse it only while both trees and the generated scripts match.
+        let stampFile = preparationRecord(id: id, in: root)
+        // Bump the format when the manifest or HTML transformation changes independently of these scripts.
+        let generator = Data(SHA256.hash(data: Data(("1" + compatibility + idleCallback + wrapper + loomReadyWorker + loomReadyPage).utf8)))
+        let sourceStamp = treeStamp(folder)
+        if let sourceStamp, let cached = try? JSONDecoder().decode(PreparationStamp.self, from: Data(contentsOf: stampFile)),
+           cached.generator == generator, cached.source == sourceStamp, cached.runtime == treeStamp(copy) {
+            return result
+        }
+
+        try? files.removeItem(at: copy)
+        try files.createDirectory(at: root, withIntermediateDirectories: true)
+        try files.copyItem(at: folder, to: copy)
         try Data(compatibility.utf8).write(to: copy.appending(path: compatibilityFile))
         try Data(idleCallback.utf8).write(to: copy.appending(path: pageCompatibilityFile))
         try Data(wrapper.utf8).write(to: copy.appending(path: workerFile))
@@ -316,16 +373,48 @@ public enum ExtensionRuntime {
         }
         try JSONSerialization.data(withJSONObject: manifest).write(to: copy.appending(path: "manifest.json"))
 
+        if let sourceStamp, sourceStamp == treeStamp(folder), let runtimeStamp = treeStamp(copy) {
+            let stamp = PreparationStamp(generator: generator, source: sourceStamp, runtime: runtimeStamp)
+            if let data = try? JSONEncoder().encode(stamp) { try? data.write(to: stampFile, options: .atomic) }
+        }
+        return result
+    }
+
+    private struct PreparationStamp: Codable {
+        let generator: Data
+        let source: Data
+        let runtime: Data
+    }
+
+    /// Metadata catches edits, replacements, additions and removals without reading every byte.
+    /// Include change time as well as modification time, so restoring an old mtime cannot hide an edit.
+    private static func treeStamp(_ root: URL) -> Data? {
+        let files = FileManager.default
+        guard let resolved = realpath(root.path, nil) else { return nil }
+        defer { free(resolved) }
+        let root = URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
+        var failed = false
+        guard let enumerator = files.enumerator(at: root, includingPropertiesForKeys: nil, options: [],
+                                                errorHandler: { _, _ in failed = true; return false }) else { return nil }
+        var entries: [(String, String)] = []
+        let prefix = root.path + "/"
+        func append(_ url: URL, path: String) -> Bool {
+            var info = stat()
+            guard lstat(url.path, &info) == 0 else { return false }
+            let metadata = "\(info.st_dev):\(info.st_ino):\(info.st_mode):\(info.st_size):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_ctimespec.tv_sec):\(info.st_ctimespec.tv_nsec)"
+            entries.append((path, metadata))
+            return true
+        }
+        guard append(root, path: "") else { return nil }
+        for case let url as URL in enumerator {
+            guard url.path.hasPrefix(prefix), append(url, path: String(url.path.dropFirst(prefix.count))) else { return nil }
+        }
+        guard !failed else { return nil }
         var hash = SHA256()
-        hash.update(data: data)
-        hash.update(data: Data(compatibility.utf8))
-        hash.update(data: Data(wrapper.utf8))
-        if id == loomID { hash.update(data: Data(loomReadyWorker.utf8)) }
-        hash.update(data: (try? Data(contentsOf: folder.appending(path: worker))) ?? Data())
-        let digest = Data(hash.finalize())
-        let record = workerRecord(id: id, in: root)
-        let changed = (try? Data(contentsOf: record)) != digest
-        return Prepared(folder: copy, workerChanged: changed, record: record, digest: digest)
+        for (path, metadata) in entries.sorted(by: { $0.0 < $1.0 }) {
+            hash.update(data: Data("\(path.utf8.count):\(path):\(metadata)\n".utf8))
+        }
+        return Data(hash.finalize())
     }
 
     /// A page's own world never runs extension APIs, so main world scripts only get what the page lacks.
@@ -350,9 +439,14 @@ public enum ExtensionRuntime {
         root.appending(path: id + ".worker")
     }
 
+    private static func preparationRecord(id: String, in root: URL) -> URL {
+        root.appending(path: id + ".prepared")
+    }
+
     /// Removes a copy made by `prepare`, if there is one.
     public static func discard(id: String, in root: URL) {
         try? FileManager.default.removeItem(at: root.appending(path: id, directoryHint: .isDirectory))
         try? FileManager.default.removeItem(at: workerRecord(id: id, in: root))
+        try? FileManager.default.removeItem(at: preparationRecord(id: id, in: root))
     }
 }
