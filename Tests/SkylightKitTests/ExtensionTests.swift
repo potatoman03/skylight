@@ -435,4 +435,43 @@ import Testing
         let prepared = try ExtensionRuntime.prepare(source, id: "made-up", in: runtime).folder
         #expect(try text("background.js", in: prepared) == "// updated")
     }
+
+    @Test func unchangedRuntimeIsReusedButEditsAndDamageAreRebuilt() throws {
+        let (root, source) = try folder(manifest: #"{"background": {"service_worker": "background.js"}}"#)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = FileManager.default
+        let runtime = root.appending(path: "runtime")
+        let extra = source.appending(path: "extra.js")
+        try Data("original".utf8).write(to: extra)
+        let first = try ExtensionRuntime.prepare(source, id: "made-up", in: runtime)
+        try first.markLoaded()
+        let manifest = first.folder.appending(path: "manifest.json")
+        let inode = try #require(try files.attributesOfItem(atPath: manifest.path)[.systemFileNumber] as? NSNumber)
+        let reused = try ExtensionRuntime.prepare(source, id: "made-up", in: runtime)
+        #expect(!reused.workerChanged)
+        #expect(try files.attributesOfItem(atPath: manifest.path)[.systemFileNumber] as? NSNumber == inode)
+
+        // A file's mtime can be restored after an edit; ctime still invalidates the copy.
+        let oldDate = try #require(try files.attributesOfItem(atPath: extra.path)[.modificationDate] as? Date)
+        try Data("modified".utf8).write(to: extra)
+        try files.setAttributes([.modificationDate: oldDate], ofItemAtPath: extra.path)
+        let updated = try ExtensionRuntime.prepare(source, id: "made-up", in: runtime)
+        #expect(try text("extra.js", in: updated.folder) == "modified")
+        #expect(!updated.workerChanged)
+
+        let inserted = source.appending(path: "added.js")
+        try Data("new".utf8).write(to: inserted)
+        let withAdded = try ExtensionRuntime.prepare(source, id: "made-up", in: runtime)
+        #expect(try text("added.js", in: withAdded.folder) == "new")
+        try files.removeItem(at: inserted)
+        let withoutAdded = try ExtensionRuntime.prepare(source, id: "made-up", in: runtime)
+        #expect(!files.fileExists(atPath: withoutAdded.folder.appending(path: "added.js").path))
+
+        let generated = withoutAdded.folder.appending(path: ExtensionRuntime.compatibilityFile)
+        try Data("damaged".utf8).write(to: generated)
+        let repaired = try ExtensionRuntime.prepare(source, id: "made-up", in: runtime)
+        #expect(try text(ExtensionRuntime.compatibilityFile, in: repaired.folder) == ExtensionRuntime.compatibility)
+        ExtensionRuntime.discard(id: "made-up", in: runtime)
+        #expect(!files.fileExists(atPath: runtime.appending(path: "made-up.prepared").path))
+    }
 }

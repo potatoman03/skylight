@@ -78,8 +78,12 @@ public final class PasswordService {
       if (window.__skylightPasswords || window.top !== window) return;
       const post = (m) => window.__skylight && window.__skylight.post(m).catch(() => {});
       let reported = false;
-      const scan = () => {
-        if (!reported && document.querySelector('input[type=password]')) { reported = true; post({ type: 'passwords.form' }); }
+      // Most pages have no password field. Inspect the changed subtree instead of rescanning
+      // the whole document for every update, and stop observing once a field is found.
+      const scan = (root = document) => {
+        if (reported) return;
+        const found = root.matches?.('input[type=password]') || root.querySelector?.('input[type=password]');
+        if (found) { reported = true; observer.disconnect(); post({ type: 'passwords.form' }); }
       };
       const visible = (el) => el && !el.disabled && el.offsetParent !== null;
       const userField = (pw) => {
@@ -107,8 +111,26 @@ public final class PasswordService {
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && e.target.type === 'password') capture(e.target.form);
       }, true);
-      new MutationObserver(scan).observe(document, { childList: true, subtree: true });
-      document.addEventListener('DOMContentLoaded', scan);
+      const observer = new MutationObserver((records) => {
+        // Scan only connected changes, coalescing nested additions so a large update does not
+        // repeatedly search either the whole page or the same subtree.
+        const changed = new Set();
+        for (const record of records) {
+          if (record.type === 'attributes' && record.target.isConnected) changed.add(record.target);
+          for (const node of record.addedNodes) {
+            if (node.nodeType === 1 && node.isConnected) changed.add(node);
+          }
+        }
+        for (const node of changed) {
+          let parent = node.parentElement;
+          while (parent && !changed.has(parent)) parent = parent.parentElement;
+          if (!parent) scan(node);
+          if (reported) return;
+        }
+      });
+      observer.observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['type'] });
+      scan();
+      document.addEventListener('DOMContentLoaded', () => scan(), { once: true });
       const setValue = (el, value) => {
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
         el.focus();
