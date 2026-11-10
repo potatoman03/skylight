@@ -14,6 +14,8 @@ public struct RootView: View {
     @State private var leaving: Task<Void, Never>?
     /// The page sits beside the sidebar.
     @State private var open = true
+    /// The toolbar starts moving when the page starts, after any WebKit layout wait.
+    @State private var toolbarOpen = true
     /// The page is on its way over the sidebar or off it.
     @State private var sliding = false
     /// The page has been made to fit beside the sidebar. It's the window's width while it moves.
@@ -54,6 +56,7 @@ public struct RootView: View {
             await host.slideReady()
             guard !Task.isCancelled else { return }
             host.runSlide(seconds: Motion.sidebarSeconds, timing: Motion.sidebarTiming)
+            toolbarOpen = !collapsed
             try? await Task.sleep(for: Motion.sidebarTime)
             guard !Task.isCancelled else { return }
             if collapsed {
@@ -171,7 +174,7 @@ public struct RootView: View {
             slide = Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(1))
                 guard !Task.isCancelled else { return }
-                animate(Motion.sidebar) { open = !collapsed }
+                animate(Motion.sidebar) { open = !collapsed; toolbarOpen = !collapsed }
                 try? await Task.sleep(for: Motion.sidebarTime)
                 guard !Task.isCancelled else { return }
                 withTransaction(Transaction(animation: nil)) {
@@ -180,13 +183,14 @@ public struct RootView: View {
                 }
             }
         }
-        .onAppear { open = !prefs.sidebarCollapsed }
+        .onAppear { open = !prefs.sidebarCollapsed; toolbarOpen = !prefs.sidebarCollapsed }
         .onChange(of: slideLayout) { _, _ in
             guard sliding else { return }
             slide?.cancel()
             browser.pages.hostView.cancelSlide()
             withTransaction(Transaction(animation: nil)) {
                 open = !prefs.sidebarCollapsed
+                toolbarOpen = !prefs.sidebarCollapsed
                 sliding = false
                 fitted = true
             }
@@ -207,7 +211,7 @@ public struct RootView: View {
         .environment(\.backdropFrame, backdropFrame)
         .tint(accent.map { Color($0) })
         .environment(\.onTint, accent.map { Color($0.ink) } ?? .white)
-        .toolbar { BrowserToolbar() }
+        .toolbar { BrowserToolbar(sidebarOpen: toolbarOpen || browser.sidebarPeeking) }
         .toolbar(removing: .title)
         // The sidebar runs up behind the traffic lights; the page keeps the window's own background.
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -254,39 +258,11 @@ public struct RootView: View {
 
 private struct BrowserToolbar: ToolbarContent {
     @Environment(Browser.self) private var browser
+    let sidebarOpen: Bool
 
     var body: some ToolbarContent {
-        let status = browser.selectedStatus
-        let id = browser.store.state.selectedTabID
-
-        // One compact group, so Reload keeps clear of the sidebar's edge.
         ToolbarItem(placement: .navigation) {
-            HStack(spacing: 2) {
-                Button {
-                    if let id { browser.store.send(.goBack(id)) }
-                } label: {
-                    Label("Back", systemImage: "chevron.backward")
-                }
-                .help("Back")
-                .disabled(!status.canGoBack)
-                Button {
-                    if let id { browser.store.send(.goForward(id)) }
-                } label: {
-                    Label("Forward", systemImage: "chevron.forward")
-                }
-                .help("Forward")
-                .disabled(!status.canGoForward)
-                Button {
-                    if let id { browser.store.send(status.isLoading ? .stop(id) : .reload(id)) }
-                } label: {
-                    Label(status.isLoading ? "Stop" : "Reload", systemImage: status.isLoading ? "xmark" : "arrow.clockwise")
-                }
-                .help(status.isLoading ? "Stop Loading (⌘.)" : "Reload Page (⌘R)")
-                .disabled(id == nil)
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(ToolbarIconStyle())
-            .modifier(HiddenByWelcome())
+            NavigationButtons(sidebarOpen: sidebarOpen).modifier(HiddenByWelcome())
         }
         // Plain icons, no capsules behind them.
         .sharedBackgroundVisibility(.hidden)
@@ -315,6 +291,51 @@ private struct BrowserToolbar: ToolbarContent {
             ExtensionsMenuButton().modifier(HiddenByWelcome())
         }
         .sharedBackgroundVisibility(.hidden)
+    }
+}
+
+/// Keep navigation together over the page, with room between it and the sidebar edge.
+private struct NavigationButtons: View {
+    @Environment(Browser.self) private var browser
+    @State private var itemX: CGFloat?
+    let sidebarOpen: Bool
+
+    var body: some View {
+        let status = browser.selectedStatus
+        let id = browser.store.state.selectedTabID
+        HStack(spacing: 2) {
+            Button {
+                if let id { browser.store.send(.goBack(id)) }
+            } label: {
+                Label("Back", systemImage: "chevron.backward")
+            }
+            .help("Back")
+            .disabled(!status.canGoBack)
+            Button {
+                if let id { browser.store.send(.goForward(id)) }
+            } label: {
+                Label("Forward", systemImage: "chevron.forward")
+            }
+            .help("Forward")
+            .disabled(!status.canGoForward)
+            Button {
+                if let id { browser.store.send(status.isLoading ? .stop(id) : .reload(id)) }
+            } label: {
+                Label(status.isLoading ? "Stop" : "Reload", systemImage: status.isLoading ? "xmark" : "arrow.clockwise")
+            }
+            .help(status.isLoading ? "Stop Loading (⌘.)" : "Reload Page (⌘R)")
+            .disabled(id == nil)
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(ToolbarIconStyle())
+        .padding(.leading, leadingPadding)
+        .background { WindowXProbe { itemX = $0 } }
+        .animation(Motion.resolved(Motion.sidebar), value: sidebarOpen)
+    }
+
+    private var leadingPadding: CGFloat {
+        guard sidebarOpen, let itemX else { return 0 }
+        return max(0, max(browser.preferences.sidebarWidth, SidebarEdge.widths.lowerBound) + 6 - itemX)
     }
 }
 
