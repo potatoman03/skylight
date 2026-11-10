@@ -78,16 +78,6 @@ struct AddressField: View {
             if !now { DispatchQueue.main.async { if !(NSApp.keyWindow?.firstResponder is NSText) { browser.pages.focusVisiblePage() } } }
         }
         .accessibilityLabel("Address and search")
-        // The address starts over the page, past the sidebar's edge, wherever the toolbar puts it.
-        .padding(.leading, lead)
-        .background { WindowXProbe { anchor.itemX = $0 } }
-        .animation(Motion.resolved(Motion.sidebar), value: lead)
-    }
-
-    private var lead: CGFloat {
-        let prefs = browser.preferences
-        guard browser.showsSidebar, let x = anchor.itemX else { return 0 }
-        return max(0, max(prefs.sidebarWidth, SidebarEdge.widths.lowerBound) + 6 - x)
     }
 
     static func display(_ tab: BrowserTab) -> String {
@@ -339,8 +329,6 @@ final class AddressAnchor {
     @ObservationIgnored weak var page: NSView?
     /// The suggestions.
     @ObservationIgnored weak var panel: NSView?
-    /// Where the address field's toolbar item starts, in the window.
-    var itemX: CGFloat?
     /// Makes whoever reads the field's frame read it again.
     private var moves = 0
 
